@@ -28,6 +28,9 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Vendored Bitcraze lib (install via pip — see README)
+crazyflie-lib-python/
+
 # Crazyflie radio / TOC cache
 cache/
 **/cache/*.json
