@@ -36,6 +36,7 @@ cache/
 **/cache/*.json
 
 # Flight telemetry logs
+logs/
 flip_log.csv
 flip_log_*.csv
 
