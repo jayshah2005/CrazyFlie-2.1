@@ -1,0 +1,47 @@
+---
+description: commit/branch message convention — always follow when committing, staging, or creating branches
+alwaysApply: true
+---
+
+# Git commit & branch
+
+Only commit / push / create branches when the user explicitly asks. Never commit proactively.
+
+Read and follow `.agents/skills/git/SKILL.md` (also linked as `.cursor/skills/git` and `.claude/skills/git`).
+
+## Message format
+
+```
+type[/scope[/subscope]][+scope]: summary
+```
+
+**Types (only these):** `feat` · `fix` · `refactor` · `chore`
+
+- No `style` or `docs` type — visual polish is `refactor`; documentation is `chore/docs`
+- Scope from allowlist only; omit only for genuinely extension-wide changes
+- Never invent a new scope — ask before adding one
+- Nested `/`; combined `+` when one commit spans two scopes
+- Summary: lowercase first word, imperative, no trailing period, ≤ ~50 chars (hard ~60)
+- Single-line subject by default; body only when why isn’t obvious
+
+## Scope allowlist
+
+| Scope | Use for |
+| --- | --- |
+| `preview` | Right column |
+| `edit` | full screen edit mode |
+| `header` | header in the full screen mode |
+| `docs` | README, store listing copy, publisher/setup docs (`chore/docs`) |
+| `backend` | Other backend related changes |
+| `engine` | Image Extraction engine |
+| `tests` | Jest / test files |
+| `agents` | `.cursor/agents`, `.cursor/skills`, `.cursor/rules` |
+| `gitignore` | `.gitignore` |
+
+## Branches
+
+`type/scope[-short-slug]` — same type/scope as the primary commit.
+
+## Atomic commits & safety
+
+One coherent change per commit; `git add <paths>` not `git add .`. No force-push / `--no-verify` / secrets / git config / push unless asked.
