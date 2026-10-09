@@ -48,6 +48,11 @@ Official install notes: [Bitcraze cflib installation](https://www.bitcraze.io/do
 python flip.py
 ```
 
+Console and CSV logs go through `run_log.py`. Each line is tagged with the
+script name and timestamp; CSVs land in `logs/` as
+`{script}_{kind}_{YYYYmmdd_HHMMSS}.csv` with `# script:` / `# generated_at:`
+header comments.
+
 Lighthouse geometry for different spaces lives under `config/`:
 
 | Path | Use |
