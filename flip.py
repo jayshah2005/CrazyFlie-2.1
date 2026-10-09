@@ -7,18 +7,19 @@ flip with thrust scheduled by the MEASURED rotation angle -> brake before
 the hand-over so it doesn't overshoot level -> full-power recovery ->
 position hold -> land.
 
-Every flight writes flip_log.csv and prints entry speed, apex, peak
-rotation and the lowest altitude reached.
+Every flight writes a CSV under logs/ (script name + timestamp in the
+file and header) and prints entry speed, apex, peak rotation and the
+lowest altitude reached.
 
-Run `python backflip.py --no-flip` FIRST.
+Run `python flip.py --no-flip` FIRST.
 UNTESTED: fully charged battery, clear area, hand on the emergency stop.
 Expect the drone to drift ~0.5 m sideways during a flip: keep clear space.
 """
 import argparse
-import csv
 import sys
 import threading
 import time
+from datetime import datetime
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -27,7 +28,12 @@ from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
 from cflib.utils import uri_helper
 from cflib.utils.reset_estimator import reset_estimator
 
+import run_log
+
 URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E7E7')
+log = run_log.setup(__file__)
+STARTED_AT = datetime.now().astimezone()
+LOG_FILE = run_log.csv_path('flight', script=__file__, when=STARTED_AT)
 
 # ---- Height ---------------------------------------------------------------
 CLIMB_ABOVE_START = 1.0   # m above the takeoff point.
@@ -72,7 +78,6 @@ MAX_RECOVER_TIME = 0.8    # s at full power, at most.
 FALLBACK_HOVER_THRUST = 35000
 MIN_BATTERY_V = 3.9
 RATE_HZ = 100
-LOG_FILE = time.strftime('flip_log_%Y%m%d_%H%M%S.csv')  # new file every run
 # ---------------------------------------------------------------------------
 
 DT = 1.0 / RATE_HZ
@@ -148,13 +153,16 @@ class Telemetry:
     def save(self, path):
         with self.lock:
             rows = list(self.rows)
-        with open(path, 'w', newline='') as f:
-            w = csv.writer(f)
-            w.writerow(['drone_ms', 'phase', 'x', 'y', 'z', 'vz', 'pitch_deg',
-                        'gyro_y_dps', 'rotation_deg', 'cmd_thrust',
-                        'sent_pitch_rate', 'sent_thrust'])
-            w.writerows(rows)
-        print(f'Flight log written to {path} ({len(rows)} samples)')
+        written = run_log.write_csv(
+            path,
+            ['drone_ms', 'phase', 'x', 'y', 'z', 'vz', 'pitch_deg',
+             'gyro_y_dps', 'rotation_deg', 'cmd_thrust',
+             'sent_pitch_rate', 'sent_thrust'],
+            rows,
+            script=__file__,
+            generated_at=datetime.now().astimezone(),
+        )
+        log.info('Flight log written to %s (%s samples)', written, len(rows))
 
 
 def start_telemetry(scf, tele):
@@ -248,7 +256,7 @@ def backflip(cf, tele, hover):
 
     # Rate mode for pitch (affects raw setpoints only; HL keeps hovering).
     if not set_param_sync(cf, 'flightmode.stabModePitch', 0):
-        print('Drone did not confirm rate mode. Skipping the flip.')
+        log.error('Drone did not confirm rate mode. Skipping the flip.')
         return
 
     tele.start_tracking()
@@ -312,56 +320,59 @@ def backflip(cf, tele, hover):
 
     with tele.lock:
         apex, low, rot_peak = tele.max_z, tele.min_z, tele.rot_max
-    print(f'Entry: vz={entry_vz:.2f} m/s at z={entry_z:.2f} m')
-    print(f'Rotation: handed over at {handover_rot:.0f} deg after {rot_time:.2f} s'
-          f'{"  (TIMED OUT)" if timed_out else ""}, peak {abs(rot_peak):.0f} deg '
-          f'(overshoot past 360: {max(0, abs(rot_peak) - 360):.0f} deg)')
-    print(f'Recovery: {rec_time:.2f} s at full power')
-    print(f'Altitude: apex {apex:.2f} m, lowest {low:.2f} m, '
-          f'lost {start_z - low:.2f} m below the pre-flip height (estimator, see note)')
-    print('Note: the Lighthouse estimate can glitch while the deck is inverted; '
-          'for the true loss, film the flip next to a tape mark on a wall.')
+    log.info('Entry: vz=%.2f m/s at z=%.2f m', entry_vz, entry_z)
+    log.info('Rotation: handed over at %.0f deg after %.2f s%s, peak %.0f deg '
+             '(overshoot past 360: %.0f deg)',
+             handover_rot, rot_time, '  (TIMED OUT)' if timed_out else '',
+             abs(rot_peak), max(0, abs(rot_peak) - 360))
+    log.info('Recovery: %.2f s at full power', rec_time)
+    log.info('Altitude: apex %.2f m, lowest %.2f m, lost %.2f m below the '
+             'pre-flip height (estimator, see note)',
+             apex, low, start_z - low)
+    log.info('Note: the Lighthouse estimate can glitch while the deck is inverted; '
+             'for the true loss, film the flip next to a tape mark on a wall.')
     if not confirmed:
-        print('Warning: angle mode switch was not confirmed in time.')
+        log.warning('Angle mode switch was not confirmed in time.')
 
 
 def main(do_flip):
     cflib.crtp.init_drivers()
-    print(f'Connecting to {URI} ...')
+    log.info('Connecting to %s ...', URI)
     scf = SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache'))
     try:
         scf.open_link()
     except Exception as e:
-        print(f'\nCould not connect: {e}')
-        print('Close cfclient (only one program can use the Crazyradio) and retry.')
+        log.error('Could not connect: %s', e)
+        log.error('Close cfclient (only one program can use the Crazyradio) and retry.')
         sys.exit(1)
 
     cf = scf.cf
     tele = Telemetry()
     log_confs = []
-    print('Connected.')
+    log.info('Connected. Flight CSV will be %s', LOG_FILE)
     try:
         vbat = read_battery(scf)
-        print(f'Battery: {vbat} V')
+        log.info('Battery: %s V', vbat)
         if vbat is None or vbat < MIN_BATTERY_V:
-            print('Battery unreadable or too low. Charge it first.')
+            log.error('Battery unreadable or too low. Charge it first.')
             return
 
         set_param_sync(cf, 'flightmode.stabModePitch', 1)
-        print('Waiting for the position estimate to settle...')
+        log.info('Waiting for the position estimate to settle...')
         reset_estimator(scf)
         log_confs = start_telemetry(scf, tele)
         time.sleep(0.5)
         if not tele.received:
-            print('No telemetry received. Aborting.')
+            log.error('No telemetry received. Aborting.')
             return
 
         with tele.lock:
             sx, sy, sz = tele.x, tele.y, tele.z
         target_z = min(sz + CLIMB_ABOVE_START, MAX_Z)
-        print(f'Start position: ({sx:.2f}, {sy:.2f}, {sz:.2f}) -> hover at z={target_z:.2f}')
+        log.info('Start position: (%.2f, %.2f, %.2f) -> hover at z=%.2f',
+                 sx, sy, sz, target_z)
         if target_z - sz < 0.5:
-            print('Not enough room below MAX_Z. Lower the start point or raise MAX_Z.')
+            log.error('Not enough room below MAX_Z. Lower the start point or raise MAX_Z.')
             return
 
         cf.supervisor.send_arming_request(True)
@@ -372,7 +383,7 @@ def main(do_flip):
 
         hl = cf.high_level_commander
         tele.phase = 'takeoff'
-        print('Taking off...')
+        log.info('Taking off...')
         hl.takeoff(target_z, TAKEOFF_TIME)
         time.sleep(TAKEOFF_TIME + 0.5)
         hl.go_to(sx, sy, target_z, 0.0, 1.0)
@@ -381,19 +392,19 @@ def main(do_flip):
         tele.phase = 'hover'
         hover = measure_hover_thrust(tele)
         z_now = tele.snapshot()[0]
-        print(f'Hovering at z={z_now:.2f}, measured hover thrust: {hover}')
+        log.info('Hovering at z=%.2f, measured hover thrust: %s', z_now, hover)
         if z_now > MAX_Z + 0.2:
-            print('Too high! Landing without flipping.')
+            log.warning('Too high! Landing without flipping.')
             do_flip = False
         if hover is None:
-            print(f'Could not measure hover thrust, using {FALLBACK_HOVER_THRUST}.')
+            log.warning('Could not measure hover thrust, using %s.', FALLBACK_HOVER_THRUST)
             hover = FALLBACK_HOVER_THRUST
         elif hover > MAX_THRUST / 1.3:
-            print('Warning: hover thrust is close to max. Little power left to '
-                  'recover from a flip (heavy deck / weak battery / brushed motors).')
+            log.warning('Hover thrust is close to max. Little power left to '
+                        'recover from a flip (heavy deck / weak battery / brushed motors).')
 
         if do_flip:
-            print('Flipping!')
+            log.info('Flipping!')
             backflip(cf, tele, hover)
             # Hand straight to the position controller to catch the drone.
             tele.phase = 'catch'
@@ -406,12 +417,12 @@ def main(do_flip):
             time.sleep(1.0)
 
         tele.phase = 'land'
-        print('Landing...')
+        log.info('Landing...')
         hl.land(sz, 3.0)
         time.sleep(3.5)
         hl.stop()
     except KeyboardInterrupt:
-        pass
+        log.warning('Interrupted — stopping.')
     finally:
         try:
             cf.param.set_value('flightmode.stabModePitch', '1')
