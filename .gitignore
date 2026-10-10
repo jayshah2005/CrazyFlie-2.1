@@ -28,8 +28,10 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# Vendored Bitcraze lib (install via pip — see README)
+# Vendored Bitcraze trees (clone separately — see README)
 crazyflie-lib-python/
+crazyflie-firmware/
+aideck-gap8-examples/
 
 # Crazyflie radio / TOC cache
 cache/
