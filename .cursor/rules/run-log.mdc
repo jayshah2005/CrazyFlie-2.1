@@ -1,0 +1,23 @@
+---
+description: always use run_log for script console and CSV logs — never reinvent logging
+alwaysApply: true
+---
+
+# Shared run_log
+
+All Crazyflie scripts must use `run_log.py` for console output and CSV/telemetry logs. Do not use bare `print()`, ad-hoc loggers, or homemade CSV writers.
+
+Read and follow `.agents/skills/run-log/SKILL.md` (also `.cursor/skills/run-log` and `.claude/skills/run-log`).
+
+## Required
+
+```python
+import run_log
+log = run_log.setup(__file__)
+```
+
+- `log.info` / `log.warning` / `log.error` instead of `print`
+- CSVs via `run_log.csv_path(...)` + `run_log.write_csv(...)` (script + timestamp metadata)
+- Extend `run_log.py` if you need new logging features — do not invent a parallel module
+
+Reference: `flip.py`, `script.py`.
