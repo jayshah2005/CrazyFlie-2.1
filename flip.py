@@ -76,7 +76,9 @@ MIN_RECOVER_TIME = 0.15   # s at full power, at least.
 MAX_RECOVER_TIME = 0.8    # s at full power, at most.
 
 FALLBACK_HOVER_THRUST = 35000
-MIN_BATTERY_V = 3.9
+# 1S LiPo: ~4.2 V full, ~3.0 V empty. 3.5 V still leaves headroom for a flip;
+# 3.9 was rejecting healthy packs (e.g. 3.89 V).
+MIN_BATTERY_V = 3.5
 RATE_HZ = 100
 # ---------------------------------------------------------------------------
 
@@ -352,9 +354,13 @@ def main(do_flip):
     log.info('Connected. Flight CSV will be %s', LOG_FILE)
     try:
         vbat = read_battery(scf)
-        log.info('Battery: %s V', vbat)
-        if vbat is None or vbat < MIN_BATTERY_V:
-            log.error('Battery unreadable or too low. Charge it first.')
+        log.info('Battery: %s V (min %.2f V)', vbat, MIN_BATTERY_V)
+        if vbat is None:
+            log.error('Battery unreadable (no pm.vbat sample). Retry / check radio.')
+            return
+        if vbat < MIN_BATTERY_V:
+            log.error('Battery too low: %.3f V < %.2f V. Charge it first.',
+                      vbat, MIN_BATTERY_V)
             return
 
         set_param_sync(cf, 'flightmode.stabModePitch', 1)
