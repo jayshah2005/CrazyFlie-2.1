@@ -55,7 +55,7 @@ from cflib.utils.reset_estimator import reset_estimator
 
 import run_log
 
-URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E7E7')
+URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E7EA')
 log = run_log.setup(__file__)
 STARTED_AT = datetime.now().astimezone()
 LOG_FILE = run_log.csv_path('flight', script=__file__, when=STARTED_AT)
