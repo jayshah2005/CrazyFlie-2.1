@@ -1,0 +1,429 @@
+diff --git a/include/learning_to_fly/simulator/parameters/dynamics/crazyflie_brushless.h b/include/learning_to_fly/simulator/parameters/dynamics/crazyflie_brushless.h
+new file mode 100644
+index 0000000..b4c5d38
+--- /dev/null
++++ b/include/learning_to_fly/simulator/parameters/dynamics/crazyflie_brushless.h
+@@ -0,0 +1,67 @@
++
++#include "../../multirotor.h"
++
++// Crazyflie 2.1 Brushless (41.3 g with battery, Lighthouse and Flow deck).
++// Sources:
++//   - mass: scale
++//   - thrust constant, motor time constant: sysid flights with the stock PID
++//     (eRPM telemetry; hover 15,460 RPM, tau 0.055-0.065 s)
++//   - inertia, arm length, torque/thrust ratio: Busetto et al., arXiv 2512.14450
++//     (45 g configuration; inertia scaled by mass)
++// Layout and rotor/torque directions follow crazy_flie.h.
++#define L2F_CF21BL_ARM 0.03535
++
++namespace rl_tools::rl::environments::multirotor::parameters::dynamics{
++    template<typename T, typename TI, typename REWARD_FUNCTION>
++    constexpr typename ParametersBase <T, TI, TI(4), REWARD_FUNCTION>::Dynamics crazyflie_brushless = {
++            // Rotor positions
++            {
++                    { L2F_CF21BL_ARM, -L2F_CF21BL_ARM, 0},
++                    {-L2F_CF21BL_ARM, -L2F_CF21BL_ARM, 0},
++                    {-L2F_CF21BL_ARM,  L2F_CF21BL_ARM, 0},
++                    { L2F_CF21BL_ARM,  L2F_CF21BL_ARM, 0},
++            },
++            // Rotor thrust directions
++            {
++                    {0, 0, 1},
++                    {0, 0, 1},
++                    {0, 0, 1},
++                    {0, 0, 1},
++            },
++            // Rotor torque directions
++            {
++                    {0, 0, -1},
++                    {0, 0, +1},
++                    {0, 0, -1},
++                    {0, 0, +1},
++            },
++            // thrust constants: thrust [N] = c2 * rpm^2 (3.86e-8 N/(rad/s)^2)
++            {
++                    0,
++                    0,
++                    4.233e-10
++            },
++            // torque constant (rotor torque / thrust)
++            0.0021,
++            // mass vehicle
++            0.0413,
++            // gravity
++            {0, 0, -9.81},
++            // J
++            {
++                    {2.198e-5, 0, 0},
++                    {0, 2.198e-5, 0},
++                    {0, 0, 2.969e-5}
++            },
++            // J_inv
++            {
++                    {45495.9, 0, 0},
++                    {0, 45495.9, 0},
++                    {0, 0, 33681.4}
++            },
++            // T, RPM time constant
++            0.06,
++            // action limit (RPM)
++            {0, 24000},
++    };
++}
+diff --git a/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h b/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h
+new file mode 100644
+index 0000000..49a7658
+--- /dev/null
++++ b/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h
+@@ -0,0 +1,40 @@
++#include "squared.h"
++
++// Same weights as reward_squared_position_only_torque(_curriculum_target) in
++// default.h; only the action baseline changes. The baseline is the normalized
++// hover action: brushed 14.5k/21.7k RPM -> 0.334, brushless 15,460/24,000 RPM
++// -> 2 * 0.644 - 1 = 0.288.
++#define L2F_CF21BL_ACTION_BASELINE (0.288)
++
++namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
++    template<typename T>
++    constexpr Squared<T> reward_squared_position_only_torque_brushless = {
++            false, // non-negative
++            0.5, // scale
++            2, // constant
++            0, // termination penalty
++            5, // position
++            5, // orientation
++            0.01, // linear_velocity
++            0, // angular_velocity
++            0, // linear_acceleration
++            0, // angular_acceleration
++            L2F_CF21BL_ACTION_BASELINE, // action baseline
++            0.01, // action
++    };
++    template<typename T>
++    constexpr Squared<T> reward_squared_position_only_torque_curriculum_target_brushless = {
++            false, // non-negative
++            0.5, // scale
++            2, // constant
++            0, // termination penalty
++            40, // position
++            5, // orientation
++            1.00, // linear_velocity
++            0, // angular_velocity
++            0, // linear_acceleration
++            0, // angular_acceleration
++            L2F_CF21BL_ACTION_BASELINE, // action baseline
++            1.00, // action
++    };
++}
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index f2c4dc2..5a85468 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -51,4 +51,13 @@ endif()
+ 
+ if(RL_TOOLS_BACKEND_ENABLE_CUDA)
+     add_subdirectory(cuda)
+-endif()
+\ No newline at end of file
++endif()
++if(RL_TOOLS_ENABLE_HDF5)
++add_executable(evaluate_robustness evaluate_robustness.cpp)
++target_link_libraries(
++        evaluate_robustness
++        PRIVATE
++        rl_tools
++        learning_to_fly
++)
++endif()
+diff --git a/src/config/config.h b/src/config/config.h
+index 11edbd5..3174e40 100644
+--- a/src/config/config.h
++++ b/src/config/config.h
+@@ -71,7 +71,11 @@ namespace learning_to_fly{
+             static constexpr bool COLLECT_EPISODE_STATS = false;
+             static constexpr TI EPISODE_STATS_BUFFER_SIZE = 1000;
+             static constexpr TI N_ENVIRONMENTS = 1;
++#ifdef L2F_STEP_LIMIT
++            static constexpr TI STEP_LIMIT = L2F_STEP_LIMIT;
++#else
+             static constexpr TI STEP_LIMIT = 300001;
++#endif
+ //            static constexpr TI REPLAY_BUFFER_LIMIT = 3000000;
+             static constexpr TI REPLAY_BUFFER_CAP = STEP_LIMIT;
+             static constexpr TI ENVIRONMENT_STEP_LIMIT = 500;
+diff --git a/src/config/parameters.h b/src/config/parameters.h
+index 8341a2f..8200a72 100644
+--- a/src/config/parameters.h
++++ b/src/config/parameters.h
+@@ -6,6 +6,8 @@
+ #include <learning_to_fly/simulator/parameters/reward_functions/absolute.h>
+ #include <learning_to_fly/simulator/parameters/reward_functions/default.h>
+ #include <learning_to_fly/simulator/parameters/dynamics/crazy_flie.h>
++#include <learning_to_fly/simulator/parameters/dynamics/crazyflie_brushless.h>
++#include <learning_to_fly/simulator/parameters/reward_functions/brushless.h>
+ #include <learning_to_fly/simulator/parameters/init/default.h>
+ #include <learning_to_fly/simulator/parameters/termination/default.h>
+ 
+@@ -29,8 +31,15 @@ namespace parameters{
+         template<typename T, typename TI, typename T_ABLATION_SPEC>
+         struct environment {
+             using ABLATION_SPEC = T_ABLATION_SPEC;
++#ifdef L2F_BRUSHLESS
++            static constexpr auto initial_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_squared_position_only_torque_brushless<T>;
++            static constexpr auto target_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_squared_position_only_torque_curriculum_target_brushless<T>;
++            static constexpr T MASS = 0.0413;
++#else
+             static constexpr auto initial_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_squared_position_only_torque<T>;
+             static constexpr auto target_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_squared_position_only_torque_curriculum_target<T>;
++            static constexpr T MASS = 0.027;
++#endif
+             static constexpr auto reward_function = ABLATION_SPEC::USE_INITIAL_REWARD_FUNCTION ? initial_reward_function : target_reward_function;
+ 
+ 
+@@ -46,7 +55,11 @@ namespace parameters{
+                                                 rl_tools::rl::environments::multirotor::parameters::init::all_positions<T, TI, 4, REWARD_FUNCTION>;
+ 
+             static constexpr PARAMETERS_TYPE parameters = {
++#ifdef L2F_BRUSHLESS
++                    rl_tools::rl::environments::multirotor::parameters::dynamics::crazyflie_brushless<T, TI, REWARD_FUNCTION>,
++#else
+                     rl_tools::rl::environments::multirotor::parameters::dynamics::crazy_flie<T, TI, REWARD_FUNCTION>,
++#endif
+                     {0.01}, // integration dt
+                     {
+                             init_params,
+@@ -63,8 +76,8 @@ namespace parameters{
+                             rl_tools::rl::environments::multirotor::parameters::termination::fast_learning<T, TI, 4, REWARD_FUNCTION>
+                     },
+                     typename PARAMETERS_TYPE::Disturbances{
+-                            typename PARAMETERS_TYPE::Disturbances::UnivariateGaussian{0, 0.027 * 9.81 / 20 * ABLATION_SPEC::DISTURBANCE}, // random_force;
+-                            typename PARAMETERS_TYPE::Disturbances::UnivariateGaussian{0, 0.027 * 9.81 / 10000 * ABLATION_SPEC::DISTURBANCE} // random_torque;
++                            typename PARAMETERS_TYPE::Disturbances::UnivariateGaussian{0, MASS * 9.81 / 20 * ABLATION_SPEC::DISTURBANCE}, // random_force;
++                            typename PARAMETERS_TYPE::Disturbances::UnivariateGaussian{0, MASS * 9.81 / 10000 * ABLATION_SPEC::DISTURBANCE} // random_torque;
+                     }
+ 
+             };
+diff --git a/src/evaluate_robustness.cpp b/src/evaluate_robustness.cpp
+new file mode 100644
+index 0000000..fc55bd1
+--- /dev/null
++++ b/src/evaluate_robustness.cpp
+@@ -0,0 +1,216 @@
++// Headless robustness check of a trained actor (.h5 checkpoint).
++//
++// Runs many 10 s episodes from the training initial-state distribution (up to
++// 90 deg tilt) and from near-hover starts, under the nominal dynamics and with
++// the dynamics parameters perturbed (mass, thrust, motor time constant,
++// inertia). Reports the fraction of episodes that never terminate and the
++// position error over the last 5 s. Observation noise and disturbances stay as
++// in training.
++//
++// Usage: evaluate_robustness <actor.h5> [episodes]
++#include "training.h"
++
++#include <highfive/H5File.hpp>
++#include <cmath>
++#include <cstdio>
++#include <cstdlib>
++#include <string>
++
++using CONFIG = learning_to_fly::config::Config<parameters::DefaultAblationSpec>;
++using DEVICE = typename CONFIG::DEVICE;
++using T = typename CONFIG::T;
++using TI = typename CONFIG::TI;
++using ENVIRONMENT = typename CONFIG::ENVIRONMENT;
++using PENV = parameters::environment<T, TI, parameters::DefaultAblationSpec>;
++
++constexpr TI EPISODE_STEPS = 1000;        // 10 s at dt = 0.01
++constexpr TI SETTLED_FROM_STEP = 500;     // error measured over the last 5 s
++
++struct Variation{
++    const char* name;
++    T mass, thrust, tau, inertia;
++    T disturbance = 1;
++    // Handover test: if >= -1, near-hover starts get motors at hover speed and an
++    // action history filled with this value (hover = normalized hover action).
++    T history = -2;
++    T history_rear = -3;  // if >= -1: rotors 1 and 2 (rear) get this instead
++};
++
++struct Result{
++    TI ok = 0, total = 0;
++    T err_sum = 0;
++    TI err_n = 0;
++};
++
++template <typename ACTOR, typename BUFFER, typename RNG>
++Result run(DEVICE& dev, ACTOR& actor, BUFFER& buffer, const Variation& v, bool hover_start, TI episodes, RNG& rng){
++    ENVIRONMENT env;
++    env.parameters = PENV::parameters;
++    env.parameters.mdp.reward = PENV::target_reward_function;
++    if(hover_start){
++        env.parameters.mdp.init = rlt::rl::environments::multirotor::parameters::init::orientation_small_angle<T, TI, 4, typename PENV::REWARD_FUNCTION>;
++    }
++    auto& d = env.parameters.dynamics;
++    d.mass *= v.mass;
++    d.thrust_constants[2] *= v.thrust;
++    d.rpm_time_constant *= v.tau;
++    env.parameters.disturbances.random_force.std *= v.disturbance;
++    env.parameters.disturbances.random_torque.std *= v.disturbance;
++    for(TI i = 0; i < 3; i++){
++        d.J[i][i] *= v.inertia;
++        d.J_inv[i][i] /= v.inertia;
++    }
++    rlt::malloc(dev, env);
++    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
++    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::ACTION_DIM>> action;
++    rlt::malloc(dev, observation);
++    rlt::malloc(dev, action);
++
++    Result r;
++    typename ENVIRONMENT::State state, next_state;
++    for(TI e = 0; e < episodes; e++){
++        rlt::sample_initial_state(dev, env, state, rng);
++        if(hover_start && v.history >= -1){
++            T hover_rpm = std::sqrt(d.mass * 9.81 / 4 / d.thrust_constants[2]);
++            T hover_action = (hover_rpm - d.action_limit.min) / (d.action_limit.max - d.action_limit.min) * 2 - 1;
++            T fill = v.history > 1.5 ? hover_action : v.history;
++            for(TI m = 0; m < 4; m++){
++                state.rpm[m] = hover_rpm;
++                for(TI h = 0; h < ENVIRONMENT::State::HISTORY_LENGTH; h++){
++                    state.action_history[h][m] = (v.history_rear >= -1 && (m == 1 || m == 2)) ? v.history_rear : fill;
++                }
++            }
++        }
++        bool alive = true;
++        for(TI step = 0; step < EPISODE_STEPS; step++){
++            rlt::observe(dev, env, state, observation, rng);
++            rlt::evaluate(dev, actor, observation, action, buffer);
++            rlt::clamp(dev, action, (T)-1, (T)1);
++            rlt::step(dev, env, state, action, next_state, rng);
++            state = next_state;
++            if(rlt::terminated(dev, env, state, rng)){
++                alive = false;
++                break;
++            }
++            if(step >= SETTLED_FROM_STEP){
++                r.err_sum += std::sqrt(state.position[0] * state.position[0] + state.position[1] * state.position[1] + state.position[2] * state.position[2]);
++                r.err_n++;
++            }
++        }
++        r.ok += alive;
++        r.total++;
++    }
++    rlt::free(dev, observation);
++    rlt::free(dev, action);
++    return r;
++}
++
++int main(int argc, char** argv){
++    if(argc < 2){
++        std::printf("usage: %s <actor.h5> [episodes]\n", argv[0]);
++        return 1;
++    }
++    TI episodes = argc > 2 ? std::atoi(argv[2]) : 200;
++    DEVICE dev;
++    typename CONFIG::ACTOR_TYPE actor;
++    typename CONFIG::ACTOR_TYPE::template DoubleBuffer<1> buffer;
++    rlt::malloc(dev, actor);
++    rlt::malloc(dev, buffer);
++    {
++        auto file = HighFive::File(argv[1], HighFive::File::ReadOnly);
++        rlt::load(dev, actor, file.getGroup("actor"));
++    }
++    auto rng = rlt::random::default_engine(DEVICE::SPEC::RANDOM(), 12345);
++
++    if(argc > 3 && std::string(argv[3]) == "probe"){
++        // Observation and action for a perfectly hovering drone, as the
++        // simulator builds them (no observation noise).
++        ENVIRONMENT env;
++        env.parameters = PENV::parameters;
++        env.parameters.mdp.observation_noise.position = 0;
++        env.parameters.mdp.observation_noise.orientation = 0;
++        env.parameters.mdp.observation_noise.linear_velocity = 0;
++        env.parameters.mdp.observation_noise.angular_velocity = 0;
++        rlt::malloc(dev, env);
++        typename ENVIRONMENT::State s;
++        rlt::sample_initial_state(dev, env, s, rng);
++        auto& d = env.parameters.dynamics;
++        T hover_rpm = std::sqrt(d.mass * 9.81 / 4 / d.thrust_constants[2]);
++        T hover_action = (hover_rpm - d.action_limit.min) / (d.action_limit.max - d.action_limit.min) * 2 - 1;
++        for(TI i = 0; i < 3; i++){ s.position[i] = 0; s.linear_velocity[i] = 0; s.angular_velocity[i] = 0; }
++        s.orientation[0] = 1; s.orientation[1] = 0; s.orientation[2] = 0; s.orientation[3] = 0;
++        for(TI m = 0; m < 4; m++){
++            s.rpm[m] = hover_rpm;
++            for(TI h = 0; h < ENVIRONMENT::State::HISTORY_LENGTH; h++) s.action_history[h][m] = hover_action;
++        }
++        rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
++        rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::ACTION_DIM>> action;
++        rlt::malloc(dev, observation);
++        rlt::malloc(dev, action);
++        rlt::observe(dev, env, s, observation, rng);
++        rlt::evaluate(dev, actor, observation, action, buffer);
++        std::printf("hover rpm %.0f, hover action %.3f, obs dim %d\nobs[0..21]:", (double)hover_rpm, (double)hover_action, (int)ENVIRONMENT::OBSERVATION_DIM);
++        for(TI i = 0; i < 22; i++) std::printf(" %.3f", (double)rlt::get(observation, 0, i));
++        std::printf("\naction: %.3f %.3f %.3f %.3f\n", (double)rlt::get(action, 0, 0), (double)rlt::get(action, 0, 1), (double)rlt::get(action, 0, 2), (double)rlt::get(action, 0, 3));
++
++        // Fly 5 s from this hover state and summarize how jumpy the actions are.
++        T sum[4] = {}, sq[4] = {}, jump = 0, sat = 0, max_tilt = 0;
++        TI n = 0;
++        typename ENVIRONMENT::State next;
++        for(TI step = 0; step < 500; step++){
++            rlt::observe(dev, env, s, observation, rng);
++            rlt::evaluate(dev, actor, observation, action, buffer);
++            rlt::clamp(dev, action, (T)-1, (T)1);
++            for(TI m = 0; m < 4; m++){
++                T a = rlt::get(action, 0, m);
++                sum[m] += a; sq[m] += a * a;
++                sat += std::abs(a) > 0.95;
++                jump += std::abs(a - s.action_history[ENVIRONMENT::State::HISTORY_LENGTH - 1][m]);
++            }
++            rlt::step(dev, env, s, action, next, rng);
++            s = next;
++            T qw = s.orientation[0];
++            T tilt = 2 * std::acos(std::min((T)1, std::sqrt(qw * qw + s.orientation[3] * s.orientation[3])));
++            max_tilt = std::max(max_tilt, tilt);
++            n++;
++        }
++        for(TI m = 0; m < 4; m++){
++            T mean = sum[m] / n;
++            std::printf("motor %d: action mean %.3f std %.3f\n", (int)m, (double)mean, (double)std::sqrt(sq[m] / n - mean * mean));
++        }
++        std::printf("mean |action change| per step %.3f, saturated %.1f%%, max tilt %.1f deg, final pos (%.3f %.3f %.3f)\n",
++                    (double)(jump / (4 * n)), (double)(100 * sat / (4 * n)), (double)(max_tilt * 180 / M_PI),
++                    (double)s.position[0], (double)s.position[1], (double)s.position[2]);
++        return 0;
++    }
++
++    const Variation variations[] = {
++        {"nominal",          1.00, 1.00, 1.00, 1.0},
++        {"no disturbance",   1.00, 1.00, 1.00, 1.0, 0.0},
++        {"handover: history=hover",  1.00, 1.00, 1.00, 1.0, 1.0, 2.0},
++        {"handover: history=-0.9",   1.00, 1.00, 1.00, 1.0, 1.0, -0.9},
++        {"handover: history=-1.0",   1.00, 1.00, 1.00, 1.0, 1.0, -1.0},
++        {"handover: front -1, rear -0.6", 1.00, 1.00, 1.00, 1.0, 1.0, -1.0, -0.6},
++        {"handover: front -1, rear 0",    1.00, 1.00, 1.00, 1.0, 1.0, -1.0, 0.0},
++        {"mass +10%",        1.10, 1.00, 1.00, 1.0},
++        {"mass -10%",        0.90, 1.00, 1.00, 1.0},
++        {"thrust +10%",      1.00, 1.10, 1.00, 1.0},
++        {"thrust -10%",      1.00, 0.90, 1.00, 1.0},
++        {"motor tau 0.04 s", 1.00, 1.00, 0.04 / 0.06, 1.0},
++        {"motor tau 0.08 s", 1.00, 1.00, 0.08 / 0.06, 1.0},
++        {"inertia +50%",     1.00, 1.00, 1.00, 1.5},
++        {"inertia -30%",     1.00, 1.00, 1.00, 0.7},
++    };
++    std::printf("dynamics: mass %.4f kg, thrust c2 %.3e, tau %.3f s, max rpm %.0f\n",
++                (double)PENV::parameters.dynamics.mass, (double)PENV::parameters.dynamics.thrust_constants[2],
++                (double)PENV::parameters.dynamics.rpm_time_constant, (double)PENV::parameters.dynamics.action_limit.max);
++    std::printf("%-26s | %-26s | %-26s\n", "variation", "training starts (<=90deg)", "near-hover starts (<=10deg)");
++    for(const auto& v : variations){
++        Result a = run(dev, actor, buffer, v, false, episodes, rng);
++        Result b = run(dev, actor, buffer, v, true, episodes, rng);
++        std::printf("%-26s | %5.1f%% ok, err %6.3f m    | %5.1f%% ok, err %6.3f m\n", v.name,
++                    100.0 * a.ok / a.total, a.err_n ? (double)(a.err_sum / a.err_n) : NAN,
++                    100.0 * b.ok / b.total, b.err_n ? (double)(b.err_sum / b.err_n) : NAN);
++    }
++    return 0;
++}
