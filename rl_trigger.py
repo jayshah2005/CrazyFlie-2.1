@@ -22,6 +22,9 @@ trained on the identified brushless model).
 
 Modes:
   takeoff_and_switch  stock PID takes off, policy takes over after --switch-after s
+  land                as takeoff_and_switch, then after --hover-time s the policy's
+                      target descends at --descent-rate; motors cut below
+                      --cut-height (needs firmware with target-offset packets)
   hover_learned       policy does the take-off itself (ground effect: try 2nd)
   figure_eight        PID take-off, then policy tracks a figure eight
   hover_original      stock PID only (baseline for comparison)
@@ -174,11 +177,13 @@ def set_param(cf, name, value, timeout=2.0):
     raise RuntimeError(f'Could not set {name} to {value}')
 
 
-def send_learned(cf):
+def send_learned(cf, offset=None):
+    """Keep the policy flying; `offset` (x, y, z m) moves its target away from
+    the activation point (needs firmware with target-offset support)."""
     pk = CRTPPacket()
     pk.port = CRTPPort.COMMANDER_GENERIC
     pk.channel = META_COMMAND_CHANNEL
-    pk.data = LEARNED_PACKET
+    pk.data = LEARNED_PACKET if offset is None else struct.pack('<Bfff', 1, *offset)
     cf.send_packet(pk)
 
 
@@ -186,7 +191,7 @@ def configure(cf, args):
     log.info('Setting controller parameters:')
     set_param(cf, 'stabilizer.controller', CONTROLLER_OOT)  # learned controller (PID inside until triggered)
     set_param(cf, 'rlt.trigger', 0)  # policy runs while learned packets arrive
-    if args.mode in ('takeoff_and_switch', 'hover_original'):
+    if args.mode in ('takeoff_and_switch', 'land', 'hover_original'):
         set_param(cf, 'rlt.wn', MODE_POSITION)
         set_param(cf, 'rlt.target_z', 0)       # hold where the hand-over happens
         set_param(cf, 'rlt.motor_warmup', 0)
@@ -227,7 +232,27 @@ def preflight(scf, args):
                   'frame: rotate the drone to face +X (within %.0f deg) and retry.',
                   pose['yaw'], args.max_yaw_deg)
         return None
+    if supervisor_locked(scf):
+        log.error('The drone is locked (emergency stop from the previous run). '
+                  'Power-cycle it and retry.')
+        return None
     return pose
+
+
+SUPERVISOR_LOCKED_BIT = 1 << 6  # supervisor.info bit layout in crazyflie-firmware
+
+
+def supervisor_locked(scf):
+    """True if the supervisor latched an emergency stop (only a reboot clears it)."""
+    info = []
+    lg = LogConfig(name='Supervisor', period_in_ms=100)
+    lg.add_variable('supervisor.info', 'uint16_t')
+    lg.data_received_cb.add_callback(lambda t, d, c: info.append(d['supervisor.info']))
+    scf.cf.log.add_config(lg)
+    lg.start()
+    time.sleep(0.3)
+    lg.stop()
+    return bool(info and info[-1] & SUPERVISOR_LOCKED_BIT)
 
 
 def fly(scf, args, pose, tele):
@@ -240,13 +265,19 @@ def fly(scf, args, pose, tele):
     log.info('READY. Hold ENTER to fly (release = stop). Press Q to quit.')
 
     hold_start = None
+    learned_start = None
+    landed = False
     while not key_down(VK_Q):
         now = time.time()
+        if landed:
+            time.sleep(SEND_PERIOD)
+            continue
         if not key_down(VK_RETURN):
             if hold_start is not None:
                 log.warning('Enter released after %.1f s: packets stopped.',
                             now - hold_start)
             hold_start = None
+            learned_start = None
             tele.phase = 'idle'
             time.sleep(SEND_PERIOD)
             continue
@@ -262,11 +293,29 @@ def fly(scf, args, pose, tele):
         if use_pid:
             tele.phase = 'pid'
             cf.commander.send_hover_setpoint(0, 0, 0, hover_z)
-        else:
+        elif args.mode != 'land':
             if tele.phase != 'learned':
                 log.info('Learned policy now in control.')
             tele.phase = 'learned'
             send_learned(cf)
+        else:
+            if learned_start is None:
+                learned_start = now
+                log.info('Learned policy now in control; landing in %.0f s.', args.hover_time)
+            descend_for = now - learned_start - args.hover_time
+            dz = -min(args.height, max(0.0, descend_for * args.descent_rate))
+            height = tele.rows[-1][4] - pose['z'] if tele.rows else args.height
+            at_floor_for = descend_for - args.height / args.descent_rate
+            if height < args.cut_height or at_floor_for > args.floor_timeout:
+                landed = True
+                tele.phase = 'landed'
+                log.info('Landed (%.2f m above the take-off point): motors cut. '
+                         'Release Enter and press Q.', height)
+                continue
+            if descend_for > 0 and tele.phase != 'landing':
+                log.info('Descending at %.2f m/s.', args.descent_rate)
+            tele.phase = 'landing' if descend_for > 0 else 'learned'
+            send_learned(cf, (0.0, 0.0, dz))
         time.sleep(SEND_PERIOD)
     log.info('Q pressed: quitting.')
 
@@ -322,8 +371,16 @@ def main(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--mode', default='takeoff_and_switch',
-                        choices=['takeoff_and_switch', 'hover_learned',
+                        choices=['takeoff_and_switch', 'land', 'hover_learned',
                                  'figure_eight', 'hover_original'])
+    parser.add_argument('--hover-time', type=float, default=5.0,
+                        help='land: s of learned hover before descending')
+    parser.add_argument('--descent-rate', type=float, default=0.1,
+                        help='land: target descent speed in m/s (default 0.1)')
+    parser.add_argument('--cut-height', type=float, default=0.06,
+                        help='land: cut motors below this height above take-off (m)')
+    parser.add_argument('--floor-timeout', type=float, default=2.0,
+                        help='land: cut motors this long after the target reached the floor')
     parser.add_argument('--height', type=float, default=0.3,
                         help='m above the take-off point (default 0.3)')
     parser.add_argument('--switch-after', type=float, default=3.0,
