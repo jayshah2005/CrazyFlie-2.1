@@ -73,10 +73,10 @@ index 0000000..b4c5d38
 +}
 diff --git a/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h b/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h
 new file mode 100644
-index 0000000..49a7658
+index 0000000..82ddcb7
 --- /dev/null
 +++ b/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,45 @@
 +#include "squared.h"
 +
 +// Same weights as reward_squared_position_only_torque(_curriculum_target) in
@@ -84,6 +84,11 @@ index 0000000..49a7658
 +// hover action: brushed 14.5k/21.7k RPM -> 0.334, brushless 15,460/24,000 RPM
 +// -> 2 * 0.644 - 1 = 0.288.
 +#define L2F_CF21BL_ACTION_BASELINE (0.288)
++// Penalty on angular acceleration (rad/s^2)^2 to discourage motor chatter
++// under realistic gyro noise; 0 = the paper's reward.
++#ifndef L2F_ANG_ACC_WEIGHT
++#define L2F_ANG_ACC_WEIGHT 0
++#endif
 +
 +namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
 +    template<typename T>
@@ -97,7 +102,7 @@ index 0000000..49a7658
 +            0.01, // linear_velocity
 +            0, // angular_velocity
 +            0, // linear_acceleration
-+            0, // angular_acceleration
++            L2F_ANG_ACC_WEIGHT, // angular_acceleration
 +            L2F_CF21BL_ACTION_BASELINE, // action baseline
 +            0.01, // action
 +    };
@@ -112,7 +117,7 @@ index 0000000..49a7658
 +            1.00, // linear_velocity
 +            0, // angular_velocity
 +            0, // linear_acceleration
-+            0, // angular_acceleration
++            L2F_ANG_ACC_WEIGHT, // angular_acceleration
 +            L2F_CF21BL_ACTION_BASELINE, // action baseline
 +            1.00, // action
 +    };
@@ -154,10 +159,10 @@ index 11edbd5..3174e40 100644
              static constexpr TI REPLAY_BUFFER_CAP = STEP_LIMIT;
              static constexpr TI ENVIRONMENT_STEP_LIMIT = 500;
 diff --git a/src/config/parameters.h b/src/config/parameters.h
-index 8341a2f..8200a72 100644
+index 8341a2f..26d9dfb 100644
 --- a/src/config/parameters.h
 +++ b/src/config/parameters.h
-@@ -6,6 +6,8 @@
+@@ -6,11 +6,28 @@
  #include <learning_to_fly/simulator/parameters/reward_functions/absolute.h>
  #include <learning_to_fly/simulator/parameters/reward_functions/default.h>
  #include <learning_to_fly/simulator/parameters/dynamics/crazy_flie.h>
@@ -166,7 +171,27 @@ index 8341a2f..8200a72 100644
  #include <learning_to_fly/simulator/parameters/init/default.h>
  #include <learning_to_fly/simulator/parameters/termination/default.h>
  
-@@ -29,8 +31,15 @@ namespace parameters{
+ #include <rl_tools/utils/generic/typing.h>
+ 
++// Observation noise std (Gaussian). Defaults are the paper's; L2F_REAL_NOISE uses
++// values measured on our Crazyflie 2.1 Brushless (PID hover + still tests):
++// gyro ~0.069 rad/s, attitude ~0.006 rad, velocity ~0.010 m/s, position 3-10 mm.
++#ifdef L2F_REAL_NOISE
++#define L2F_NOISE_POSITION 0.005
++#define L2F_NOISE_ORIENTATION 0.006
++#define L2F_NOISE_LINEAR_VELOCITY 0.010
++#define L2F_NOISE_ANGULAR_VELOCITY 0.069
++#else
++#define L2F_NOISE_POSITION 0.001
++#define L2F_NOISE_ORIENTATION 0.001
++#define L2F_NOISE_LINEAR_VELOCITY 0.002
++#define L2F_NOISE_ANGULAR_VELOCITY 0.002
++#endif
++
+ namespace parameters{
+     namespace rlt = rl_tools;
+     struct DefaultAblationSpec{
+@@ -29,8 +46,15 @@ namespace parameters{
          template<typename T, typename TI, typename T_ABLATION_SPEC>
          struct environment {
              using ABLATION_SPEC = T_ABLATION_SPEC;
@@ -182,7 +207,7 @@ index 8341a2f..8200a72 100644
              static constexpr auto reward_function = ABLATION_SPEC::USE_INITIAL_REWARD_FUNCTION ? initial_reward_function : target_reward_function;
  
  
-@@ -46,7 +55,11 @@ namespace parameters{
+@@ -46,16 +70,20 @@ namespace parameters{
                                                  rl_tools::rl::environments::multirotor::parameters::init::all_positions<T, TI, 4, REWARD_FUNCTION>;
  
              static constexpr PARAMETERS_TYPE parameters = {
@@ -194,7 +219,20 @@ index 8341a2f..8200a72 100644
                      {0.01}, // integration dt
                      {
                              init_params,
-@@ -63,8 +76,8 @@ namespace parameters{
+                             reward_function,
+                             {   // Observation noise
+-                                    0.001 * ABLATION_SPEC::OBSERVATION_NOISE, // position
+-                                    0.001 * ABLATION_SPEC::OBSERVATION_NOISE, // orientation
+-                                    0.002 * ABLATION_SPEC::OBSERVATION_NOISE, // linear_velocity
+-                                    0.002 * ABLATION_SPEC::OBSERVATION_NOISE, // angular_velocity
++                                    L2F_NOISE_POSITION * ABLATION_SPEC::OBSERVATION_NOISE, // position
++                                    L2F_NOISE_ORIENTATION * ABLATION_SPEC::OBSERVATION_NOISE, // orientation
++                                    L2F_NOISE_LINEAR_VELOCITY * ABLATION_SPEC::OBSERVATION_NOISE, // linear_velocity
++                                    L2F_NOISE_ANGULAR_VELOCITY * ABLATION_SPEC::OBSERVATION_NOISE, // angular_velocity
+                             },
+                             {   // Action noise
+                                     0, // std of additive gaussian noise onto the normalized action (-1, 1)
+@@ -63,8 +91,8 @@ namespace parameters{
                              rl_tools::rl::environments::multirotor::parameters::termination::fast_learning<T, TI, 4, REWARD_FUNCTION>
                      },
                      typename PARAMETERS_TYPE::Disturbances{
@@ -207,10 +245,10 @@ index 8341a2f..8200a72 100644
              };
 diff --git a/src/evaluate_robustness.cpp b/src/evaluate_robustness.cpp
 new file mode 100644
-index 0000000..fc55bd1
+index 0000000..0909bb7
 --- /dev/null
 +++ b/src/evaluate_robustness.cpp
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,221 @@
 +// Headless robustness check of a trained actor (.h5 checkpoint).
 +//
 +// Runs many 10 s episodes from the training initial-state distribution (up to
@@ -336,14 +374,19 @@ index 0000000..fc55bd1
 +    auto rng = rlt::random::default_engine(DEVICE::SPEC::RANDOM(), 12345);
 +
 +    if(argc > 3 && std::string(argv[3]) == "probe"){
-+        // Observation and action for a perfectly hovering drone, as the
-+        // simulator builds them (no observation noise).
++        // Start from a perfectly hovering drone and fly 5 s. Observation noise
++        // is this build's (paper or L2F_REAL_NOISE); "clean" turns it off.
 +        ENVIRONMENT env;
 +        env.parameters = PENV::parameters;
-+        env.parameters.mdp.observation_noise.position = 0;
-+        env.parameters.mdp.observation_noise.orientation = 0;
-+        env.parameters.mdp.observation_noise.linear_velocity = 0;
-+        env.parameters.mdp.observation_noise.angular_velocity = 0;
++        if(argc > 4 && std::string(argv[4]) == "clean"){
++            env.parameters.mdp.observation_noise.position = 0;
++            env.parameters.mdp.observation_noise.orientation = 0;
++            env.parameters.mdp.observation_noise.linear_velocity = 0;
++            env.parameters.mdp.observation_noise.angular_velocity = 0;
++        }
++        std::printf("observation noise: pos %.3f, orient %.3f, vel %.3f, gyro %.3f\n",
++                    (double)env.parameters.mdp.observation_noise.position, (double)env.parameters.mdp.observation_noise.orientation,
++                    (double)env.parameters.mdp.observation_noise.linear_velocity, (double)env.parameters.mdp.observation_noise.angular_velocity);
 +        rlt::malloc(dev, env);
 +        typename ENVIRONMENT::State s;
 +        rlt::sample_initial_state(dev, env, s, rng);
