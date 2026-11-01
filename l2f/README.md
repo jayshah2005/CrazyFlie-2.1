@@ -50,8 +50,19 @@ From two stock-PID flights (`sysid_hover.py` + `sysid_analyze.py`) and IDSIA
 - **Supervisor watchdog:** each learned-controller packet also sends a
   zero-thrust setpoint, so the 2 s commander watchdog does not cut the motors.
 
-## Known issue
+## Motor chatter
 
-Motor commands chatter between ~0% and ~100% in flight (gyro noise ~75 °/s vs
-~3 °/s under PID). The simulator's sensor noise is probably far below the
-real drone's. Next: retrain with measured noise and a stronger action penalty.
+The first flown policy (paper noise and reward) chattered between ~0% and ~100%
+motor command (gyro ~75 °/s vs ~3 °/s under PID). The paper's gyro noise
+(0.002 rad/s) is ~35x below ours (0.069 rad/s); with measured noise
+(`L2F_REAL_NOISE`) the simulator reproduces the chatter. Retraining with that
+noise plus an angular-acceleration penalty (`L2F_ANG_ACC_WEIGHT=2e-4`, the
+`train_brushless.sh` defaults) halves command jumpiness in simulation; 1e-3 is
+too strong and the policy stops recovering from tilts.
+
+## Landing
+
+`rl_trigger.py --mode land` needs firmware with target-offset packets (the
+learned-controller packet carries a 12-byte x/y/z offset from the activation
+point). It hovers, lowers the target at `--descent-rate`, and cuts the motors
+below `--cut-height`.
