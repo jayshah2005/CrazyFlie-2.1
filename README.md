@@ -63,6 +63,22 @@ Lighthouse geometry for different spaces lives under `config/`:
 
 Point tooling at `config/current/config.yaml` (or swap the symlink) so scripts stay space-agnostic.
 
+## Learned RL controller (`rl_trigger.py`)
+
+Flies an end-to-end RPM policy from [Learning to Fly in Seconds](https://arxiv.org/abs/2311.13081)
+([code](https://github.com/arplaboratory/learning-to-fly)) on the Crazyflie 2.1 Brushless.
+Training, the brushless model and the firmware build are in [`l2f/`](l2f/README.md). The
+policy runs onboard, so the drone must run that firmware (flash via cfclient cold boot);
+`flip.py` needs the official firmware again afterwards.
+
+- Hold **Enter** to fly; releasing it cuts the motors while the policy flies. **Q** quits,
+  **Ctrl+C** is an emergency stop. Windows only. Power-cycle the drone between flights.
+- The policy turns to **yaw 0 of the Lighthouse frame**: face the drone along +X before take-off.
+- Start with `python rl_trigger.py --mode takeoff_and_switch`.
+
+Supporting tools: `still_test.py` (estimator noise with the drone still),
+`sysid_hover.py` + `sysid_analyze.py` (stock-PID flight and motor-model fit).
+
 ## Platform notes
 
 - **Linux**: set Crazyradio udev rules — see [USB permissions](https://www.bitcraze.io/documentation/repository/crazyflie-lib-python/master/installation/usb_permissions/).
