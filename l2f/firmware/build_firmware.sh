@@ -250,6 +250,50 @@ if decl not in h:
 print('dshot every tick + handover history reset')
 EOF
 
+# Target offset (m) from the activation point, sent in the learned-controller
+# packet; POSITION mode flies to origin + offset (used for scripted landing).
+# The offset starts at zero on every activation.
+python3 - "$DST/rl_tools_controller.c" "$DST/rl_tools_controller.h" <<'EOF'
+import sys, pathlib
+ctrl, header = map(pathlib.Path, sys.argv[1:3])
+t = ctrl.read_text()
+for old, new in [
+    ('void rl_tools_controller_packet_received(){\n',
+     'static float target_offset[3] = {0, 0, 0};\n'
+     '\n'
+     'void rl_tools_controller_set_target_offset(float x, float y, float z){\n'
+     '  target_offset[0] = x;\n'
+     '  target_offset[1] = y;\n'
+     '  target_offset[2] = z;\n'
+     '}\n'
+     '\n'
+     'void rl_tools_controller_packet_received(){\n'),
+    ('    case POSITION:\n'
+     '      target_pos[0] = origin[0];\n'
+     '      target_pos[1] = origin[1];\n'
+     '      target_pos[2] = origin[2];\n',
+     '    case POSITION:\n'
+     '      target_pos[0] = origin[0] + target_offset[0];\n'
+     '      target_pos[1] = origin[1] + target_offset[1];\n'
+     '      target_pos[2] = origin[2] + target_offset[2];\n'),
+    ('    timestamp_controller_activation = now;\n',
+     '    timestamp_controller_activation = now;\n'
+     '    target_offset[0] = 0;\n'
+     '    target_offset[1] = 0;\n'
+     '    target_offset[2] = 0;\n'),
+]:
+    if new in t:
+        continue
+    assert t.count(old) == 1, f'not found exactly once: {old[:60]!r}'
+    t = t.replace(old, new)
+ctrl.write_text(t)
+h = header.read_text()
+decl = 'void rl_tools_controller_set_target_offset(float x, float y, float z);\n'
+if decl not in h:
+    header.write_text(h.replace('#endif', decl + '\n#endif', 1))
+print('target offset')
+EOF
+
 cd "$DST"
 rm -rf build
 make "$DEFCONFIG" >/dev/null

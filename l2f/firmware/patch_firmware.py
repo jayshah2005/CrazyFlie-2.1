@@ -42,7 +42,7 @@ edit('src/modules/src/crtp_commander.c',
      '  metaNotifySetpointsStop = 0,\n  metaLearnedController = 1,\n  nMetaCommands,\n')
 edit('src/modules/src/crtp_commander.c',
      ' /* ---===== packetDecoders array =====--- */\n',
-     '/* learnedController meta-command (no payload): the learned policy may drive\n'
+     '/* learnedController meta-command: the learned policy may drive\n'
      ' * the motors for the next 200 ms. It also feeds the commander watchdog with a\n'
      ' * zero-thrust setpoint so the supervisor does not cut the motors while the\n'
      ' * policy flies; the out-of-tree controller ignores that setpoint while it is\n'
@@ -51,8 +51,14 @@ edit('src/modules/src/crtp_commander.c',
      'void learnedControllerDecoder(const void *data, size_t datalen)\n'
      '{\n'
      '#ifdef RL_TOOLS_CONTROLLER\n'
-     '  if (datalen != 0) {\n'
+     '  // Optional payload: 3 floats, target offset (m) from the activation point.\n'
+     '  if (datalen != 0 && datalen != 3 * sizeof(float)) {\n'
      '    return;\n'
+     '  }\n'
+     '  if (datalen == 3 * sizeof(float)) {\n'
+     '    float offset[3];\n'
+     '    memcpy(offset, data, sizeof(offset));\n'
+     '    rl_tools_controller_set_target_offset(offset[0], offset[1], offset[2]);\n'
      '  }\n'
      '  static setpoint_t keepAlive;\n'
      '  memset(&keepAlive, 0, sizeof(keepAlive));\n'
