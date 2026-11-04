@@ -28,6 +28,12 @@ Modes:
   hover_learned       policy does the take-off itself (ground effect: try 2nd)
   figure_eight        PID take-off, then policy tracks a figure eight
   hover_original      stock PID only (baseline for comparison)
+  mission             no PID at all: the policy takes off from the floor, flies one
+                      circle and lands, following a moving target (position and
+                      velocity, needs the mission firmware and a mission-trained
+                      policy). Releasing Enter in the air starts an automatic
+                      landing (the policy descends at --abort-descent-rate);
+                      Ctrl+C is the immediate motor cut. Q only quits on the floor.
 
 Run `python rl_trigger.py --mode takeoff_and_switch` FIRST.
 """
@@ -78,7 +84,12 @@ EXTRA = ['stateEstimate.roll', 'stateEstimate.pitch', 'gyro.x', 'gyro.y', 'gyro.
 COLUMNS = ['drone_ms', 'phase', 'x', 'y', 'z', 'yaw_deg', 'vbat',
            'policy_active', 'err_x', 'err_y', 'err_z', 'm1', 'm2', 'm3', 'm4',
            'roll_deg', 'pitch_deg', 'gyro_x', 'gyro_y', 'gyro_z',
-           'out1', 'out2', 'out3', 'out4', 'rpm1', 'rpm2', 'rpm3', 'rpm4']
+           'out1', 'out2', 'out3', 'out4', 'rpm1', 'rpm2', 'rpm3', 'rpm4',
+           'comp_x', 'comp_y', 'comp_z',  # mission: target correction (err_* is w.r.t. the corrected target)
+           'lh_status', 'lh_receive', 'lh_active']  # Lighthouse: 2 = estimating; base-station bit masks
+
+
+LH_VARS = ['lighthouse.status', 'lighthouse.bsReceive', 'lighthouse.bsActive']
 
 
 def key_down(vk):
@@ -90,6 +101,7 @@ class Telemetry:
         self.rows = []
         self.phase = 'idle'
         self.latest = {}  # newest values from the other log blocks
+        self.comp = (0.0, 0.0, 0.0)  # mission target correction currently applied
 
     def a_cb(self, timestamp, data, logconf):
         b = self.latest
@@ -99,7 +111,8 @@ class Telemetry:
             data['stateEstimate.yaw'], data['pm.vbat'], data['rltrp.sm'],
             b.get('rltte.x'), b.get('rltte.y'), b.get('rltte.z'),
             b.get('rltm.m1'), b.get('rltm.m2'), b.get('rltm.m3'), b.get('rltm.m4'),
-        ] + [b.get(name) for name in EXTRA])
+        ] + [b.get(name) for name in EXTRA] + list(self.comp)
+            + [b.get(name) for name in LH_VARS])
 
     def other_cb(self, timestamp, data, logconf):
         self.latest.update(data)
@@ -140,11 +153,20 @@ def start_telemetry(scf, tele):
     d = LogConfig(name='L2FMotors', period_in_ms=20)
     for name in EXTRA[5:]:
         d.add_variable(name, 'uint16_t')
-    for conf, cb in ((a, tele.a_cb), (b, tele.other_cb), (c, tele.other_cb), (d, tele.other_cb)):
+    e = LogConfig(name='L2FLighthouse', period_in_ms=20)
+    toc = scf.cf.log.toc
+    if toc.get_element_by_complete_name('lighthouse.status') is not None:
+        e.add_variable('lighthouse.status', 'uint8_t')
+        e.add_variable('lighthouse.bsReceive', 'uint16_t')
+        e.add_variable('lighthouse.bsActive', 'uint16_t')
+    confs = [(a, tele.a_cb), (b, tele.other_cb), (c, tele.other_cb), (d, tele.other_cb)]
+    if e.variables:
+        confs.append((e, tele.other_cb))
+    for conf, cb in confs:
         scf.cf.log.add_config(conf)
         conf.data_received_cb.add_callback(cb)
         conf.start()
-    return [a, b, c, d]
+    return [conf for conf, _ in confs]
 
 
 def read_pose(scf, duration=0.5):
@@ -177,23 +199,82 @@ def set_param(cf, name, value, timeout=2.0):
     raise RuntimeError(f'Could not set {name} to {value}')
 
 
-def send_learned(cf, offset=None):
+def send_learned(cf, offset=None, velocity=None):
     """Keep the policy flying; `offset` (x, y, z m) moves its target away from
-    the activation point (needs firmware with target-offset support)."""
+    the activation point (needs firmware with target-offset support) and
+    `velocity` (m/s) is the target's velocity (needs the mission firmware)."""
     pk = CRTPPacket()
     pk.port = CRTPPort.COMMANDER_GENERIC
     pk.channel = META_COMMAND_CHANNEL
-    pk.data = LEARNED_PACKET if offset is None else struct.pack('<Bfff', 1, *offset)
+    if offset is None:
+        pk.data = LEARNED_PACKET
+    elif velocity is None:
+        pk.data = struct.pack('<Bfff', 1, *offset)
+    else:
+        pk.data = struct.pack('<Bffffff', 1, *offset, *velocity)
     cf.send_packet(pk)
+
+
+class MissionProfile:
+    """Target trajectory for --mode mission, relative to the take-off point.
+
+    Mirrors MissionProfile in learning_to_fly/src/evaluate_robustness.cpp: sit,
+    climb, hover, move to the circle start, circle, back to the centre, hover,
+    descend to `below` m under the floor, sit."""
+    PHASES = ['sit', 'takeoff', 'hover', 'move', 'circle', 'back', 'hover2', 'landing', 'ground']
+
+    def __init__(self, args):
+        self.H, self.R, self.P, self.laps = args.height, args.radius, args.period, args.laps
+        self.v_up, self.v_down = args.climb_rate, args.descent_rate
+        # sit only briefly: on the floor the policy rocks and slides the drone
+        self.t_idle, self.t_hover1, self.t_move, self.t_back, self.t_hover2 = 0.3, 2.0, 2.0, 2.0, 1.0
+        self.t_ground, self.below = 1.5, 0.02
+
+    def duration(self):
+        return (self.t_idle + self.H / self.v_up + self.t_hover1 + self.t_move + self.laps * self.P
+                + self.t_back + self.t_hover2 + (self.H + self.below) / self.v_down + self.t_ground)
+
+    def at(self, t):
+        """(phase name, target offset (x, y, z), target velocity (x, y, z)) at time t."""
+        H, R = self.H, self.R
+        if t < self.t_idle:
+            return 'sit', (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        t -= self.t_idle
+        t_up = H / self.v_up
+        if t < t_up:
+            return 'takeoff', (0.0, 0.0, self.v_up * t), (0.0, 0.0, self.v_up)
+        t -= t_up
+        if t < self.t_hover1:
+            return 'hover', (0.0, 0.0, H), (0.0, 0.0, 0.0)
+        t -= self.t_hover1
+        if t < self.t_move:
+            return 'move', (R * t / self.t_move, 0.0, H), (R / self.t_move, 0.0, 0.0)
+        t -= self.t_move
+        if t < self.laps * self.P:
+            w = 2 * math.pi / self.P
+            a = w * t
+            return ('circle', (R * math.cos(a), R * math.sin(a), H),
+                    (-R * w * math.sin(a), R * w * math.cos(a), 0.0))
+        t -= self.laps * self.P
+        if t < self.t_back:
+            return 'back', (R * (1 - t / self.t_back), 0.0, H), (-R / self.t_back, 0.0, 0.0)
+        t -= self.t_back
+        if t < self.t_hover2:
+            return 'hover2', (0.0, 0.0, H), (0.0, 0.0, 0.0)
+        t -= self.t_hover2
+        t_down = (H + self.below) / self.v_down
+        if t < t_down:
+            return 'landing', (0.0, 0.0, H - self.v_down * t), (0.0, 0.0, -self.v_down)
+        return 'ground', (0.0, 0.0, -self.below), (0.0, 0.0, 0.0)
 
 
 def configure(cf, args):
     log.info('Setting controller parameters:')
     set_param(cf, 'stabilizer.controller', CONTROLLER_OOT)  # learned controller (PID inside until triggered)
     set_param(cf, 'rlt.trigger', 0)  # policy runs while learned packets arrive
-    if args.mode in ('takeoff_and_switch', 'land', 'hover_original'):
+    if args.mode in ('takeoff_and_switch', 'land', 'hover_original', 'mission'):
         set_param(cf, 'rlt.wn', MODE_POSITION)
-        set_param(cf, 'rlt.target_z', 0)       # hold where the hand-over happens
+        set_param(cf, 'rlt.target_z', 0)       # target starts at the activation point
         set_param(cf, 'rlt.motor_warmup', 0)
     elif args.mode == 'hover_learned':
         set_param(cf, 'rlt.wn', MODE_POSITION)
@@ -255,7 +336,150 @@ def supervisor_locked(scf):
     return bool(info and info[-1] & SUPERVISOR_LOCKED_BIT)
 
 
+def fly_mission(scf, args, pose, tele):
+    """--mode mission: the policy flies everything, following MissionProfile."""
+    cf = scf.cf
+    profile = MissionProfile(args)
+    while key_down(VK_RETURN):  # don't start on the Enter that launched us
+        time.sleep(0.05)
+    log.info('Mission: climb to %.2f m at %.2f m/s, circle r=%.2f m in %.1f s x%g, land at '
+             '%.2f m/s (%.0f s). No PID: the policy flies from the floor.',
+             profile.H, profile.v_up, profile.R, profile.P, profile.laps, profile.v_down,
+             profile.duration())
+    log.info('READY. Hold ENTER for the whole mission. Releasing Enter in the air = '
+             'automatic landing at %.2f m/s; Ctrl+C = cut the motors now. Q quits once '
+             'landed.', args.abort_descent_rate)
+    start = None
+    done = False
+    last_phase = None
+    low_since = None
+    abort_start = None   # Enter released in the air: automatic landing
+    abort_floor = None
+    last_cmd = None      # last commanded target offset (m)
+    rows_seen = [-1, time.time()]  # telemetry sample count and when it last grew
+    blind = False                  # telemetry lost: the automatic landing runs on the clock
+    low_vbat_since = None
+    # Outer integrator (--ki): the policy has no integral action and holds a
+    # steady offset (~10 cm in simulation), so shift the commanded target to
+    # cancel it. Runs while airborne (hover .. hover2); the height part fades
+    # out near the floor so the landing target is unchanged.
+    comp = list(args.comp_init)  # start from the last flight's correction
+    if any(comp):
+        log.info('Target correction starts at (%.2f, %.2f, %.2f) m (--comp-init).', *comp)
+    last_tick = None
+    while True:
+        now = time.time()
+        if done or start is None:
+            # Q only quits on the floor (before the start or after landing): in the
+            # air it would cut the motors. Ctrl+C is the emergency stop.
+            if key_down(VK_Q):
+                break
+            if done or not key_down(VK_RETURN):
+                time.sleep(SEND_PERIOD)
+                continue
+            start = now
+            log.info('Enter held: mission started.')
+        height = tele.rows[-1][4] - pose['z'] if tele.rows else 0.0
+        # Safety 1: telemetry stopped (drone reset or power loss, or only the radio
+        # downlink dropped). Do NOT stop sending: if our packets still get through,
+        # stopping would cut the motors in the air (2026-11-04 1 m flight). Land
+        # instead, timed by the clock since there is no height any more.
+        if len(tele.rows) != rows_seen[0]:
+            rows_seen[0], rows_seen[1] = len(tele.rows), now
+        elif now - rows_seen[1] > 0.5 and not blind:
+            blind = True
+            if last_cmd is None or height < args.cut_height:
+                log.error('No telemetry for %.1f s on the floor: stopping.', now - rows_seen[1])
+                tele.phase = 'telemetry_lost'
+                done = True
+                continue
+            log.error('No telemetry for %.1f s at %.2f m: the drone stopped answering '
+                      '(power/battery or radio). Landing blind at %.2f m/s; Ctrl+C cuts the motors.',
+                      now - rows_seen[1], height, args.abort_descent_rate)
+            if abort_start is None:
+                abort_start = now
+        # Safety 2: battery sagging under load: land before it browns out.
+        vbat = tele.rows[-1][6] if tele.rows else None
+        if abort_start is None and vbat is not None and height > args.cut_height:
+            if vbat < args.land_vbat:
+                low_vbat_since = low_vbat_since or now
+                if now - low_vbat_since > 0.5:
+                    abort_start = now
+                    log.warning('Battery %.2f V under load (< %.2f V) at %.2f m: AUTOMATIC '
+                                'LANDING.', vbat, args.land_vbat, height)
+            else:
+                low_vbat_since = None
+        if abort_start is None and not key_down(VK_RETURN):
+            if last_phase == 'sit' or last_cmd is None or height < args.cut_height:
+                log.warning('Enter released on the floor: motors cut, mission aborted.')
+                tele.phase = 'aborted'
+                done = True
+                continue
+            # Re-activating mid-air would restart the mission from there, so a
+            # release in the air lands the drone instead (packets keep flowing).
+            abort_start = now
+            log.warning('Enter released %.1f s into the mission at %.2f m: AUTOMATIC '
+                        'LANDING (Ctrl+C cuts the motors).', now - start, height)
+        if abort_start is not None:
+            z = max(-profile.below, last_cmd[2] - args.abort_descent_rate * (now - abort_start))
+            vz = -args.abort_descent_rate if z > -profile.below else 0.0
+            if z <= -profile.below and abort_floor is None:
+                abort_floor = now
+            tele.phase = 'autoland'
+            if (z < 0.1 and height < args.cut_height) or \
+                    (abort_floor is not None and now - abort_floor > args.floor_timeout):
+                done = True
+                tele.phase = 'landed'
+                if blind:
+                    log.info('Blind landing finished (no telemetry, height unknown): motors cut. Press Q.')
+                else:
+                    log.info('Landed (%.2f m above the take-off point): motors cut. Press Q.', height)
+                continue
+            send_learned(cf, (last_cmd[0], last_cmd[1], z), (0.0, 0.0, vz))
+            time.sleep(SEND_PERIOD)
+            continue
+        phase, offset, velocity = profile.at(now - start)
+        if phase != last_phase:
+            log.info('Phase: %s', phase)
+            last_phase = phase
+        tele.phase = phase
+        # Cut as soon as the drone is within --cut-height of the floor on the way
+        # down: the simulator has no ground effect, and letting the policy settle
+        # on the floor made it bounce (2026-11-04 0.6 m flight).
+        if phase == 'ground':
+            low_since = low_since or now
+        if (phase == 'ground' or (phase == 'landing' and offset[2] < 0.1)) and height < args.cut_height \
+                or (low_since is not None and now - low_since > args.floor_timeout):
+            done = True
+            tele.phase = 'landed'
+            log.info('Landed (%.2f m above the take-off point): motors cut. '
+                     'Release Enter and press Q.', height)
+            continue
+        dt = now - last_tick if last_tick is not None else 0.0
+        last_tick = now
+        # The height correction fades out near the floor. Before the first hover
+        # (sit, take-off) the horizontal one fades in with height too, so the
+        # target does not pull the drone sideways while it is on the floor.
+        zs = min(1.0, max(0.0, offset[2] / profile.H))
+        xs = zs if phase in ('sit', 'takeoff') else 1.0
+        applied = (comp[0] * xs, comp[1] * xs, comp[2] * zs)
+        err = [tele.latest.get(f'rltte.{a}') for a in 'xyz']  # commanded target - position
+        if args.ki > 0 and phase in ('hover', 'move', 'circle', 'back', 'hover2') and None not in err:
+            for i, k in enumerate((args.ki, args.ki, args.ki_z)):
+                e = err[i] - applied[i]  # reference - position
+                comp[i] = min(0.3, max(-0.3, comp[i] + k * e * dt))
+            applied = (comp[0] * xs, comp[1] * xs, comp[2] * zs)
+        tele.comp = applied
+        last_cmd = tuple(o + c for o, c in zip(offset, applied))
+        send_learned(cf, last_cmd, velocity)
+        time.sleep(SEND_PERIOD)
+    log.info('Q pressed: quitting. Final target correction (%.3f, %.3f, %.3f) m.', *comp)
+
+
 def fly(scf, args, pose, tele):
+    if args.mode == 'mission':
+        fly_mission(scf, args, pose, tele)
+        return
     cf = scf.cf
     hover_z = pose['z'] + args.height
     uses_pid_takeoff = args.mode != 'hover_learned'
@@ -372,11 +596,36 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--mode', default='takeoff_and_switch',
                         choices=['takeoff_and_switch', 'land', 'hover_learned',
-                                 'figure_eight', 'hover_original'])
+                                 'figure_eight', 'hover_original', 'mission'])
+    parser.add_argument('--radius', type=float, default=0.3,
+                        help='mission: circle radius in m (default 0.3)')
+    parser.add_argument('--period', type=float, default=8.0,
+                        help='mission: s per circle (default 8)')
+    parser.add_argument('--laps', type=float, default=1.0,
+                        help='mission: number of circles (default 1)')
+    parser.add_argument('--climb-rate', type=float, default=0.25,
+                        help='mission: take-off climb speed in m/s (default 0.25)')
+    parser.add_argument('--ki', type=float, default=1.0,
+                        help='mission: outer integrator gain in 1/s that cancels the '
+                             'policy\'s steady offset (0 = off, default 1)')
+    parser.add_argument('--land-vbat', type=float, default=3.45,
+                        help='mission: land automatically if the battery stays below this '
+                             'voltage under load for 0.5 s (default 3.45 V; brownout ~3.4 V)')
+    parser.add_argument('--abort-descent-rate', type=float, default=0.3,
+                        help='mission: descent speed of the automatic landing after Enter '
+                             'is released in the air (m/s, default 0.3)')
+    parser.add_argument('--ki-z', type=float, default=0.0,
+                        help='mission: outer integrator gain for height (default 0: B2 '
+                             'holds height well and the height correction chased the wobble)')
+    parser.add_argument('--comp-init', type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                        metavar=('X', 'Y', 'Z'),
+                        help='mission: starting target correction in m (the "Final target '
+                             'correction" of the last flight; the 2026-11-04 B2 flight '
+                             'settled at 0.20 0.07 0)')
     parser.add_argument('--hover-time', type=float, default=5.0,
                         help='land: s of learned hover before descending')
     parser.add_argument('--descent-rate', type=float, default=0.1,
-                        help='land: target descent speed in m/s (default 0.1)')
+                        help='land, mission: target descent speed in m/s (default 0.1)')
     parser.add_argument('--cut-height', type=float, default=0.06,
                         help='land: cut motors below this height above take-off (m)')
     parser.add_argument('--floor-timeout', type=float, default=2.0,
