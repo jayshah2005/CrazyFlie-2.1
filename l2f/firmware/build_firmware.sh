@@ -260,11 +260,18 @@ t = ctrl.read_text()
 for old, new in [
     ('void rl_tools_controller_packet_received(){\n',
      'static float target_offset[3] = {0, 0, 0};\n'
+     'static float target_velocity_ff[3] = {0, 0, 0};\n'
      '\n'
      'void rl_tools_controller_set_target_offset(float x, float y, float z){\n'
      '  target_offset[0] = x;\n'
      '  target_offset[1] = y;\n'
      '  target_offset[2] = z;\n'
+     '}\n'
+     '\n'
+     'void rl_tools_controller_set_target_velocity(float x, float y, float z){\n'
+     '  target_velocity_ff[0] = x;\n'
+     '  target_velocity_ff[1] = y;\n'
+     '  target_velocity_ff[2] = z;\n'
      '}\n'
      '\n'
      'void rl_tools_controller_packet_received(){\n'),
@@ -275,12 +282,16 @@ for old, new in [
      '    case POSITION:\n'
      '      target_pos[0] = origin[0] + target_offset[0];\n'
      '      target_pos[1] = origin[1] + target_offset[1];\n'
-     '      target_pos[2] = origin[2] + target_offset[2];\n'),
+     '      target_pos[2] = origin[2] + target_offset[2];\n'
+     '      target_vel[0] = target_velocity_ff[0];\n'
+     '      target_vel[1] = target_velocity_ff[1];\n'
+     '      target_vel[2] = target_velocity_ff[2];\n'),
     ('    timestamp_controller_activation = now;\n',
      '    timestamp_controller_activation = now;\n'
-     '    target_offset[0] = 0;\n'
-     '    target_offset[1] = 0;\n'
-     '    target_offset[2] = 0;\n'),
+     '    for(uint8_t i=0; i<3; i++){\n'
+     '      target_offset[i] = 0;\n'
+     '      target_velocity_ff[i] = 0;\n'
+     '    }\n'),
 ]:
     if new in t:
         continue
@@ -288,10 +299,64 @@ for old, new in [
     t = t.replace(old, new)
 ctrl.write_text(t)
 h = header.read_text()
-decl = 'void rl_tools_controller_set_target_offset(float x, float y, float z);\n'
+decl = ('void rl_tools_controller_set_target_offset(float x, float y, float z);\n'
+        'void rl_tools_controller_set_target_velocity(float x, float y, float z);\n')
 if decl not in h:
     header.write_text(h.replace('#endif', decl + '\n#endif', 1))
 print('target offset')
+EOF
+
+# Position-error integral input (policies trained with L2F_POS_INTEGRAL take 149
+# inputs: the usual 146 + 3). Same leaky integral as the simulator
+# (multirotor.h: tau 5 s, clip 1 m s), on the clipped position error the policy
+# sees, at the 100 Hz policy rate; reset on every activation. 146-input
+# policies ignore it.
+python3 - "$DST/rl_tools_controller.c" "$DST/rl_tools_adapter.cpp" <<'EOF'
+import sys, pathlib
+ctrl, adapter = map(pathlib.Path, sys.argv[1:3])
+edits = {
+    ctrl: [
+        ('static float state_input[13];\n',
+         'static float state_input[16];  // 13 state values + 3 position-error integral\n'
+         'static float pos_integral[3] = {0, 0, 0};\n'
+         '#define POS_INTEGRAL_TAU 5.0f  // s, must match L2F_POS_INTEGRAL_TAU in the simulator\n'
+         '#define POS_INTEGRAL_MAX 1.0f  // m s, must match L2F_POS_INTEGRAL_MAX\n'),
+        ('  if(hand_test != 1){\n    state_input[10] = radians(sensors->gyro.x);\n',
+         '  {\n'
+         '    const float dt = CONTROL_INTERVAL_MS / 1000.0f;\n'
+         '    for(uint8_t i = 0; i < 3; i++){\n'
+         '      pos_integral[i] = clip((1 - dt / POS_INTEGRAL_TAU) * pos_integral[i] + state_input[i] * dt, -POS_INTEGRAL_MAX, POS_INTEGRAL_MAX);\n'
+         '      state_input[13 + i] = pos_integral[i];\n'
+         '    }\n'
+         '  }\n'
+         '  if(hand_test != 1){\n    state_input[10] = radians(sensors->gyro.x);\n'),
+        ('      target_velocity_ff[i] = 0;\n',
+         '      target_velocity_ff[i] = 0;\n'
+         '      pos_integral[i] = 0;\n'),
+    ],
+    adapter: [
+        ('static_assert(ACTOR_TYPE::SPEC::INPUT_DIM == (18 + ACTION_HISTORY_LENGTH * ACTOR_TYPE::SPEC::OUTPUT_DIM));\n',
+         'constexpr TI BASE_INPUT_DIM = 18 + ACTION_HISTORY_LENGTH * ACTOR_TYPE::SPEC::OUTPUT_DIM;\n'
+         'constexpr bool POS_INTEGRAL_INPUT = ACTOR_TYPE::SPEC::INPUT_DIM == BASE_INPUT_DIM + 3;\n'
+         'static_assert(ACTOR_TYPE::SPEC::INPUT_DIM == BASE_INPUT_DIM || POS_INTEGRAL_INPUT);\n'),
+        ('    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ACTOR_TYPE::SPEC::OUTPUT_DIM, rlt::matrix::layouts::RowMajorAlignment<TI, 1>>> output = {(T*)actions};\n',
+         '    if constexpr(POS_INTEGRAL_INPUT){\n'
+         '        for(TI i = 0; i < 3; i++){\n'
+         '            rlt::set(input, 0, BASE_INPUT_DIM + i, state[13 + i]);\n'
+         '        }\n'
+         '    }\n'
+         '    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ACTOR_TYPE::SPEC::OUTPUT_DIM, rlt::matrix::layouts::RowMajorAlignment<TI, 1>>> output = {(T*)actions};\n'),
+    ],
+}
+for path, changes in edits.items():
+    t = path.read_text()
+    for old, new in changes:
+        if new in t:
+            continue
+        assert t.count(old) == 1, f'{path.name}: not found exactly once: {old[:70]!r}'
+        t = t.replace(old, new)
+    path.write_text(t)
+print('position-error integral input')
 EOF
 
 cd "$DST"
