@@ -1,3 +1,613 @@
+diff --git a/include/learning_to_fly/simulator/multirotor.h b/include/learning_to_fly/simulator/multirotor.h
+index 3825527..e7977a0 100644
+--- a/include/learning_to_fly/simulator/multirotor.h
++++ b/include/learning_to_fly/simulator/multirotor.h
+@@ -2,6 +2,12 @@
+ #define LEARNING_TO_FLY_IN_SECONDS_SIMULATOR_MULTIROTOR_H
+ 
+ #include <rl_tools/utils/generic/typing.h>
++#include <cstdlib>
++
++// Position-error integral observation (must match the firmware): leak time
++// constant (s) and clip (m s).
++#define L2F_POS_INTEGRAL_TAU 5.0
++#define L2F_POS_INTEGRAL_MAX 1.0
+ 
+ namespace rl_tools::rl::environments::multirotor{
+     template <typename T, typename TI, TI N, typename T_REWARD_FUNCTION>
+@@ -246,6 +252,21 @@ namespace rl_tools::rl::environments::multirotor{
+             static constexpr TI CURRENT_DIM = ACTION_DIM * HISTORY_LENGTH;
+             static constexpr TI DIM = NEXT_COMPONENT::DIM + CURRENT_DIM;
+         };
++        // Leaky position-error integral (see StateBase::pos_integral).
++        template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT = LastComponent<T_TI>>
++        struct PositionIntegralSpecification {
++            using T = T_T;
++            using TI = T_TI;
++            using NEXT_COMPONENT = T_NEXT_COMPONENT;
++        };
++        template <typename SPEC>
++        struct PositionIntegral{
++            using T = typename SPEC::T;
++            using TI = typename SPEC::TI;
++            using NEXT_COMPONENT = typename SPEC::NEXT_COMPONENT;
++            static constexpr TI CURRENT_DIM = 3;
++            static constexpr TI DIM = NEXT_COMPONENT::DIM + CURRENT_DIM;
++        };
+         template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT = LastComponent<T_TI>>
+         struct RandomForceSpecification {
+             using T = T_T;
+@@ -273,6 +294,25 @@ namespace rl_tools::rl::environments::multirotor{
+         T orientation[4];
+         T linear_velocity[3];
+         T angular_velocity[3];
++        // Mission extension (all zero / disabled unless Multirotor::mission is
++        // enabled). Not integrated: post_integration carries them forward.
++        // position is relative to the (possibly moving) target; the target moves
++        // along a trajectory and the frame is shifted after every step.
++        T target_velocity[3];  // velocity of the target (observations and reward use v - target_velocity)
++        T floor_z;             // floor height (drone resting height) in the target-relative frame
++        T traj_t;              // time since episode start (s)
++        TI traj_type;          // 0 static, 1 ramp (constant velocity for traj[3] s), 2 horizontal circle
++        T traj[6];             // ramp: vx, vy, vz, duration | circle: radius, omega, phase
++        T delay_steps;         // state-estimate delay in simulation steps (0..2, fractional)
++        T ground_effect;       // ground-effect strength k (0 = none), see Mission
++        T glitch_offset[3];    // position-estimate glitch added to the actor's observation (m)
++        T glitch_vel[3];       // velocity-estimate spike that comes with the glitch (m/s, decays)
++        TI glitch_steps;       // steps the current glitch lasts (0 = none)
++        // Leaky integral of the position error (m s), an observation so the policy
++        // can remove steady offsets itself: I <- clip((1 - dt/tau) I + e dt, +-max).
++        // The firmware computes the same (rl_tools_controller.c, L2F_POS_INTEGRAL).
++        T pos_integral[3];
++        T prev[2][13];         // true base state 1 and 2 steps ago (position in the current frame)
+     };
+     template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT>
+     struct StateRotors: T_NEXT_COMPONENT{
+@@ -384,6 +424,60 @@ namespace rl_tools::rl::environments{
+         using STATIC_PARAMETERS = typename SPEC::STATIC_PARAMETERS;
+         typename SPEC::PARAMETERS parameters;
+         typename SPEC::PARAMETERS::Dynamics current_dynamics;
++        // Mission training (take-off from the floor, moving targets, landing),
++        // state-estimate delay and per-episode domain randomization. Defaults
++        // come from compile flags (L2F_MISSION) so training needs no code
++        // changes; evaluators can switch parts off at runtime.
++        struct Mission{
++#ifdef L2F_MISSION
++            bool enabled = true;
++#else
++            bool enabled = false;
++#endif
++            // episode type probabilities (rest: the original free-flight start);
++            // every value can be overridden at runtime with the L2F_* variable named
++            // next to it
++            T p_takeoff = env_or("L2F_P_TAKEOFF", 0.2);
++            T p_land = env_or("L2F_P_LAND", 0.2);
++            T p_circle = env_or("L2F_P_CIRCLE", 0.2);
++            T p_line = env_or("L2F_P_LINE", 0.1);
++            T delay_max_steps = env_or("L2F_DELAY_MAX_MS", 12) / 10;  // uniform 0..max (dt = 10 ms)
++            bool domain_randomization = env_or("L2F_DR", 1) != 0;
++            T dr_scale = env_or("L2F_DR_SCALE", 1);  // 1 = the paper's ranges
++            T dr_mass = 0.1 * dr_scale, dr_inertia = 0.2 * dr_scale, dr_motor_tau = 0.2 * dr_scale;
++            T dr_thrust = 0.2 * dr_scale, dr_torque = 0.2 * dr_scale, dr_cog = 0.01 * dr_scale;
++            // Curriculum: training ramps this from 0 to 1 over L2F_MISSION_RAMP steps
++            // (src/steps/curriculum.h); episode-type probabilities and randomization
++            // ranges are scaled by it. Evaluation keeps 1.
++            T progress = 1;
++            T ramp_steps = env_or("L2F_MISSION_RAMP", 500000);
++            // Circle episodes: radius up to circle_r_max (m), speed up to circle_v_max (m/s).
++            T circle_r_max = env_or("L2F_CIRCLE_R_MAX", 1.2);
++            T circle_v_max = env_or("L2F_CIRCLE_V_MAX", 1.0);
++            // Ground effect (Cheeseman-Bennett): thrust x 1 / (1 - k (R / 4h)^2), h =
++            // rotor height above the floor = (z - floor_z) + ge_h0, k ~ U(0, ge_k_max)
++            // per episode (not identified on our drone), capped at ge_max_ratio.
++            T ge_k_max = env_or("L2F_GE_K_MAX", 2.0);
++            T ge_rotor_radius = 0.0275;  // 55 mm propellers
++            T ge_h0 = 0.02;              // rotor height above the floor at rest (m)
++            T ge_max_ratio = 1.4;
++            // Position-estimate glitches (seen on the drone: a 36 cm Lighthouse jump
++            // lasting ~0.3 s): per step, with probability glitch_p, the actor's
++            // position observation jumps by U(glitch_min, glitch_max) m in a random
++            // direction for U(0.05, glitch_t_max) s. The critic sees the true state.
++            T glitch_p = env_or("L2F_GLITCH_P", 0.0);
++            T glitch_min = env_or("L2F_GLITCH_MIN", 0.05);
++            T glitch_max = env_or("L2F_GLITCH_MAX", 0.4);
++            T glitch_t_max = env_or("L2F_GLITCH_T_MAX", 0.4);
++            T glitch_vel_max = env_or("L2F_GLITCH_VEL", 3.0);  // velocity spike up to this x the jump size (1/s)
++            static T env_or(const char* name, double fallback){
++                const char* s = std::getenv(name);
++                return (T)(s ? std::atof(s) : fallback);
++            }
++        };
++        Mission mission;
++        typename SPEC::PARAMETERS::Dynamics nominal_dynamics;
++        bool nominal_dynamics_valid = false;
+     };
+ }
+ 
+diff --git a/include/learning_to_fly/simulator/operations_generic.h b/include/learning_to_fly/simulator/operations_generic.h
+index c1d184f..a0cb80b 100644
+--- a/include/learning_to_fly/simulator/operations_generic.h
++++ b/include/learning_to_fly/simulator/operations_generic.h
+@@ -212,6 +212,219 @@ namespace rl_tools{
+     template<typename DEVICE, typename SPEC>
+     void malloc(DEVICE&, rl::environments::Multirotor<SPEC>){
+ 
++    }
++    // ---- Mission extension helpers (see Multirotor::Mission) ----
++    namespace rl::environments::multirotor::mission{
++        template<typename T, typename TI>
++        RL_TOOLS_FUNCTION_PLACEMENT void reset_fields(StateBase<T, TI>& state){
++            for(TI i = 0; i < 3; i++){
++                state.target_velocity[i] = 0;
++            }
++            state.floor_z = -100;  // no floor
++            state.traj_t = 0;
++            state.traj_type = 0;
++            for(TI i = 0; i < 6; i++){
++                state.traj[i] = 0;
++            }
++            state.delay_steps = 0;
++            state.ground_effect = 0;
++            state.glitch_steps = 0;
++            for(TI i = 0; i < 3; i++){
++                state.glitch_offset[i] = 0;
++                state.glitch_vel[i] = 0;
++                state.pos_integral[i] = 0;
++            }
++            for(TI k = 0; k < 2; k++){
++                for(TI i = 0; i < 3; i++){
++                    state.prev[k][0 + i] = state.position[i];
++                    state.prev[k][7 + i] = state.linear_velocity[i];
++                    state.prev[k][10 + i] = state.angular_velocity[i];
++                }
++                for(TI i = 0; i < 4; i++){
++                    state.prev[k][3 + i] = state.orientation[i];
++                }
++            }
++        }
++        // Target position (relative to its start) and velocity at time t.
++        template<typename DEVICE, typename T, typename TI>
++        RL_TOOLS_FUNCTION_PLACEMENT void target_at(DEVICE& device, const StateBase<T, TI>& state, T t, T* p, T* v){
++            for(TI i = 0; i < 3; i++){ p[i] = 0; v[i] = 0; }
++            if(state.traj_type == 1){
++                // ramp: constant velocity traj[0..2] between traj[4] and traj[4] + traj[3]
++                T start = state.traj[4], duration = state.traj[3];
++                T tau = t - start;
++                tau = tau < 0 ? 0 : (tau > duration ? duration : tau);
++                bool moving = t >= start && t < start + duration;
++                for(TI i = 0; i < 3; i++){
++                    p[i] = state.traj[i] * tau;
++                    v[i] = moving ? state.traj[i] : 0;
++                }
++            }
++            else if(state.traj_type == 2){
++                // horizontal circle: radius traj[0], angular rate traj[1], phase traj[2]
++                T r = state.traj[0], w = state.traj[1], a = w * t + state.traj[2];
++                p[0] = r * math::cos(device.math, a);
++                p[1] = r * math::sin(device.math, a);
++                v[0] = -r * w * math::sin(device.math, a);
++                v[1] =  r * w * math::cos(device.math, a);
++            }
++        }
++        // Per-episode setup: domain randomization, episode type, delay.
++        template<typename DEVICE, typename SPEC, typename T, typename TI_S, typename RNG>
++        RL_TOOLS_FUNCTION_PLACEMENT void sample(DEVICE& device, Multirotor<SPEC>& env, StateBase<T, TI_S>& state, T* rpm, RNG& rng){
++            using TI = typename DEVICE::index_t;
++            auto& m = env.mission;
++            auto U = [&](T a, T b){ return random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), a, b, rng); };
++            if(!env.nominal_dynamics_valid){
++                env.nominal_dynamics = env.parameters.dynamics;
++                env.nominal_dynamics_valid = true;
++            }
++            const T k = m.progress;  // curriculum: 0 = plain hover training, 1 = full
++            if(m.domain_randomization){
++                auto d = env.nominal_dynamics;
++                d.mass *= U(1 - k * m.dr_mass, 1 + k * m.dr_mass);
++                for(TI i = 0; i < 3; i++){
++                    T f = U(1 - k * m.dr_inertia, 1 + k * m.dr_inertia);
++                    d.J[i][i] *= f;
++                    d.J_inv[i][i] /= f;
++                }
++                d.rpm_time_constant *= U(1 - k * m.dr_motor_tau, 1 + k * m.dr_motor_tau);
++                T kt = U(1 - k * m.dr_thrust, 1 + k * m.dr_thrust);
++                for(TI i = 0; i < 3; i++){
++                    d.thrust_constants[i] *= kt;
++                }
++                d.torque_constant *= U(1 - k * m.dr_torque, 1 + k * m.dr_torque);
++                T cx = U(-k * m.dr_cog, k * m.dr_cog), cy = U(-k * m.dr_cog, k * m.dr_cog);
++                for(TI r = 0; r < 4; r++){
++                    d.rotor_positions[r][0] -= cx;
++                    d.rotor_positions[r][1] -= cy;
++                }
++                env.parameters.dynamics = d;
++            }
++            const auto& d = env.parameters.dynamics;
++            T hover_rpm = math::sqrt(device.math, d.mass * -d.gravity[2] / 4 / d.thrust_constants[2]);
++            auto clamp_rpm = [&](T x){ return x < d.action_limit.min ? d.action_limit.min : (x > d.action_limit.max ? d.action_limit.max : x); };
++            auto set_yaw_tilt = [&](T max_tilt, T max_yaw){
++                // random yaw, then a tilt about a random horizontal axis
++                T yaw = U(-max_yaw, max_yaw), tilt = U(0, max_tilt), axis = U(0, 2 * math::PI<T>);
++                T cy = math::cos(device.math, yaw / 2), sy = math::sin(device.math, yaw / 2);
++                T ct = math::cos(device.math, tilt / 2), st = math::sin(device.math, tilt / 2);
++                T ax = math::cos(device.math, axis), ay = math::sin(device.math, axis);
++                // q = q_tilt * q_yaw, q_tilt = (ct, st*ax, st*ay, 0), q_yaw = (cy, 0, 0, sy)
++                state.orientation[0] = ct * cy;
++                state.orientation[1] = st * ax * cy + st * ay * sy;
++                state.orientation[2] = st * ay * cy - st * ax * sy;
++                state.orientation[3] = ct * sy;
++            };
++            auto near_hover = [&](){
++                for(TI i = 0; i < 3; i++){
++                    state.position[i] = U(-0.1, 0.1);
++                    state.linear_velocity[i] = U(-0.2, 0.2);
++                    state.angular_velocity[i] = U(-0.5, 0.5);
++                }
++                set_yaw_tilt(10.0 / 180.0 * math::PI<T>, 30.0 / 180.0 * math::PI<T>);
++                for(TI i = 0; i < 4; i++){
++                    rpm[i] = clamp_rpm(hover_rpm * U(0.9, 1.1));
++                }
++            };
++            reset_fields(state);
++            state.delay_steps = U(0, k * m.delay_max_steps);
++            state.ground_effect = U(0, k * m.ge_k_max);
++            // dividing by k grows the mission episode types from 0 to their full share
++            T r = k > 0 ? U(0, 1) / k : 2;
++            if(r < m.p_takeoff){
++                // resting on the floor; the target starts at the drone and climbs
++                state.position[0] = U(-0.05, 0.05);
++                state.position[1] = U(-0.05, 0.05);
++                state.position[2] = 0;
++                for(TI i = 0; i < 3; i++){
++                    state.linear_velocity[i] = 0;
++                    state.angular_velocity[i] = 0;
++                }
++                set_yaw_tilt(0, 20.0 / 180.0 * math::PI<T>);
++                T idle = U(0, 0.4) * hover_rpm;
++                for(TI i = 0; i < 4; i++){
++                    rpm[i] = clamp_rpm(idle);
++                }
++                state.floor_z = 0;
++                T vz = U(0.15, 0.8);
++                T height = U(0.2, 0.8);
++                T start = U(0, 1.0);
++                if(start + height / vz > 3.5){
++                    height = vz * (3.5 - start);
++                }
++                state.traj_type = 1;
++                state.traj[2] = vz;
++                state.traj[3] = height / vz;
++                state.traj[4] = start;
++            }
++            else if(r < m.p_takeoff + m.p_land){
++                // hovering; the target descends to (slightly below) the floor
++                near_hover();
++                T height = U(0.1, 0.8);
++                T vz = U(0.1, 0.5);
++                T below = U(0, 0.03);
++                T start = U(0, 1.0);
++                state.floor_z = -height;
++                state.traj_type = 1;
++                state.traj[2] = -vz;
++                state.traj[3] = (height + below) / vz;
++                state.traj[4] = start;
++            }
++            else if(r < m.p_takeoff + m.p_land + m.p_circle){
++                // horizontal circle
++                near_hover();
++                state.floor_z = -U(0.3, 1.0);
++                T radius = U(0.15, m.circle_r_max);
++                T speed = U(0.1, m.circle_v_max);
++                T dir = U(0, 1) < 0.5 ? -1 : 1;
++                state.traj_type = 2;
++                state.traj[0] = radius;
++                state.traj[1] = dir * speed / radius;
++                state.traj[2] = U(0, 2 * math::PI<T>);
++                // the drone starts near the target; optionally already moving with it
++                T p[3], v[3];
++                target_at(device, state, (T)0, p, v);
++                bool matched = U(0, 1) < 0.5;
++                for(TI i = 0; i < 3; i++){
++                    state.target_velocity[i] = v[i];
++                    if(matched){
++                        state.linear_velocity[i] += v[i];
++                    }
++                }
++            }
++            else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line){
++                // straight line at constant speed
++                near_hover();
++                state.floor_z = -U(0.3, 1.0);
++                T speed = U(0.05, 0.5);
++                T heading = U(0, 2 * math::PI<T>), climb = U(-0.3, 0.3);
++                state.traj_type = 1;
++                state.traj[0] = speed * math::cos(device.math, heading);
++                state.traj[1] = speed * math::sin(device.math, heading);
++                state.traj[2] = speed * climb;
++                state.traj[3] = U(1, 5);
++                state.traj[4] = 0;
++                for(TI i = 0; i < 3; i++){
++                    state.target_velocity[i] = state.traj[i];
++                }
++            }
++            // else: the original free-flight start, static target, no floor
++            for(TI k = 0; k < 2; k++){
++                for(TI i = 0; i < 3; i++){
++                    state.prev[k][0 + i] = state.position[i];
++                    state.prev[k][7 + i] = state.linear_velocity[i];
++                    state.prev[k][10 + i] = state.angular_velocity[i];
++                }
++                for(TI i = 0; i < 4; i++){
++                    state.prev[k][3 + i] = state.orientation[i];
++                }
++            }
++        }
++        template<typename T, typename TI>
++        RL_TOOLS_FUNCTION_PLACEMENT bool on_floor(const StateBase<T, TI>& state){
++            return state.position[2] <= state.floor_z + (T)0.005;
++        }
+     }
+     template<typename DEVICE, typename T, typename TI, typename SPEC>
+     static void initial_parameters(DEVICE& device, rl::environments::Multirotor<SPEC>& env, typename rl::environments::multirotor::StateBase<T, TI>& state){
+@@ -243,6 +456,7 @@ namespace rl_tools{
+         for(typename DEVICE::index_t i = 0; i < 3; i++){
+             state.angular_velocity[i] = 0;
+         }
++        rl::environments::multirotor::mission::reset_fields(state);
+         initial_parameters(device, env, state);
+     }
+     template<typename DEVICE, typename T, typename TI, typename SPEC, typename NEXT_COMPONENT>
+@@ -315,6 +529,7 @@ namespace rl_tools{
+         for(TI i = 0; i < 3; i++){
+             state.angular_velocity[i] = random::uniform_real_distribution(random_dev, -env.parameters.mdp.init.max_angular_velocity, env.parameters.mdp.init.max_angular_velocity, rng);
+         }
++        rl::environments::multirotor::mission::reset_fields(state);
+         initial_parameters(device, env, state);
+     }
+     template<typename DEVICE, typename T_S, typename TI_S, typename SPEC, typename NEXT_COMPONENT, typename RNG>
+@@ -374,6 +589,9 @@ namespace rl_tools{
+         using MULTIROTOR = rl::environments::Multirotor<SPEC>;
+         using TI = typename DEVICE::index_t;
+         sample_initial_state(device, env, static_cast<typename rl::environments::multirotor::StateRotors<T_S, TI_S, NEXT_COMPONENT>&>(state), rng);
++        if(env.mission.enabled){
++            rl::environments::multirotor::mission::sample(device, env, state, state.rpm, rng);
++        }
+         for(TI step_i = 0; step_i < HISTORY_LENGTH; step_i++){
+             for(TI action_i = 0; action_i < MULTIROTOR::ACTION_DIM; action_i++){
+                 state.action_history[step_i][action_i] = (state.rpm[action_i] - env.parameters.dynamics.action_limit.min) / (env.parameters.dynamics.action_limit.max - env.parameters.dynamics.action_limit.min) * 2 - 1;
+@@ -460,12 +678,14 @@ namespace rl_tools{
+             static_assert(OBS_SPEC::COLS >= OBSERVATION::CURRENT_DIM);
+             static_assert(OBS_SPEC::ROWS == 1);
+             for(TI i = 0; i < OBSERVATION::CURRENT_DIM; i++){
++                // velocity relative to the (possibly moving) target, as on the drone
++                T v = state.linear_velocity[i] - state.target_velocity[i];
+                 if constexpr(OBSERVATION_SPEC::PRIVILEGED && !SPEC::STATIC_PARAMETERS::PRIVILEGED_OBSERVATION_NOISE){
+-                    set(observation, 0, i, state.linear_velocity[i]);
++                    set(observation, 0, i, v);
+                 }
+                 else{
+                     T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM{}, (T)0, env.parameters.mdp.observation_noise.linear_velocity, rng);
+-                    set(observation, 0, i, state.linear_velocity[i] + noise);
++                    set(observation, 0, i, v + noise);
+                 }
+             }
+             auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
+@@ -505,6 +725,18 @@ namespace rl_tools{
+             observe(device, env, state, typename OBSERVATION::NEXT_COMPONENT{}, next_observation, rng);
+         }
+         template<typename DEVICE, typename SPEC, typename OBSERVATION_SPEC, typename OBS_SPEC, typename RNG>
++        RL_TOOLS_FUNCTION_PLACEMENT static void observe(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::Multirotor<SPEC>::State& state, rl::environments::multirotor::observation::PositionIntegral<OBSERVATION_SPEC>, Matrix<OBS_SPEC>& observation, RNG& rng){
++            using TI = typename DEVICE::index_t;
++            using OBSERVATION = rl::environments::multirotor::observation::PositionIntegral<OBSERVATION_SPEC>;
++            static_assert(OBS_SPEC::COLS >= OBSERVATION::CURRENT_DIM);
++            static_assert(OBS_SPEC::ROWS == 1);
++            for(TI i = 0; i < 3; i++){
++                set(observation, 0, i, state.pos_integral[i]);
++            }
++            auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
++            observe(device, env, state, typename OBSERVATION::NEXT_COMPONENT{}, next_observation, rng);
++        }
++        template<typename DEVICE, typename SPEC, typename OBSERVATION_SPEC, typename OBS_SPEC, typename RNG>
+         RL_TOOLS_FUNCTION_PLACEMENT static void observe(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::Multirotor<SPEC>::State& state, rl::environments::multirotor::observation::ActionHistory<OBSERVATION_SPEC>, Matrix<OBS_SPEC>& observation, RNG& rng){
+             using T = typename SPEC::T;
+             using TI = typename DEVICE::index_t;
+@@ -542,6 +774,64 @@ namespace rl_tools{
+         using ENVIRONMENT = rl::environments::Multirotor<SPEC>;
+         static_assert(OBS_SPEC::COLS == ENVIRONMENT::OBSERVATION_DIM);
+         static_assert(OBS_SPEC::ROWS == 1);
++        if(env.mission.enabled && (state.delay_steps > 0 || state.glitch_steps > 0)){
++            // State-estimate delay: the actor sees position, orientation and
++            // velocities delay_steps old (interpolated between steps); the action
++            // history and the target velocity stay current. A position glitch is
++            // added on top.
++            using T = typename SPEC::T;
++            using TI = typename DEVICE::index_t;
++            STATE delayed = state;
++            if(state.glitch_steps > 0){
++                for(TI i = 0; i < 3; i++){
++                    delayed.position[i] += state.glitch_offset[i];
++                    delayed.linear_velocity[i] += state.glitch_vel[i];
++                }
++            }
++            if(state.delay_steps <= 0){
++                rl::environments::multirotor::observe(device, env, delayed, typename ENVIRONMENT::Observation{}, observation, rng);
++                return;
++            }
++            T d = state.delay_steps > 2 ? (T)2 : state.delay_steps;
++            TI k = (TI)d;
++            T f = d - (T)k;
++            T cur[13];
++            for(TI i = 0; i < 3; i++){
++                cur[0 + i] = state.position[i];
++                cur[7 + i] = state.linear_velocity[i];
++                cur[10 + i] = state.angular_velocity[i];
++            }
++            for(TI i = 0; i < 4; i++){
++                cur[3 + i] = state.orientation[i];
++            }
++            const T* a = k == 0 ? cur : state.prev[k - 1];
++            const T* b = k == 0 ? state.prev[0] : state.prev[k < 2 ? k : 1];
++            T dot = 0;
++            for(TI i = 3; i < 7; i++){
++                dot += a[i] * b[i];
++            }
++            T sign = dot < 0 ? -1 : 1;
++            T mixed[13];
++            for(TI i = 0; i < 13; i++){
++                T bi = (i >= 3 && i < 7) ? sign * b[i] : b[i];
++                mixed[i] = (1 - f) * a[i] + f * bi;
++            }
++            T qn = 0;
++            for(TI i = 3; i < 7; i++){
++                qn += mixed[i] * mixed[i];
++            }
++            qn = math::sqrt(device.math, qn);
++            for(TI i = 0; i < 3; i++){
++                delayed.position[i] = mixed[0 + i] + (state.glitch_steps > 0 ? state.glitch_offset[i] : (T)0);
++                delayed.linear_velocity[i] = mixed[7 + i] + (state.glitch_steps > 0 ? state.glitch_vel[i] : (T)0);
++                delayed.angular_velocity[i] = mixed[10 + i];
++            }
++            for(TI i = 0; i < 4; i++){
++                delayed.orientation[i] = mixed[3 + i] / qn;
++            }
++            rl::environments::multirotor::observe(device, env, delayed, typename ENVIRONMENT::Observation{}, observation, rng);
++            return;
++        }
+         rl::environments::multirotor::observe(device, env, state, typename ENVIRONMENT::Observation{}, observation, rng);
+     }
+     template<typename DEVICE, typename SPEC, typename STATE, typename OBS_SPEC, typename RNG>
+@@ -616,6 +906,93 @@ namespace rl_tools{
+         for(TI state_i = 0; state_i < 4; state_i++){
+             next_state.orientation[state_i] /= quaternion_norm;
+         }
++        // Mission extension: carry the non-integrated fields forward, remember the
++        // previous true state (for the observation delay), move the target and
++        // apply floor contact.
++        for(TI i = 0; i < 3; i++){
++            next_state.target_velocity[i] = state.target_velocity[i];
++        }
++        next_state.floor_z = state.floor_z;
++        next_state.traj_type = state.traj_type;
++        for(TI i = 0; i < 6; i++){
++            next_state.traj[i] = state.traj[i];
++        }
++        next_state.delay_steps = state.delay_steps;
++        next_state.ground_effect = state.ground_effect;
++        // position-estimate glitches: count down the current one, maybe start a new one
++        next_state.glitch_steps = state.glitch_steps > 0 ? state.glitch_steps - 1 : 0;
++        for(TI i = 0; i < 3; i++){
++            next_state.glitch_offset[i] = next_state.glitch_steps > 0 ? state.glitch_offset[i] : (T)0;
++            next_state.glitch_vel[i] = next_state.glitch_steps > 0 ? state.glitch_vel[i] * (T)0.8 : (T)0;
++        }
++        // leaky position-error integral (observation), from the true relative position
++        {
++            const T dt = env.parameters.integration.dt;
++            const T leak = 1 - dt / (T)L2F_POS_INTEGRAL_TAU;
++            for(TI i = 0; i < 3; i++){
++                T v = leak * state.pos_integral[i] + state.position[i] * dt;
++                next_state.pos_integral[i] = v > (T)L2F_POS_INTEGRAL_MAX ? (T)L2F_POS_INTEGRAL_MAX : (v < -(T)L2F_POS_INTEGRAL_MAX ? -(T)L2F_POS_INTEGRAL_MAX : v);
++            }
++        }
++        if(env.mission.enabled && env.mission.glitch_p > 0 && next_state.glitch_steps == 0){
++            typename DEVICE::SPEC::RANDOM rd;
++            if(random::uniform_real_distribution(rd, (T)0, (T)1, rng) < env.mission.glitch_p * env.mission.progress){
++                T dir[3], n = 0;
++                for(TI i = 0; i < 3; i++){
++                    dir[i] = random::normal_distribution::sample(rd, (T)0, (T)1, rng);
++                    n += dir[i] * dir[i];
++                }
++                n = math::sqrt(device.math, n) + (T)1e-6;
++                T size = random::uniform_real_distribution(rd, env.mission.glitch_min, env.mission.glitch_max, rng);
++                T vel = random::uniform_real_distribution(rd, (T)0, env.mission.glitch_vel_max, rng) * size;
++                for(TI i = 0; i < 3; i++){
++                    next_state.glitch_offset[i] = size * dir[i] / n;
++                    next_state.glitch_vel[i] = vel * dir[i] / n;  // the estimate "moves" toward the jump
++                }
++                T duration = random::uniform_real_distribution(rd, (T)0.05, env.mission.glitch_t_max, rng);
++                next_state.glitch_steps = (TI)(duration / env.parameters.integration.dt) + 1;
++            }
++        }
++        for(TI i = 0; i < 13; i++){
++            next_state.prev[1][i] = state.prev[0][i];
++        }
++        for(TI i = 0; i < 3; i++){
++            next_state.prev[0][0 + i] = state.position[i];
++            next_state.prev[0][7 + i] = state.linear_velocity[i];
++            next_state.prev[0][10 + i] = state.angular_velocity[i];
++        }
++        for(TI i = 0; i < 4; i++){
++            next_state.prev[0][3 + i] = state.orientation[i];
++        }
++        T t0 = state.traj_t, t1 = state.traj_t + env.parameters.integration.dt;
++        next_state.traj_t = t1;
++        if(state.traj_type != 0){
++            T p0[3], v0[3], p1[3], v1[3];
++            rl::environments::multirotor::mission::target_at(device, state, t0, p0, v0);
++            rl::environments::multirotor::mission::target_at(device, state, t1, p1, v1);
++            for(TI i = 0; i < 3; i++){
++                T shift = p1[i] - p0[i];
++                next_state.position[i] -= shift;
++                next_state.prev[0][i] -= shift;
++                next_state.prev[1][i] -= shift;
++                next_state.target_velocity[i] = v1[i];
++            }
++            next_state.floor_z -= p1[2] - p0[2];
++        }
++        if(next_state.position[2] < next_state.floor_z){
++            // Floor contact: the landing feet stop downward motion, friction and
++            // the feet damp sliding and rotation.
++            next_state.position[2] = next_state.floor_z;
++            if(next_state.linear_velocity[2] < 0){
++                next_state.linear_velocity[2] = 0;
++            }
++            for(TI i = 0; i < 2; i++){
++                next_state.linear_velocity[i] *= (T)0.5;
++            }
++            for(TI i = 0; i < 3; i++){
++                next_state.angular_velocity[i] *= (T)0.5;
++            }
++        }
+     }
+ //    template<typename DEVICE, typename SPEC, typename T, typename TI, typename NEXT_COMPONENT>
+ //    RL_TOOLS_FUNCTION_PLACEMENT void post_integration(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, rl::environments::multirotor::StateRotors<T, TI, NEXT_COMPONENT>& state) {
+@@ -679,7 +1056,23 @@ namespace rl_tools{
+             action_scaled[action_i] = action_noisy * half_range + env.parameters.dynamics.action_limit.min + half_range;
+ //            state.rpm[action_i] = action_scaled[action_i];
+         }
+-        utils::integrators::rk4  <DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, env.parameters, state, action_scaled, env.parameters.integration.dt, next_state);
++        if(env.mission.enabled && state.ground_effect > 0 && state.floor_z > -50){
++            // Ground effect: more thrust close to the floor (constant over the step).
++            const auto& m = env.mission;
++            T h = state.position[2] - state.floor_z + m.ge_h0;
++            h = h < m.ge_rotor_radius / 2 ? m.ge_rotor_radius / 2 : h;
++            T q = m.ge_rotor_radius / (4 * h);
++            T denom = 1 - state.ground_effect * q * q;
++            T ratio = denom > 1 / m.ge_max_ratio ? 1 / denom : m.ge_max_ratio;
++            auto params = env.parameters;
++            for(TI i = 0; i < 3; i++){
++                params.dynamics.thrust_constants[i] *= ratio;
++            }
++            utils::integrators::rk4  <DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, params, state, action_scaled, env.parameters.integration.dt, next_state);
++        }
++        else{
++            utils::integrators::rk4  <DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, env.parameters, state, action_scaled, env.parameters.integration.dt, next_state);
++        }
+ //        utils::integrators::euler<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, env.parameters, state, action_scaled, env.parameters.integration.dt, next_state);
+ 
+         post_integration(device, env, state, action, next_state, rng);
+@@ -701,6 +1094,13 @@ namespace rl_tools{
+                     return true;
+                 }
+             }
++            // Mission: hitting the floor tilted more than 60 deg is a crash.
++            if(env.mission.enabled && rl::environments::multirotor::mission::on_floor(state)){
++                T up = 1 - 2 * (state.orientation[1] * state.orientation[1] + state.orientation[2] * state.orientation[2]);
++                if(up < (T)0.5){
++                    return true;
++                }
++            }
+         }
+         return false;
+     }
 diff --git a/include/learning_to_fly/simulator/parameters/dynamics/crazyflie_brushless.h b/include/learning_to_fly/simulator/parameters/dynamics/crazyflie_brushless.h
 new file mode 100644
 index 0000000..b4c5d38
@@ -73,10 +683,10 @@ index 0000000..b4c5d38
 +}
 diff --git a/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h b/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h
 new file mode 100644
-index 0000000..82ddcb7
+index 0000000..7792739
 --- /dev/null
 +++ b/include/learning_to_fly/simulator/parameters/reward_functions/brushless.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,64 @@
 +#include "squared.h"
 +
 +// Same weights as reward_squared_position_only_torque(_curriculum_target) in
@@ -89,6 +699,21 @@ index 0000000..82ddcb7
 +#ifndef L2F_ANG_ACC_WEIGHT
 +#define L2F_ANG_ACC_WEIGHT 0
 +#endif
++// Penalty on the change of the normalized action between steps,
++// |a_t - a_{t-1}|^2, to smooth motor commands directly; 0 = off.
++#ifndef L2F_ACTION_RATE_WEIGHT
++#define L2F_ACTION_RATE_WEIGHT 0
++#endif
++// Penalty on angular velocity (rad/s)^2 against wobble (the brushless paper
++// rewards low rotation speed); 0 = off.
++#ifndef L2F_ANG_VEL_WEIGHT
++#define L2F_ANG_VEL_WEIGHT 0
++#endif
++// Penalty on (downward speed)^2 within 10 cm of the floor: gentle touchdowns
++// (mission training); 0 = off.
++#ifndef L2F_LANDING_SPEED_WEIGHT
++#define L2F_LANDING_SPEED_WEIGHT 0
++#endif
 +
 +namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
 +    template<typename T>
@@ -100,11 +725,13 @@ index 0000000..82ddcb7
 +            5, // position
 +            5, // orientation
 +            0.01, // linear_velocity
-+            0, // angular_velocity
++            L2F_ANG_VEL_WEIGHT, // angular_velocity
 +            0, // linear_acceleration
 +            L2F_ANG_ACC_WEIGHT, // angular_acceleration
 +            L2F_CF21BL_ACTION_BASELINE, // action baseline
 +            0.01, // action
++            L2F_ACTION_RATE_WEIGHT, // action rate
++            L2F_LANDING_SPEED_WEIGHT, // landing speed
 +    };
 +    template<typename T>
 +    constexpr Squared<T> reward_squared_position_only_torque_curriculum_target_brushless = {
@@ -115,13 +742,95 @@ index 0000000..82ddcb7
 +            40, // position
 +            5, // orientation
 +            1.00, // linear_velocity
-+            0, // angular_velocity
++            L2F_ANG_VEL_WEIGHT, // angular_velocity
 +            0, // linear_acceleration
 +            L2F_ANG_ACC_WEIGHT, // angular_acceleration
 +            L2F_CF21BL_ACTION_BASELINE, // action baseline
 +            1.00, // action
++            L2F_ACTION_RATE_WEIGHT, // action rate
++            L2F_LANDING_SPEED_WEIGHT, // landing speed
 +    };
 +}
+diff --git a/include/learning_to_fly/simulator/parameters/reward_functions/squared.h b/include/learning_to_fly/simulator/parameters/reward_functions/squared.h
+index 4e8f841..b467449 100644
+--- a/include/learning_to_fly/simulator/parameters/reward_functions/squared.h
++++ b/include/learning_to_fly/simulator/parameters/reward_functions/squared.h
+@@ -20,6 +20,8 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
+         T angular_acceleration;
+         T action_baseline;
+         T action;
++        T action_rate = 0; // weight on |a_t - a_{t-1}|^2 (needs the action history state)
++        T landing_speed = 0; // weight on (downward speed)^2 within 10 cm of the floor (gentle touchdown)
+         struct Components{
+             T orientation_cost;
+             T position_cost;
+@@ -28,11 +30,29 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
+             T linear_acc_cost;
+             T angular_acc_cost;
+             T action_cost;
++            T action_rate_cost;
+             T weighted_cost;
+             T scaled_weighted_cost;
+             T reward;
+         };
+     };
++    // Squared change of the action since the previous step. Only states that keep
++    // an action history know the previous action; for the others it is 0.
++    template<typename STATE, typename ACTION_SPEC>
++    RL_TOOLS_FUNCTION_PLACEMENT typename STATE::T action_rate_cost(const STATE& state, const Matrix<ACTION_SPEC>& action){
++        return 0;
++    }
++    template<typename T_S, typename TI_S, TI_S HISTORY_LENGTH, typename NEXT_COMPONENT, typename ACTION_SPEC>
++    RL_TOOLS_FUNCTION_PLACEMENT T_S action_rate_cost(const rl::environments::multirotor::StateRotorsHistory<T_S, TI_S, HISTORY_LENGTH, NEXT_COMPONENT>& state, const Matrix<ACTION_SPEC>& action){
++        T_S cost = 0;
++        if constexpr(HISTORY_LENGTH > 0){
++            for(TI_S i = 0; i < 4; i++){
++                T_S d = get(action, 0, i) - state.action_history[HISTORY_LENGTH-1][i];
++                cost += d * d;
++            }
++        }
++        return cost;
++    }
+     template<typename DEVICE, typename SPEC, typename ACTION_SPEC, typename T, typename RNG>
+     RL_TOOLS_FUNCTION_PLACEMENT typename rl::environments::multirotor::parameters::reward_functions::Squared<T>::Components reward_components(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const rl::environments::multirotor::parameters::reward_functions::Squared<T>& params, const typename rl::environments::Multirotor<SPEC>::State& state, const Matrix<ACTION_SPEC>& action,  const typename rl::environments::Multirotor<SPEC>::State& next_state, RNG& rng){
+         using TI = typename DEVICE::index_t;
+@@ -40,7 +60,12 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
+         typename rl::environments::multirotor::parameters::reward_functions::Squared<T>::Components components;
+         components.orientation_cost = 1 - state.orientation[0] * state.orientation[0]; //math::abs(device.math, 2 * math::acos(device.math, quaternion_w));
+         components.position_cost = state.position[0] * state.position[0] + state.position[1] * state.position[1] + state.position[2] * state.position[2];
+-        components.linear_vel_cost = state.linear_velocity[0] * state.linear_velocity[0] + state.linear_velocity[1] * state.linear_velocity[1] + state.linear_velocity[2] * state.linear_velocity[2];
++        // velocity relative to the (possibly moving) target; target_velocity is 0 for a static target
++        T rel_v[3];
++        for(TI i = 0; i < 3; i++){
++            rel_v[i] = state.linear_velocity[i] - state.target_velocity[i];
++        }
++        components.linear_vel_cost = rel_v[0] * rel_v[0] + rel_v[1] * rel_v[1] + rel_v[2] * rel_v[2];
+         components.angular_vel_cost = state.angular_velocity[0] * state.angular_velocity[0] + state.angular_velocity[1] * state.angular_velocity[1] + state.angular_velocity[2] * state.angular_velocity[2];
+         T linear_acc[3];
+         T angular_acc[3];
+@@ -55,7 +80,13 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
+         }
+         components.action_cost = utils::vector_operations::norm<DEVICE, T, ACTION_DIM>(action_diff);
+         components.action_cost *= components.action_cost;
+-        components.weighted_cost = params.position * components.position_cost + params.orientation * components.orientation_cost + params.linear_velocity * components.linear_vel_cost + params.angular_velocity * components.angular_vel_cost + params.linear_acceleration * components.linear_acc_cost + params.angular_acceleration * components.angular_acc_cost + params.action * components.action_cost;
++        components.action_rate_cost = action_rate_cost(state, action);
++        // gentle touchdown: penalize sinking fast close to the floor (mission episodes only)
++        T landing_cost = 0;
++        if(state.floor_z > -50 && state.position[2] - state.floor_z < (T)0.1 && state.linear_velocity[2] < 0){
++            landing_cost = state.linear_velocity[2] * state.linear_velocity[2];
++        }
++        components.weighted_cost = params.position * components.position_cost + params.orientation * components.orientation_cost + params.linear_velocity * components.linear_vel_cost + params.angular_velocity * components.angular_vel_cost + params.linear_acceleration * components.linear_acc_cost + params.angular_acceleration * components.angular_acc_cost + params.action * components.action_cost + params.action_rate * components.action_rate_cost + params.landing_speed * landing_cost;
+         bool terminated_flag = terminated(device, env, next_state, rng);
+         components.scaled_weighted_cost = params.scale * components.weighted_cost;
+ 
+@@ -80,6 +111,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
+         add_scalar(device, device.logger, "reward/linear_acc_cost",  components.linear_acc_cost, cadence);
+         add_scalar(device, device.logger, "reward/angular_acc_cost", components.angular_acc_cost, cadence);
+         add_scalar(device, device.logger, "reward/action_cost",      components.action_cost, cadence);
++        add_scalar(device, device.logger, "reward/action_rate_cost", components.action_rate_cost, cadence);
+         add_scalar(device, device.logger, "reward/pre_exp",         -components.weighted_cost, cadence);
+ 
+         add_scalar(device, device.logger, "reward_weighted/orientation_cost", params.orientation          * components.orientation_cost, cadence);
 diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
 index f2c4dc2..5a85468 100644
 --- a/src/CMakeLists.txt
@@ -143,10 +852,10 @@ index f2c4dc2..5a85468 100644
 +)
 +endif()
 diff --git a/src/config/config.h b/src/config/config.h
-index 11edbd5..3174e40 100644
+index 11edbd5..e434190 100644
 --- a/src/config/config.h
 +++ b/src/config/config.h
-@@ -71,7 +71,11 @@ namespace learning_to_fly{
+@@ -71,9 +71,18 @@ namespace learning_to_fly{
              static constexpr bool COLLECT_EPISODE_STATS = false;
              static constexpr TI EPISODE_STATS_BUFFER_SIZE = 1000;
              static constexpr TI N_ENVIRONMENTS = 1;
@@ -156,13 +865,20 @@ index 11edbd5..3174e40 100644
              static constexpr TI STEP_LIMIT = 300001;
 +#endif
  //            static constexpr TI REPLAY_BUFFER_LIMIT = 3000000;
++#ifdef L2F_REPLAY_CAP
++            // longer runs: keep the most recent transitions only (memory)
++            static constexpr TI REPLAY_BUFFER_CAP = L2F_REPLAY_CAP < STEP_LIMIT ? L2F_REPLAY_CAP : STEP_LIMIT;
++#else
              static constexpr TI REPLAY_BUFFER_CAP = STEP_LIMIT;
++#endif
              static constexpr TI ENVIRONMENT_STEP_LIMIT = 500;
+             static constexpr TI ENVIRONMENT_STEP_LIMIT_EVALUATION = 500;
+             static constexpr TI BASE_SEED = 0;
 diff --git a/src/config/parameters.h b/src/config/parameters.h
-index 8341a2f..26d9dfb 100644
+index 8341a2f..e74cb5a 100644
 --- a/src/config/parameters.h
 +++ b/src/config/parameters.h
-@@ -6,11 +6,28 @@
+@@ -6,11 +6,33 @@
  #include <learning_to_fly/simulator/parameters/reward_functions/absolute.h>
  #include <learning_to_fly/simulator/parameters/reward_functions/default.h>
  #include <learning_to_fly/simulator/parameters/dynamics/crazy_flie.h>
@@ -176,11 +892,16 @@ index 8341a2f..26d9dfb 100644
 +// Observation noise std (Gaussian). Defaults are the paper's; L2F_REAL_NOISE uses
 +// values measured on our Crazyflie 2.1 Brushless (PID hover + still tests):
 +// gyro ~0.069 rad/s, attitude ~0.006 rad, velocity ~0.010 m/s, position 3-10 mm.
++// L2F_NOISE_SCALE multiplies the measured values (training with more noise than
++// measured makes the policy ignore high-frequency sensor jitter).
++#ifndef L2F_NOISE_SCALE
++#define L2F_NOISE_SCALE 1
++#endif
 +#ifdef L2F_REAL_NOISE
-+#define L2F_NOISE_POSITION 0.005
-+#define L2F_NOISE_ORIENTATION 0.006
-+#define L2F_NOISE_LINEAR_VELOCITY 0.010
-+#define L2F_NOISE_ANGULAR_VELOCITY 0.069
++#define L2F_NOISE_POSITION (0.005 * L2F_NOISE_SCALE)
++#define L2F_NOISE_ORIENTATION (0.006 * L2F_NOISE_SCALE)
++#define L2F_NOISE_LINEAR_VELOCITY (0.010 * L2F_NOISE_SCALE)
++#define L2F_NOISE_ANGULAR_VELOCITY (0.069 * L2F_NOISE_SCALE)
 +#else
 +#define L2F_NOISE_POSITION 0.001
 +#define L2F_NOISE_ORIENTATION 0.001
@@ -191,7 +912,7 @@ index 8341a2f..26d9dfb 100644
  namespace parameters{
      namespace rlt = rl_tools;
      struct DefaultAblationSpec{
-@@ -29,8 +46,15 @@ namespace parameters{
+@@ -29,8 +51,15 @@ namespace parameters{
          template<typename T, typename TI, typename T_ABLATION_SPEC>
          struct environment {
              using ABLATION_SPEC = T_ABLATION_SPEC;
@@ -207,7 +928,7 @@ index 8341a2f..26d9dfb 100644
              static constexpr auto reward_function = ABLATION_SPEC::USE_INITIAL_REWARD_FUNCTION ? initial_reward_function : target_reward_function;
  
  
-@@ -46,16 +70,20 @@ namespace parameters{
+@@ -46,16 +75,20 @@ namespace parameters{
                                                  rl_tools::rl::environments::multirotor::parameters::init::all_positions<T, TI, 4, REWARD_FUNCTION>;
  
              static constexpr PARAMETERS_TYPE parameters = {
@@ -232,7 +953,7 @@ index 8341a2f..26d9dfb 100644
                              },
                              {   // Action noise
                                      0, // std of additive gaussian noise onto the normalized action (-1, 1)
-@@ -63,8 +91,8 @@ namespace parameters{
+@@ -63,8 +96,8 @@ namespace parameters{
                              rl_tools::rl::environments::multirotor::parameters::termination::fast_learning<T, TI, 4, REWARD_FUNCTION>
                      },
                      typename PARAMETERS_TYPE::Disturbances{
@@ -243,12 +964,53 @@ index 8341a2f..26d9dfb 100644
                      }
  
              };
+@@ -73,6 +106,13 @@ namespace parameters{
+ 
+             struct ENVIRONMENT_STATIC_PARAMETERS{
+                 static constexpr TI ACTION_HISTORY_LENGTH = 32;
++                // L2F_POS_INTEGRAL: append the leaky position-error integral (3 values)
++                // to the actor's and the critic's observation.
++#ifdef L2F_POS_INTEGRAL
++                using OBS_TAIL = observation::PositionIntegral<observation::PositionIntegralSpecification<T, TI>>;
++#else
++                using OBS_TAIL = observation::LastComponent<TI>;
++#endif
+                 using STATE_TYPE = rlt::utils::typing::conditional_t<ABLATION_SPEC::ROTOR_DELAY,
+                     rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY,
+                         StateRotorsHistory<T, TI, ACTION_HISTORY_LENGTH, rlt::utils::typing::conditional_t<ABLATION_SPEC::DISTURBANCE, StateRandomForce<T, TI, StateBase<T, TI>>, StateBase<T, TI>>>,
+@@ -82,7 +122,7 @@ namespace parameters{
+                         observation::OrientationRotationMatrix<observation::OrientationRotationMatrixSpecification<T, TI,
+                                 observation::LinearVelocity<observation::LinearVelocitySpecification<T, TI,
+                                         observation::AngularVelocity<observation::AngularVelocitySpecification<T, TI,
+-                                                rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY, observation::ActionHistory<observation::ActionHistorySpecification<T, TI, ACTION_HISTORY_LENGTH>>, observation::LastComponent<TI>>>>>>>>>>;
++                                                rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY, observation::ActionHistory<observation::ActionHistorySpecification<T, TI, ACTION_HISTORY_LENGTH, OBS_TAIL>>, OBS_TAIL>>>>>>>>>;
+                 using OBSERVATION_TYPE_PRIVILEGED = rlt::utils::typing::conditional_t<ABLATION_SPEC::ASYMMETRIC_ACTOR_CRITIC,
+                     observation::Position<observation::PositionSpecificationPrivileged<T, TI,
+                         observation::OrientationRotationMatrix<observation::OrientationRotationMatrixSpecificationPrivileged<T, TI,
+@@ -91,13 +131,13 @@ namespace parameters{
+                                     rlt::utils::typing::conditional_t<ABLATION_SPEC::DISTURBANCE,
+                                         observation::RandomForce<observation::RandomForceSpecification<T, TI,
+                                             rlt::utils::typing::conditional_t<ABLATION_SPEC::ROTOR_DELAY,
+-                                                observation::RotorSpeeds<observation::RotorSpeedsSpecification<T, TI>>,
+-                                                observation::LastComponent<TI>
++                                                observation::RotorSpeeds<observation::RotorSpeedsSpecification<T, TI, OBS_TAIL>>,
++                                                OBS_TAIL
+                                             >
+                                         >>,
+                                         rlt::utils::typing::conditional_t<ABLATION_SPEC::ROTOR_DELAY,
+-                                                observation::RotorSpeeds<observation::RotorSpeedsSpecification<T, TI>>,
+-                                                observation::LastComponent<TI>
++                                                observation::RotorSpeeds<observation::RotorSpeedsSpecification<T, TI, OBS_TAIL>>,
++                                                OBS_TAIL
+                                         >
+                                     >
+                                 >>
 diff --git a/src/evaluate_robustness.cpp b/src/evaluate_robustness.cpp
 new file mode 100644
-index 0000000..0909bb7
+index 0000000..495c582
 --- /dev/null
 +++ b/src/evaluate_robustness.cpp
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,518 @@
 +// Headless robustness check of a trained actor (.h5 checkpoint).
 +//
 +// Runs many 10 s episodes from the training initial-state distribution (up to
@@ -293,11 +1055,291 @@ index 0000000..0909bb7
 +    TI err_n = 0;
 +};
 +
++// L2F_EVAL_NOISE=<scale> (environment variable) evaluates every policy under
++// the same observation noise: the measured values times <scale>, regardless of
++// the noise this binary was trained/compiled with.
++template <typename ENV>
++void apply_eval_noise(ENV& env){
++    const char* s = std::getenv("L2F_EVAL_NOISE");
++    if(!s) return;
++    T k = std::atof(s);
++    env.parameters.mdp.observation_noise.position = 0.005 * k;
++    env.parameters.mdp.observation_noise.orientation = 0.006 * k;
++    env.parameters.mdp.observation_noise.linear_velocity = 0.010 * k;
++    env.parameters.mdp.observation_noise.angular_velocity = 0.069 * k;
++}
++
++// L2F_EVAL_DELAY_MS=<ms> (environment variable) feeds the actor a state estimate
++// (position, orientation, velocities: the first 18 observation entries) that is
++// <ms> old, linearly interpolated between 10 ms steps. The action history stays
++// current, as on the drone. Models estimator / sensor-filter latency.
++struct ObservationDelay{
++    static constexpr TI STATE_DIM = 18;
++    static constexpr TI MAX_STEPS = 16;
++    T buf[MAX_STEPS][STATE_DIM];
++    TI head = 0, filled = 0;
++    T delay_steps = 0;
++    ObservationDelay(){
++        const char* s = std::getenv("L2F_EVAL_DELAY_MS");
++        delay_steps = s ? std::atof(s) / 10.0 : 0;
++        if(delay_steps > MAX_STEPS - 2) delay_steps = MAX_STEPS - 2;
++    }
++    void reset(){ filled = 0; }
++    template <typename OBS>
++    void apply(OBS& observation){
++        head = (head + 1) % MAX_STEPS;
++        for(TI i = 0; i < STATE_DIM; i++) buf[head][i] = rlt::get(observation, 0, i);
++        if(filled < MAX_STEPS) filled++;
++        if(delay_steps <= 0) return;
++        TI k = (TI)delay_steps;
++        T f = delay_steps - k;
++        auto at = [&](TI back){
++            if(back >= filled) back = filled - 1;   // not enough history yet: oldest available
++            return (head + MAX_STEPS - back) % MAX_STEPS;
++        };
++        TI a = at(k), b = at(k + 1);
++        for(TI i = 0; i < STATE_DIM; i++){
++            rlt::set(observation, 0, i, (1 - f) * buf[a][i] + f * buf[b][i]);
++        }
++    }
++};
++
++// Normalized action -> motor command u in [0,1] as the firmware maps it
++// (rpm = 5400 * u * vbat + 3750), at a typical in-flight vbat of 3.9 V.
++inline T action_to_command(T a){
++    T rpm = (a + 1) / 2 * 24000;
++    return (rpm - 3750) / (5400 * 3.9);
++}
++
++// Mission profile (same as rl_trigger.py --mode mission): sit on the floor,
++// climb to height H, hover, move to the circle start, one circle of radius R in
++// period P, back to the centre, hover, descend to 2 cm below the floor, sit.
++struct MissionProfile{
++    T H = 0.4, R = 0.3, P = 8.0, laps = 1, v_up = 0.25, v_down = 0.15;
++    T t_idle = 0.3, t_hover1 = 2.0, t_move = 2.0, t_back = 2.0, t_hover2 = 1.0, t_ground = 1.5;
++    T below = 0.02;
++    T duration() const {
++        return t_idle + H / v_up + t_hover1 + t_move + laps * P + t_back + t_hover2 + (H + below) / v_down + t_ground;
++    }
++    // returns the phase: 0 idle, 1 take-off, 2 hover, 3 move, 4 circle, 5 back, 6 hover, 7 landing, 8 ground
++    int at(T t, T* p, T* v) const {
++        for(int i = 0; i < 3; i++){ p[i] = 0; v[i] = 0; }
++        T t_up = H / v_up, t_circle = laps * P, t_down = (H + below) / v_down;
++        if(t < t_idle) return 0;
++        t -= t_idle;
++        if(t < t_up){ p[2] = v_up * t; v[2] = v_up; return 1; }
++        t -= t_up; p[2] = H;
++        if(t < t_hover1) return 2;
++        t -= t_hover1;
++        if(t < t_move){ p[0] = R * t / t_move; v[0] = R / t_move; return 3; }
++        t -= t_move;
++        if(t < t_circle){
++            T w = 2 * M_PI / P, a = w * t;
++            p[0] = R * std::cos(a); p[1] = R * std::sin(a);
++            v[0] = -R * w * std::sin(a); v[1] = R * w * std::cos(a);
++            return 4;
++        }
++        t -= t_circle;
++        if(t < t_back){ p[0] = R * (1 - t / t_back); v[0] = -R / t_back; return 5; }
++        t -= t_back;
++        if(t < t_hover2) return 6;
++        t -= t_hover2;
++        if(t < t_down){ p[2] = H - v_down * t; v[2] = -v_down; return 7; }
++        p[2] = -below;
++        return 8;
++    }
++};
++
++// Full mission in simulation from the floor. Env vars: L2F_EVAL_DR=0 turns the
++// per-episode domain randomization off; L2F_EVAL_DELAY_MS sets the
++// state-estimate delay (default 6 ms); L2F_MISSION_CSV=<path> writes the first
++// episode's trajectory.
++template <typename ACTOR, typename BUFFER, typename RNG>
++int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng){
++    MissionProfile mp;
++    if(const char* s = std::getenv("L2F_MISSION_H")) mp.H = std::atof(s);
++    if(const char* s = std::getenv("L2F_MISSION_R")) mp.R = std::atof(s);
++    if(const char* s = std::getenv("L2F_MISSION_V_DOWN")) mp.v_down = std::atof(s);
++    if(const char* s = std::getenv("L2F_MISSION_P")) mp.P = std::atof(s);
++    // ground-effect strength in the mission test (training samples U(0, 2))
++    const char* s_ge = std::getenv("L2F_EVAL_GE");
++    T ge = s_ge ? std::atof(s_ge) : 1.0;
++    // L2F_EVAL_GLITCH=<m>: one position-estimate jump of that size (random
++    // direction) lasting 0.3 s, three quarters into the circle (as on 2026-11-04).
++    const char* s_gl = std::getenv("L2F_EVAL_GLITCH");
++    T glitch = s_gl ? std::atof(s_gl) : 0;
++    const char* s_dr = std::getenv("L2F_EVAL_DR");
++    const char* s_delay = std::getenv("L2F_EVAL_DELAY_MS");
++    const char* s_csv = std::getenv("L2F_MISSION_CSV");
++    bool dr = !s_dr || std::atoi(s_dr) != 0;
++    T delay_steps = (s_delay ? std::atof(s_delay) : 6.0) / 10.0;
++    // L2F_EVAL_KI=<1/s>: outer integrator (as in rl_trigger.py --mode mission)
++    // that shifts the commanded target to cancel the policy's steady offset.
++    const char* s_ki = std::getenv("L2F_EVAL_KI");
++    T ki = s_ki ? std::atof(s_ki) : 0;
++    const char* s_ki_z = std::getenv("L2F_EVAL_KI_Z");  // height part, off by default as in rl_trigger.py
++    T ki_z = s_ki_z ? std::atof(s_ki_z) : 0;
++    std::printf("mission: H %.2f m, circle R %.2f m in %.1f s, %.1f s total, domain randomization %s, delay %.0f ms\n",
++                (double)mp.H, (double)mp.R, (double)mp.P, (double)mp.duration(), dr ? "on" : "off", (double)(delay_steps * 10));
++    const char* names[] = {"idle", "take-off", "hover", "move", "circle", "back", "hover", "landing", "ground"};
++    T err_sum[9] = {}, err_max[9] = {};
++    TI err_n[9] = {};
++    T jitter_sum = 0, touchdown_sum = 0, land_xy_sum = 0, max_tilt_all = 0, bounce_sum = 0, bounce_max = 0;
++    TI crashes = 0, landed = 0, jitter_n = 0;
++    std::FILE* csv = s_csv ? std::fopen(s_csv, "w") : nullptr;
++    if(csv) std::fprintf(csv, "t,phase,tx,ty,tz,x,y,z,tilt_deg,u1,u2,u3,u4\n");
++    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
++    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::ACTION_DIM>> action;
++    rlt::malloc(dev, observation);
++    rlt::malloc(dev, action);
++    for(TI e = 0; e < episodes; e++){
++        ENVIRONMENT env;
++        env.parameters = PENV::parameters;
++        env.parameters.mdp.reward = PENV::target_reward_function;
++        apply_eval_noise(env);
++        env.mission.enabled = true;
++        env.mission.p_takeoff = env.mission.p_land = env.mission.p_circle = env.mission.p_line = 0;
++        env.mission.domain_randomization = dr;
++        env.mission.delay_max_steps = 0;
++        rlt::malloc(dev, env);
++        typename ENVIRONMENT::State s, next;
++        rlt::sample_initial_state(dev, env, s, rng);  // applies domain randomization
++        // resting on the floor, motors stopped
++        for(TI i = 0; i < 3; i++){ s.position[i] = 0; s.linear_velocity[i] = 0; s.angular_velocity[i] = 0; }
++        s.orientation[0] = 1; s.orientation[1] = 0; s.orientation[2] = 0; s.orientation[3] = 0;
++        for(TI m = 0; m < 4; m++){
++            s.rpm[m] = env.parameters.dynamics.action_limit.min;
++            for(TI h = 0; h < ENVIRONMENT::State::HISTORY_LENGTH; h++) s.action_history[h][m] = -1;
++        }
++        rlt::rl::environments::multirotor::mission::reset_fields(s);
++        s.floor_z = 0;
++        s.delay_steps = delay_steps;
++        s.ground_effect = ge;
++        T p_prev[3] = {0, 0, 0};
++        T comp[3] = {0, 0, 0};  // outer-integrator target correction
++        T last_err[3] = {0, 0, 0};
++        TI steps = (TI)(mp.duration() / env.parameters.integration.dt);
++        T usum[4] = {}, usq[4] = {};
++        TI un = 0;
++        bool crashed = false, touched = false;
++        T touchdown_v = 0, max_tilt = 0, bounce = 0;
++        for(TI step = 0; step < steps; step++){
++            T t = step * env.parameters.integration.dt, p[3], v[3];
++            int phase = mp.at(t, p, v);
++            // reference (where the drone should be), before the correction
++            T p_ref[3] = {p[0], p[1], p[2]};
++            if(ki > 0){
++                if(phase >= 2 && phase <= 6){
++                    // drone error w.r.t. the reference: s.position is relative to
++                    // the commanded target p_prev = p_ref_prev + comp
++                    for(TI i = 0; i < 3; i++){
++                        T e = -(s.position[i] + comp[i]);
++                        comp[i] += (i < 2 ? ki : ki_z) * e * env.parameters.integration.dt;
++                        comp[i] = std::max((T)-0.2, std::min((T)0.2, comp[i]));
++                    }
++                }
++                T zs = std::max((T)0, std::min((T)1, p_ref[2] / mp.H));  // fade the height correction out near the floor
++                p[0] += comp[0]; p[1] += comp[1]; p[2] += comp[2] * zs;
++            }
++            for(TI i = 0; i < 3; i++){
++                T shift = p[i] - p_prev[i];
++                s.position[i] -= shift;
++                s.prev[0][i] -= shift;
++                s.prev[1][i] -= shift;
++                s.target_velocity[i] = v[i];
++                p_prev[i] = p[i];
++            }
++            s.floor_z = -p[2];  // the floor is at absolute height 0
++            if(glitch > 0){
++                T t_glitch = mp.t_idle + mp.H / mp.v_up + mp.t_hover1 + mp.t_move + 0.75 * mp.laps * mp.P;
++                if(std::abs(t - t_glitch) < env.parameters.integration.dt / 2){
++                    T a = 2 * M_PI * (T)(e % 8) / 8;  // spread directions over the episodes
++                    s.glitch_offset[0] = glitch * std::cos(a) * 0.95;
++                    s.glitch_offset[1] = glitch * std::sin(a) * 0.95;
++                    s.glitch_offset[2] = glitch * 0.3;
++                    s.glitch_steps = 30;
++                }
++            }
++            rlt::observe(dev, env, s, observation, rng);
++            rlt::evaluate(dev, actor, observation, action, buffer);
++            rlt::clamp(dev, action, (T)-1, (T)1);
++            T vz_before = s.linear_velocity[2];
++            bool was_airborne = !rlt::rl::environments::multirotor::mission::on_floor(s);
++            rlt::step(dev, env, s, action, next, rng);
++            s = next;
++            T up = 1 - 2 * (s.orientation[1] * s.orientation[1] + s.orientation[2] * s.orientation[2]);
++            T tilt = std::acos(std::max((T)-1, std::min((T)1, up))) * 180 / M_PI;
++            max_tilt = std::max(max_tilt, tilt);
++            // error w.r.t. the reference (the commanded target may include the correction)
++            for(TI i = 0; i < 3; i++){
++                last_err[i] = s.position[i] + p[i] - p_ref[i];
++            }
++            T err = std::sqrt(last_err[0] * last_err[0] + last_err[1] * last_err[1] + last_err[2] * last_err[2]);
++            if(tilt > 60 || err > 0.6){
++                crashed = true;
++            }
++            err_sum[phase] += err; err_n[phase]++;
++            err_max[phase] = std::max(err_max[phase], err);
++            if(phase == 2 || phase == 6){
++                for(TI m = 0; m < 4; m++){
++                    T u = action_to_command(rlt::get(action, 0, m));
++                    usum[m] += u; usq[m] += u * u;
++                }
++                un++;
++            }
++            if(phase >= 7 && !touched && was_airborne && rlt::rl::environments::multirotor::mission::on_floor(s)){
++                touched = true;
++                touchdown_v = vz_before;
++            }
++            if(touched){
++                bounce = std::max(bounce, s.position[2] - s.floor_z);
++            }
++            if(csv && e == 0){
++                std::fprintf(csv, "%.2f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.3f,%.3f,%.3f,%.3f\n", (double)t, phase,
++                             (double)p_ref[0], (double)p_ref[1], (double)p_ref[2],
++                             (double)(s.position[0] + p[0]), (double)(s.position[1] + p[1]), (double)(s.position[2] + p[2]), (double)tilt,
++                             (double)action_to_command(rlt::get(action, 0, 0)), (double)action_to_command(rlt::get(action, 0, 1)),
++                             (double)action_to_command(rlt::get(action, 0, 2)), (double)action_to_command(rlt::get(action, 0, 3)));
++            }
++        }
++        T jit = 0;
++        for(TI m = 0; m < 4; m++){
++            T mean = usum[m] / un;
++            jit += std::sqrt(std::max((T)0, usq[m] / un - mean * mean)) / 4;
++        }
++        jitter_sum += jit; jitter_n++;
++        max_tilt_all = std::max(max_tilt_all, max_tilt);
++        crashes += crashed;
++        if(!crashed && rlt::rl::environments::multirotor::mission::on_floor(s)){
++            landed++;
++            touchdown_sum += touched ? -touchdown_v : 0;
++            bounce_sum += bounce;
++            bounce_max = std::max(bounce_max, bounce);
++            land_xy_sum += std::sqrt(last_err[0] * last_err[0] + last_err[1] * last_err[1]);
++        }
++    }
++    if(csv) std::fclose(csv);
++    rlt::free(dev, observation);
++    rlt::free(dev, action);
++    std::printf("episodes %d: crashed %d, landed on the floor %d\n", (int)episodes, (int)crashes, (int)landed);
++    for(int ph = 0; ph < 9; ph++){
++        if(err_n[ph]) std::printf("  %-9s tracking error mean %5.1f cm, max %5.1f cm\n", names[ph],
++                                  (double)(100 * err_sum[ph] / err_n[ph]), (double)(100 * err_max[ph]));
++    }
++    std::printf("  hover jitter (paper metric) %.4f, max tilt %.1f deg\n", (double)(jitter_sum / jitter_n), (double)max_tilt_all);
++    if(landed) std::printf("  landing: touchdown speed %.2f m/s, final horizontal error %.1f cm, bounce after touchdown mean %.1f cm / max %.1f cm\n",
++                           (double)(touchdown_sum / landed), (double)(100 * land_xy_sum / landed),
++                           (double)(100 * bounce_sum / landed), (double)(100 * bounce_max));
++    return 0;
++}
++
 +template <typename ACTOR, typename BUFFER, typename RNG>
 +Result run(DEVICE& dev, ACTOR& actor, BUFFER& buffer, const Variation& v, bool hover_start, TI episodes, RNG& rng){
 +    ENVIRONMENT env;
 +    env.parameters = PENV::parameters;
 +    env.parameters.mdp.reward = PENV::target_reward_function;
++    env.mission.enabled = false;  // fixed variations below; delay via L2F_EVAL_DELAY_MS
++    apply_eval_noise(env);
 +    if(hover_start){
 +        env.parameters.mdp.init = rlt::rl::environments::multirotor::parameters::init::orientation_small_angle<T, TI, 4, typename PENV::REWARD_FUNCTION>;
 +    }
@@ -318,8 +1360,10 @@ index 0000000..0909bb7
 +    rlt::malloc(dev, action);
 +
 +    Result r;
++    ObservationDelay delay;
 +    typename ENVIRONMENT::State state, next_state;
 +    for(TI e = 0; e < episodes; e++){
++        delay.reset();
 +        rlt::sample_initial_state(dev, env, state, rng);
 +        if(hover_start && v.history >= -1){
 +            T hover_rpm = std::sqrt(d.mass * 9.81 / 4 / d.thrust_constants[2]);
@@ -335,6 +1379,7 @@ index 0000000..0909bb7
 +        bool alive = true;
 +        for(TI step = 0; step < EPISODE_STEPS; step++){
 +            rlt::observe(dev, env, state, observation, rng);
++            delay.apply(observation);
 +            rlt::evaluate(dev, actor, observation, action, buffer);
 +            rlt::clamp(dev, action, (T)-1, (T)1);
 +            rlt::step(dev, env, state, action, next_state, rng);
@@ -373,11 +1418,16 @@ index 0000000..0909bb7
 +    }
 +    auto rng = rlt::random::default_engine(DEVICE::SPEC::RANDOM(), 12345);
 +
++    if(argc > 3 && std::string(argv[3]) == "mission"){
++        return run_mission(dev, actor, buffer, episodes, rng);
++    }
 +    if(argc > 3 && std::string(argv[3]) == "probe"){
 +        // Start from a perfectly hovering drone and fly 5 s. Observation noise
 +        // is this build's (paper or L2F_REAL_NOISE); "clean" turns it off.
 +        ENVIRONMENT env;
 +        env.parameters = PENV::parameters;
++        env.mission.enabled = false;
++        apply_eval_noise(env);
 +        if(argc > 4 && std::string(argv[4]) == "clean"){
 +            env.parameters.mdp.observation_noise.position = 0;
 +            env.parameters.mdp.observation_noise.orientation = 0;
@@ -410,16 +1460,21 @@ index 0000000..0909bb7
 +        std::printf("\naction: %.3f %.3f %.3f %.3f\n", (double)rlt::get(action, 0, 0), (double)rlt::get(action, 0, 1), (double)rlt::get(action, 0, 2), (double)rlt::get(action, 0, 3));
 +
 +        // Fly 5 s from this hover state and summarize how jumpy the actions are.
-+        T sum[4] = {}, sq[4] = {}, jump = 0, sat = 0, max_tilt = 0;
++        T sum[4] = {}, sq[4] = {}, usum[4] = {}, usq[4] = {}, jump = 0, sat = 0, max_tilt = 0;
 +        TI n = 0;
++        ObservationDelay delay;
++        std::printf("state-estimate delay %.0f ms\n", (double)(delay.delay_steps * 10));
 +        typename ENVIRONMENT::State next;
-+        for(TI step = 0; step < 500; step++){
++        for(TI step = 0; step < 2000; step++){
 +            rlt::observe(dev, env, s, observation, rng);
++            delay.apply(observation);
 +            rlt::evaluate(dev, actor, observation, action, buffer);
 +            rlt::clamp(dev, action, (T)-1, (T)1);
 +            for(TI m = 0; m < 4; m++){
 +                T a = rlt::get(action, 0, m);
 +                sum[m] += a; sq[m] += a * a;
++                T u = action_to_command(a);
++                usum[m] += u; usq[m] += u * u;
 +                sat += std::abs(a) > 0.95;
 +                jump += std::abs(a - s.action_history[ENVIRONMENT::State::HISTORY_LENGTH - 1][m]);
 +            }
@@ -430,10 +1485,14 @@ index 0000000..0909bb7
 +            max_tilt = std::max(max_tilt, tilt);
 +            n++;
 +        }
++        T ustd = 0;
 +        for(TI m = 0; m < 4; m++){
 +            T mean = sum[m] / n;
 +            std::printf("motor %d: action mean %.3f std %.3f\n", (int)m, (double)mean, (double)std::sqrt(sq[m] / n - mean * mean));
++            T umean = usum[m] / n;
++            ustd += std::sqrt(std::max((T)0, usq[m] / n - umean * umean)) / 4;
 +        }
++        std::printf("motor command std (paper metric, u in [0,1]) %.4f\n", (double)ustd);
 +        std::printf("mean |action change| per step %.3f, saturated %.1f%%, max tilt %.1f deg, final pos (%.3f %.3f %.3f)\n",
 +                    (double)(jump / (4 * n)), (double)(100 * sat / (4 * n)), (double)(max_tilt * 180 / M_PI),
 +                    (double)s.position[0], (double)s.position[1], (double)s.position[2]);
@@ -470,3 +1529,22 @@ index 0000000..0909bb7
 +    }
 +    return 0;
 +}
+diff --git a/src/steps/curriculum.h b/src/steps/curriculum.h
+index c39bc8d..f5c83fb 100644
+--- a/src/steps/curriculum.h
++++ b/src/steps/curriculum.h
+@@ -4,6 +4,14 @@ namespace learning_to_fly {
+         void curriculum(TrainingState<CONFIG>& ts){
+             using T = typename CONFIG::T;
+             using TI = typename CONFIG::TI;
++            // Mission curriculum: ramp mission episodes, delay and domain
++            // randomization in over the first ramp_steps (plain hover first).
++            if(ts.step % 10000 == 0){
++                for(auto& env : ts.off_policy_runner.envs){
++                    T ramp = env.mission.ramp_steps;
++                    env.mission.progress = ramp > 0 ? (ts.step >= ramp ? (T)1 : (T)ts.step / ramp) : (T)1;
++                }
++            }
+             if constexpr(CONFIG::ABLATION_SPEC::ENABLE_CURRICULUM == true) {
+                 if(ts.step != 0 && ts.step % 100000 == 0 && ts.step != (CONFIG::STEP_LIMIT - 1)){
+                     rlt::add_scalar(ts.device, ts.device.logger, "td3/gamma", ts.actor_critic.gamma);
