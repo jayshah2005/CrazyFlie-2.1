@@ -1,5 +1,5 @@
 diff --git a/include/learning_to_fly/simulator/multirotor.h b/include/learning_to_fly/simulator/multirotor.h
-index 3825527..e7977a0 100644
+index 3825527..3e8f0a6 100644
 --- a/include/learning_to_fly/simulator/multirotor.h
 +++ b/include/learning_to_fly/simulator/multirotor.h
 @@ -2,6 +2,12 @@
@@ -15,7 +15,30 @@ index 3825527..e7977a0 100644
  
  namespace rl_tools::rl::environments::multirotor{
      template <typename T, typename TI, TI N, typename T_REWARD_FUNCTION>
-@@ -246,6 +252,21 @@ namespace rl_tools::rl::environments::multirotor{
+@@ -229,6 +235,22 @@ namespace rl_tools::rl::environments::multirotor{
+             static constexpr TI CURRENT_DIM = 4;
+             static constexpr TI DIM = NEXT_COMPONENT::DIM + CURRENT_DIM;
+         };
++        // Measured rotor speeds for the actor (L2F_RPM_OBS): StateBase::rpm_meas,
++        // the true speeds with telemetry-like noise and repeated values.
++        template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT = LastComponent<T_TI>>
++        struct RotorSpeedsMeasuredSpecification {
++            using T = T_T;
++            using TI = T_TI;
++            using NEXT_COMPONENT = T_NEXT_COMPONENT;
++        };
++        template <typename SPEC>
++        struct RotorSpeedsMeasured{
++            using T = typename SPEC::T;
++            using TI = typename SPEC::TI;
++            using NEXT_COMPONENT = typename SPEC::NEXT_COMPONENT;
++            static constexpr TI CURRENT_DIM = 4;
++            static constexpr TI DIM = NEXT_COMPONENT::DIM + CURRENT_DIM;
++        };
+         template <typename T_T, typename T_TI, T_TI T_HISTORY_LENGTH, typename T_NEXT_COMPONENT = LastComponent<T_TI>>
+         struct ActionHistorySpecification {
+             using T = T_T;
+@@ -246,6 +268,21 @@ namespace rl_tools::rl::environments::multirotor{
              static constexpr TI CURRENT_DIM = ACTION_DIM * HISTORY_LENGTH;
              static constexpr TI DIM = NEXT_COMPONENT::DIM + CURRENT_DIM;
          };
@@ -37,7 +60,7 @@ index 3825527..e7977a0 100644
          template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT = LastComponent<T_TI>>
          struct RandomForceSpecification {
              using T = T_T;
-@@ -273,6 +294,25 @@ namespace rl_tools::rl::environments::multirotor{
+@@ -273,6 +310,32 @@ namespace rl_tools::rl::environments::multirotor{
          T orientation[4];
          T linear_velocity[3];
          T angular_velocity[3];
@@ -60,10 +83,17 @@ index 3825527..e7977a0 100644
 +        // The firmware computes the same (rl_tools_controller.c, L2F_POS_INTEGRAL).
 +        T pos_integral[3];
 +        T prev[2][13];         // true base state 1 and 2 steps ago (position in the current frame)
++        // Per-motor command -> speed mismatch for this episode: the motor settles at
++        // motor_gain * commanded rpm + motor_offset (see Mission::motor_gain_dr).
++        T motor_gain[4];
++        T motor_offset[4];
++        // Measured rotor speeds as the actor sees them (normalized like the actions,
++        // -1..1); only used as an observation with L2F_RPM_OBS.
++        T rpm_meas[4];
      };
      template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT>
      struct StateRotors: T_NEXT_COMPONENT{
-@@ -384,6 +424,60 @@ namespace rl_tools::rl::environments{
+@@ -384,6 +447,71 @@ namespace rl_tools::rl::environments{
          using STATIC_PARAMETERS = typename SPEC::STATIC_PARAMETERS;
          typename SPEC::PARAMETERS parameters;
          typename SPEC::PARAMETERS::Dynamics current_dynamics;
@@ -113,6 +143,17 @@ index 3825527..e7977a0 100644
 +            T glitch_max = env_or("L2F_GLITCH_MAX", 0.4);
 +            T glitch_t_max = env_or("L2F_GLITCH_T_MAX", 0.4);
 +            T glitch_vel_max = env_or("L2F_GLITCH_VEL", 3.0);  // velocity spike up to this x the jump size (1/s)
++            // Per-motor mismatch (with domain randomization): each motor settles at
++            // gain * commanded rpm + offset, gain ~ 1 + U(+-motor_gain_dr), offset ~
++            // U(+-motor_offset_dr) rpm, per episode. Measured on the drone: 300-700 rpm
++            // between the motor model and each motor's telemetry (rpm_quality.py).
++            T motor_gain_dr = env_or("L2F_MOTOR_GAIN", 0.0);
++            T motor_offset_dr = env_or("L2F_MOTOR_OFFSET", 0.0);
++            // Measured rotor speeds (L2F_RPM_OBS): Gaussian noise (normalized units,
++            // 1 = 12000 rpm) and the chance per step that the previous value repeats.
++            // Measured: ~100 rpm noise, ~14% repeats at 100 Hz (rpm_quality.py).
++            T rpm_noise = env_or("L2F_RPM_NOISE", 0.01);
++            T rpm_hold_p = env_or("L2F_RPM_HOLD", 0.15);
 +            static T env_or(const char* name, double fallback){
 +                const char* s = std::getenv(name);
 +                return (T)(s ? std::atof(s) : fallback);
@@ -125,10 +166,10 @@ index 3825527..e7977a0 100644
  }
  
 diff --git a/include/learning_to_fly/simulator/operations_generic.h b/include/learning_to_fly/simulator/operations_generic.h
-index c1d184f..a0cb80b 100644
+index c1d184f..e617f6f 100644
 --- a/include/learning_to_fly/simulator/operations_generic.h
 +++ b/include/learning_to_fly/simulator/operations_generic.h
-@@ -212,6 +212,219 @@ namespace rl_tools{
+@@ -212,6 +212,246 @@ namespace rl_tools{
      template<typename DEVICE, typename SPEC>
      void malloc(DEVICE&, rl::environments::Multirotor<SPEC>){
  
@@ -187,6 +228,22 @@ index c1d184f..a0cb80b 100644
 +                p[1] = r * math::sin(device.math, a);
 +                v[0] = -r * w * math::sin(device.math, a);
 +                v[1] =  r * w * math::cos(device.math, a);
++            }
++        }
++        // Nominal motors: no per-motor mismatch.
++        template<typename T, typename TI>
++        RL_TOOLS_FUNCTION_PLACEMENT void reset_motors(StateBase<T, TI>& state){
++            for(TI i = 0; i < 4; i++){
++                state.motor_gain[i] = 1;
++                state.motor_offset[i] = 0;
++            }
++        }
++        // Measured rotor speeds start equal to the true ones (call after setting rpm).
++        template<typename SPEC, typename T, typename TI, typename NEXT_COMPONENT>
++        RL_TOOLS_FUNCTION_PLACEMENT void sync_rpm_meas(const Multirotor<SPEC>& env, StateRotors<T, TI, NEXT_COMPONENT>& state){
++            const auto& lim = env.parameters.dynamics.action_limit;
++            for(TI i = 0; i < 4; i++){
++                state.rpm_meas[i] = (state.rpm[i] - lim.min) / (lim.max - lim.min) * 2 - 1;
 +            }
 +        }
 +        // Per-episode setup: domain randomization, episode type, delay.
@@ -248,6 +305,17 @@ index c1d184f..a0cb80b 100644
 +                }
 +            };
 +            reset_fields(state);
++            reset_motors(state);
++            if(m.domain_randomization && m.motor_gain_dr > 0){
++                for(TI i = 0; i < 4; i++){
++                    state.motor_gain[i] = 1 + U(-k * m.motor_gain_dr, k * m.motor_gain_dr);
++                }
++            }
++            if(m.domain_randomization && m.motor_offset_dr > 0){
++                for(TI i = 0; i < 4; i++){
++                    state.motor_offset[i] = U(-k * m.motor_offset_dr, k * m.motor_offset_dr);
++                }
++            }
 +            state.delay_steps = U(0, k * m.delay_max_steps);
 +            state.ground_effect = U(0, k * m.ge_k_max);
 +            // dividing by k grows the mission episode types from 0 to their full share
@@ -348,33 +416,51 @@ index c1d184f..a0cb80b 100644
      }
      template<typename DEVICE, typename T, typename TI, typename SPEC>
      static void initial_parameters(DEVICE& device, rl::environments::Multirotor<SPEC>& env, typename rl::environments::multirotor::StateBase<T, TI>& state){
-@@ -243,6 +456,7 @@ namespace rl_tools{
+@@ -243,6 +483,8 @@ namespace rl_tools{
          for(typename DEVICE::index_t i = 0; i < 3; i++){
              state.angular_velocity[i] = 0;
          }
 +        rl::environments::multirotor::mission::reset_fields(state);
++        rl::environments::multirotor::mission::reset_motors(state);
          initial_parameters(device, env, state);
      }
      template<typename DEVICE, typename T, typename TI, typename SPEC, typename NEXT_COMPONENT>
-@@ -315,6 +529,7 @@ namespace rl_tools{
+@@ -261,6 +503,7 @@ namespace rl_tools{
+         for(typename DEVICE::index_t i = 0; i < 4; i++){
+             state.rpm[i] = (env.parameters.dynamics.action_limit.max - env.parameters.dynamics.action_limit.min) / 2 + env.parameters.dynamics.action_limit.min;
+         }
++        rl::environments::multirotor::mission::sync_rpm_meas(env, state);
+     }
+     template<typename DEVICE, typename T, typename TI_H, TI_H HISTORY_LENGTH, typename SPEC, typename NEXT_COMPONENT>
+     static void initial_state(DEVICE& device, rl::environments::Multirotor<SPEC>& env, typename rl::environments::multirotor::StateRotorsHistory<T, TI_H, HISTORY_LENGTH, NEXT_COMPONENT>& state){
+@@ -315,6 +558,8 @@ namespace rl_tools{
          for(TI i = 0; i < 3; i++){
              state.angular_velocity[i] = random::uniform_real_distribution(random_dev, -env.parameters.mdp.init.max_angular_velocity, env.parameters.mdp.init.max_angular_velocity, rng);
          }
 +        rl::environments::multirotor::mission::reset_fields(state);
++        rl::environments::multirotor::mission::reset_motors(state);
          initial_parameters(device, env, state);
      }
      template<typename DEVICE, typename T_S, typename TI_S, typename SPEC, typename NEXT_COMPONENT, typename RNG>
-@@ -374,6 +589,9 @@ namespace rl_tools{
+@@ -368,12 +613,17 @@ namespace rl_tools{
+         for(TI i = 0; i < 4; i++){
+             state.rpm[i] = random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), min_rpm, max_rpm, rng);
+         }
++        rl::environments::multirotor::mission::sync_rpm_meas(env, state);
+     }
+     template<typename DEVICE, typename T_S, typename TI_S, TI_S HISTORY_LENGTH, typename NEXT_COMPONENT, typename SPEC, typename RNG>
+     RL_TOOLS_FUNCTION_PLACEMENT static void sample_initial_state(DEVICE& device, rl::environments::Multirotor<SPEC>& env, typename rl::environments::multirotor::StateRotorsHistory<T_S, TI_S, HISTORY_LENGTH, NEXT_COMPONENT>& state, RNG& rng){
          using MULTIROTOR = rl::environments::Multirotor<SPEC>;
          using TI = typename DEVICE::index_t;
          sample_initial_state(device, env, static_cast<typename rl::environments::multirotor::StateRotors<T_S, TI_S, NEXT_COMPONENT>&>(state), rng);
 +        if(env.mission.enabled){
 +            rl::environments::multirotor::mission::sample(device, env, state, state.rpm, rng);
++            rl::environments::multirotor::mission::sync_rpm_meas(env, state);
 +        }
          for(TI step_i = 0; step_i < HISTORY_LENGTH; step_i++){
              for(TI action_i = 0; action_i < MULTIROTOR::ACTION_DIM; action_i++){
                  state.action_history[step_i][action_i] = (state.rpm[action_i] - env.parameters.dynamics.action_limit.min) / (env.parameters.dynamics.action_limit.max - env.parameters.dynamics.action_limit.min) * 2 - 1;
-@@ -460,12 +678,14 @@ namespace rl_tools{
+@@ -460,12 +710,14 @@ namespace rl_tools{
              static_assert(OBS_SPEC::COLS >= OBSERVATION::CURRENT_DIM);
              static_assert(OBS_SPEC::ROWS == 1);
              for(TI i = 0; i < OBSERVATION::CURRENT_DIM; i++){
@@ -391,10 +477,22 @@ index c1d184f..a0cb80b 100644
                  }
              }
              auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
-@@ -505,6 +725,18 @@ namespace rl_tools{
+@@ -505,6 +757,30 @@ namespace rl_tools{
              observe(device, env, state, typename OBSERVATION::NEXT_COMPONENT{}, next_observation, rng);
          }
          template<typename DEVICE, typename SPEC, typename OBSERVATION_SPEC, typename OBS_SPEC, typename RNG>
++        RL_TOOLS_FUNCTION_PLACEMENT static void observe(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::Multirotor<SPEC>::State& state, rl::environments::multirotor::observation::RotorSpeedsMeasured<OBSERVATION_SPEC>, Matrix<OBS_SPEC>& observation, RNG& rng){
++            using TI = typename DEVICE::index_t;
++            using OBSERVATION = rl::environments::multirotor::observation::RotorSpeedsMeasured<OBSERVATION_SPEC>;
++            static_assert(OBS_SPEC::COLS >= OBSERVATION::CURRENT_DIM);
++            static_assert(OBS_SPEC::ROWS == 1);
++            for(TI i = 0; i < OBSERVATION::CURRENT_DIM; i++){
++                set(observation, 0, i, state.rpm_meas[i]);
++            }
++            auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
++            observe(device, env, state, typename OBSERVATION::NEXT_COMPONENT{}, next_observation, rng);
++        }
++        template<typename DEVICE, typename SPEC, typename OBSERVATION_SPEC, typename OBS_SPEC, typename RNG>
 +        RL_TOOLS_FUNCTION_PLACEMENT static void observe(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::Multirotor<SPEC>::State& state, rl::environments::multirotor::observation::PositionIntegral<OBSERVATION_SPEC>, Matrix<OBS_SPEC>& observation, RNG& rng){
 +            using TI = typename DEVICE::index_t;
 +            using OBSERVATION = rl::environments::multirotor::observation::PositionIntegral<OBSERVATION_SPEC>;
@@ -410,7 +508,7 @@ index c1d184f..a0cb80b 100644
          RL_TOOLS_FUNCTION_PLACEMENT static void observe(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::Multirotor<SPEC>::State& state, rl::environments::multirotor::observation::ActionHistory<OBSERVATION_SPEC>, Matrix<OBS_SPEC>& observation, RNG& rng){
              using T = typename SPEC::T;
              using TI = typename DEVICE::index_t;
-@@ -542,6 +774,64 @@ namespace rl_tools{
+@@ -542,6 +818,64 @@ namespace rl_tools{
          using ENVIRONMENT = rl::environments::Multirotor<SPEC>;
          static_assert(OBS_SPEC::COLS == ENVIRONMENT::OBSERVATION_DIM);
          static_assert(OBS_SPEC::ROWS == 1);
@@ -475,7 +573,7 @@ index c1d184f..a0cb80b 100644
          rl::environments::multirotor::observe(device, env, state, typename ENVIRONMENT::Observation{}, observation, rng);
      }
      template<typename DEVICE, typename SPEC, typename STATE, typename OBS_SPEC, typename RNG>
-@@ -616,6 +906,93 @@ namespace rl_tools{
+@@ -616,6 +950,98 @@ namespace rl_tools{
          for(TI state_i = 0; state_i < 4; state_i++){
              next_state.orientation[state_i] /= quaternion_norm;
          }
@@ -492,6 +590,11 @@ index c1d184f..a0cb80b 100644
 +        }
 +        next_state.delay_steps = state.delay_steps;
 +        next_state.ground_effect = state.ground_effect;
++        for(TI i = 0; i < 4; i++){
++            next_state.motor_gain[i] = state.motor_gain[i];
++            next_state.motor_offset[i] = state.motor_offset[i];
++            next_state.rpm_meas[i] = state.rpm_meas[i];
++        }
 +        // position-estimate glitches: count down the current one, maybe start a new one
 +        next_state.glitch_steps = state.glitch_steps > 0 ? state.glitch_steps - 1 : 0;
 +        for(TI i = 0; i < 3; i++){
@@ -569,11 +672,41 @@ index c1d184f..a0cb80b 100644
      }
  //    template<typename DEVICE, typename SPEC, typename T, typename TI, typename NEXT_COMPONENT>
  //    RL_TOOLS_FUNCTION_PLACEMENT void post_integration(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, rl::environments::multirotor::StateRotors<T, TI, NEXT_COMPONENT>& state) {
-@@ -679,7 +1056,23 @@ namespace rl_tools{
+@@ -626,6 +1052,24 @@ namespace rl_tools{
+         for(typename DEVICE::index_t rpm_i = 0; rpm_i < MULTIROTOR::ACTION_DIM; rpm_i++){
+             next_state.rpm[rpm_i] = math::clamp(typename DEVICE::SPEC::MATH{}, next_state.rpm[rpm_i], env.parameters.dynamics.action_limit.min, env.parameters.dynamics.action_limit.max);
+         }
++        // Measured rotor speeds: like the ESC telemetry, sometimes the previous value
++        // repeats, otherwise the true speed plus noise. Without L2F_RPM_OBS no random
++        // numbers are drawn, so older training recipes reproduce exactly.
++        const auto& lim = env.parameters.dynamics.action_limit;
++        for(typename DEVICE::index_t i = 0; i < MULTIROTOR::ACTION_DIM; i++){
++            T_S v = (next_state.rpm[i] - lim.min) / (lim.max - lim.min) * 2 - 1;
++#ifdef L2F_RPM_OBS
++            typename DEVICE::SPEC::RANDOM rd;
++            const auto& m = env.mission;
++            if(m.rpm_hold_p > 0 && random::uniform_real_distribution(rd, (T_S)0, (T_S)1, rng) < m.rpm_hold_p){
++                v = state.rpm_meas[i];
++            }
++            else if(m.rpm_noise > 0){
++                v += random::normal_distribution::sample(rd, (T_S)0, m.rpm_noise, rng);
++            }
++#endif
++            next_state.rpm_meas[i] = v;
++        }
+     }
+     template<typename DEVICE, typename SPEC, typename ACTION_SPEC, typename T_S, typename TI_S, typename NEXT_COMPONENT, typename RNG>
+     RL_TOOLS_FUNCTION_PLACEMENT void post_integration(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::multirotor::StateRandomForce<T_S, TI_S, NEXT_COMPONENT>& state, const Matrix<ACTION_SPEC>& action, typename rl::environments::multirotor::StateRandomForce<T_S, TI_S, NEXT_COMPONENT>& next_state, RNG& rng) {
+@@ -679,7 +1123,28 @@ namespace rl_tools{
              action_scaled[action_i] = action_noisy * half_range + env.parameters.dynamics.action_limit.min + half_range;
  //            state.rpm[action_i] = action_scaled[action_i];
          }
 -        utils::integrators::rk4  <DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, env.parameters, state, action_scaled, env.parameters.integration.dt, next_state);
++        // Per-motor command -> speed mismatch (StateBase::motor_gain / motor_offset).
++        for(TI action_i = 0; action_i < ACTION_DIM; action_i++){
++            T v = action_scaled[action_i] * state.motor_gain[action_i] + state.motor_offset[action_i];
++            action_scaled[action_i] = math::clamp(device.math, v, env.parameters.dynamics.action_limit.min, env.parameters.dynamics.action_limit.max);
++        }
 +        if(env.mission.enabled && state.ground_effect > 0 && state.floor_z > -50){
 +            // Ground effect: more thrust close to the floor (constant over the step).
 +            const auto& m = env.mission;
@@ -594,7 +727,7 @@ index c1d184f..a0cb80b 100644
  //        utils::integrators::euler<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, env.parameters, state, action_scaled, env.parameters.integration.dt, next_state);
  
          post_integration(device, env, state, action, next_state, rng);
-@@ -701,6 +1094,13 @@ namespace rl_tools{
+@@ -701,6 +1166,13 @@ namespace rl_tools{
                      return true;
                  }
              }
@@ -875,7 +1008,7 @@ index 11edbd5..e434190 100644
              static constexpr TI ENVIRONMENT_STEP_LIMIT_EVALUATION = 500;
              static constexpr TI BASE_SEED = 0;
 diff --git a/src/config/parameters.h b/src/config/parameters.h
-index 8341a2f..e74cb5a 100644
+index 8341a2f..ab9db00 100644
 --- a/src/config/parameters.h
 +++ b/src/config/parameters.h
 @@ -6,11 +6,33 @@
@@ -964,10 +1097,20 @@ index 8341a2f..e74cb5a 100644
                      }
  
              };
-@@ -73,6 +106,13 @@ namespace parameters{
+@@ -72,7 +105,35 @@ namespace parameters{
+             using PARAMETERS = typename rl_tools::utils::typing::remove_cv_t<decltype(parameters)>;
  
              struct ENVIRONMENT_STATIC_PARAMETERS{
-                 static constexpr TI ACTION_HISTORY_LENGTH = 32;
+-                static constexpr TI ACTION_HISTORY_LENGTH = 32;
++                // L2F_HISTORY: number of past actions in the actor's observation (paper: 32).
++                // 0 = no action history input; the state still keeps the last action
++                // (length 1), which the action-rate reward needs.
++#ifdef L2F_HISTORY
++                static constexpr TI ACTOR_HISTORY_LENGTH = L2F_HISTORY;
++#else
++                static constexpr TI ACTOR_HISTORY_LENGTH = 32;
++#endif
++                static constexpr TI ACTION_HISTORY_LENGTH = ACTOR_HISTORY_LENGTH > 0 ? ACTOR_HISTORY_LENGTH : 1;
 +                // L2F_POS_INTEGRAL: append the leaky position-error integral (3 values)
 +                // to the actor's and the critic's observation.
 +#ifdef L2F_POS_INTEGRAL
@@ -975,19 +1118,32 @@ index 8341a2f..e74cb5a 100644
 +#else
 +                using OBS_TAIL = observation::LastComponent<TI>;
 +#endif
++#if defined(L2F_HISTORY) && L2F_HISTORY == 0
++                using ACTOR_HISTORY = OBS_TAIL;
++#else
++                using ACTOR_HISTORY = rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY, observation::ActionHistory<observation::ActionHistorySpecification<T, TI, ACTION_HISTORY_LENGTH, OBS_TAIL>>, OBS_TAIL>;
++#endif
++                // L2F_RPM_OBS: the actor also gets the 4 measured rotor speeds (noisy,
++                // sometimes repeated; see Mission::rpm_noise), between the angular
++                // velocity and the action history. The critic keeps the true speeds.
++#ifdef L2F_RPM_OBS
++                using ACTOR_ROTORS = observation::RotorSpeedsMeasured<observation::RotorSpeedsMeasuredSpecification<T, TI, ACTOR_HISTORY>>;
++#else
++                using ACTOR_ROTORS = ACTOR_HISTORY;
++#endif
                  using STATE_TYPE = rlt::utils::typing::conditional_t<ABLATION_SPEC::ROTOR_DELAY,
                      rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY,
                          StateRotorsHistory<T, TI, ACTION_HISTORY_LENGTH, rlt::utils::typing::conditional_t<ABLATION_SPEC::DISTURBANCE, StateRandomForce<T, TI, StateBase<T, TI>>, StateBase<T, TI>>>,
-@@ -82,7 +122,7 @@ namespace parameters{
+@@ -82,7 +143,7 @@ namespace parameters{
                          observation::OrientationRotationMatrix<observation::OrientationRotationMatrixSpecification<T, TI,
                                  observation::LinearVelocity<observation::LinearVelocitySpecification<T, TI,
                                          observation::AngularVelocity<observation::AngularVelocitySpecification<T, TI,
 -                                                rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY, observation::ActionHistory<observation::ActionHistorySpecification<T, TI, ACTION_HISTORY_LENGTH>>, observation::LastComponent<TI>>>>>>>>>>;
-+                                                rlt::utils::typing::conditional_t<ABLATION_SPEC::ACTION_HISTORY, observation::ActionHistory<observation::ActionHistorySpecification<T, TI, ACTION_HISTORY_LENGTH, OBS_TAIL>>, OBS_TAIL>>>>>>>>>;
++                                                ACTOR_ROTORS>>>>>>>>;
                  using OBSERVATION_TYPE_PRIVILEGED = rlt::utils::typing::conditional_t<ABLATION_SPEC::ASYMMETRIC_ACTOR_CRITIC,
                      observation::Position<observation::PositionSpecificationPrivileged<T, TI,
                          observation::OrientationRotationMatrix<observation::OrientationRotationMatrixSpecificationPrivileged<T, TI,
-@@ -91,13 +131,13 @@ namespace parameters{
+@@ -91,13 +152,13 @@ namespace parameters{
                                      rlt::utils::typing::conditional_t<ABLATION_SPEC::DISTURBANCE,
                                          observation::RandomForce<observation::RandomForceSpecification<T, TI,
                                              rlt::utils::typing::conditional_t<ABLATION_SPEC::ROTOR_DELAY,
@@ -1007,10 +1163,10 @@ index 8341a2f..e74cb5a 100644
                                  >>
 diff --git a/src/evaluate_robustness.cpp b/src/evaluate_robustness.cpp
 new file mode 100644
-index 0000000..495c582
+index 0000000..4db257f
 --- /dev/null
 +++ b/src/evaluate_robustness.cpp
-@@ -0,0 +1,518 @@
+@@ -0,0 +1,542 @@
 +// Headless robustness check of a trained actor (.h5 checkpoint).
 +//
 +// Runs many 10 s episodes from the training initial-state distribution (up to
@@ -1211,6 +1367,7 @@ index 0000000..495c582
 +            s.rpm[m] = env.parameters.dynamics.action_limit.min;
 +            for(TI h = 0; h < ENVIRONMENT::State::HISTORY_LENGTH; h++) s.action_history[h][m] = -1;
 +        }
++        rlt::rl::environments::multirotor::mission::sync_rpm_meas(env, s);
 +        rlt::rl::environments::multirotor::mission::reset_fields(s);
 +        s.floor_z = 0;
 +        s.delay_steps = delay_steps;
@@ -1375,6 +1532,7 @@ index 0000000..495c582
 +                    state.action_history[h][m] = (v.history_rear >= -1 && (m == 1 || m == 2)) ? v.history_rear : fill;
 +                }
 +            }
++            rlt::rl::environments::multirotor::mission::sync_rpm_meas(env, state);
 +        }
 +        bool alive = true;
 +        for(TI step = 0; step < EPISODE_STEPS; step++){
@@ -1449,6 +1607,7 @@ index 0000000..495c582
 +            s.rpm[m] = hover_rpm;
 +            for(TI h = 0; h < ENVIRONMENT::State::HISTORY_LENGTH; h++) s.action_history[h][m] = hover_action;
 +        }
++        rlt::rl::environments::multirotor::mission::sync_rpm_meas(env, s);
 +        rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
 +        rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::ACTION_DIM>> action;
 +        rlt::malloc(dev, observation);
@@ -1461,6 +1620,9 @@ index 0000000..495c582
 +
 +        // Fly 5 s from this hover state and summarize how jumpy the actions are.
 +        T sum[4] = {}, sq[4] = {}, usum[4] = {}, usq[4] = {}, jump = 0, sat = 0, max_tilt = 0;
++        // measured-rotor-speed input (L2F_RPM_OBS, observation entries 18..21)
++        T rpm_prev[4] = {-9, -9, -9, -9}, rpm_err_sq = 0;
++        TI rpm_repeats = 0, rpm_fresh = 0;
 +        TI n = 0;
 +        ObservationDelay delay;
 +        std::printf("state-estimate delay %.0f ms\n", (double)(delay.delay_steps * 10));
@@ -1473,6 +1635,16 @@ index 0000000..495c582
 +            for(TI m = 0; m < 4; m++){
 +                T a = rlt::get(action, 0, m);
 +                sum[m] += a; sq[m] += a * a;
++#ifdef L2F_RPM_OBS
++                {
++                    T meas = rlt::get(observation, 0, 18 + m);
++                    const auto& lim = env.parameters.dynamics.action_limit;
++                    T truth = (s.rpm[m] - lim.min) / (lim.max - lim.min) * 2 - 1;
++                    if(meas == rpm_prev[m]) rpm_repeats++;
++                    else{ rpm_err_sq += (meas - truth) * (meas - truth); rpm_fresh++; }
++                    rpm_prev[m] = meas;
++                }
++#endif
 +                T u = action_to_command(a);
 +                usum[m] += u; usq[m] += u * u;
 +                sat += std::abs(a) > 0.95;
@@ -1493,6 +1665,14 @@ index 0000000..495c582
 +            ustd += std::sqrt(std::max((T)0, usq[m] / n - umean * umean)) / 4;
 +        }
 +        std::printf("motor command std (paper metric, u in [0,1]) %.4f\n", (double)ustd);
++#ifdef L2F_RPM_OBS
++        {
++            T rms = std::sqrt(rpm_err_sq / std::max<TI>(rpm_fresh, 1));
++            const auto& lim = env.parameters.dynamics.action_limit;
++            std::printf("rpm input: repeated %.1f%% of steps, error of fresh values std %.4f (= %.0f rpm)\n",
++                        (double)(100.0 * rpm_repeats / (4 * n)), (double)rms, (double)(rms * (lim.max - lim.min) / 2));
++        }
++#endif
 +        std::printf("mean |action change| per step %.3f, saturated %.1f%%, max tilt %.1f deg, final pos (%.3f %.3f %.3f)\n",
 +                    (double)(jump / (4 * n)), (double)(100 * sat / (4 * n)), (double)(max_tilt * 180 / M_PI),
 +                    (double)s.position[0], (double)s.position[1], (double)s.position[2]);
@@ -1548,3 +1728,26 @@ index c39bc8d..f5c83fb 100644
              if constexpr(CONFIG::ABLATION_SPEC::ENABLE_CURRICULUM == true) {
                  if(ts.step != 0 && ts.step % 100000 == 0 && ts.step != (CONFIG::STEP_LIMIT - 1)){
                      rlt::add_scalar(ts.device, ts.device.logger, "td3/gamma", ts.actor_critic.gamma);
+diff --git a/src/training.cpp b/src/training.cpp
+index 7b360b9..6790836 100644
+--- a/src/training.cpp
++++ b/src/training.cpp
+@@ -2,6 +2,7 @@
+ #include "training.h"
+ 
+ #include <chrono>
++#include <cstdlib>
+ 
+ 
+ template <typename T_ABLATION_SPEC>
+@@ -21,7 +22,9 @@ void run(){
+         std::cout << "Run " << run_i << "\n";
+         auto start = std::chrono::high_resolution_clock::now();
+         learning_to_fly::TrainingState<CONFIG> ts;
+-        learning_to_fly::init(ts, run_i);
++        // L2F_SEED: offset of the training seed (default 0), for repeated runs of one recipe
++        const char* seed_env = std::getenv("L2F_SEED");
++        learning_to_fly::init(ts, run_i + (seed_env ? (TI)std::atoi(seed_env) : 0));
+ 
+         for(TI step_i=0; step_i < CONFIG::STEP_LIMIT; step_i++){
+             learning_to_fly::step(ts);
