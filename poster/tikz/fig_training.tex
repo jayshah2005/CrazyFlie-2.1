@@ -1,0 +1,39 @@
+% Fig. C: how it was trained. \input{rl_styles} once, then \input{fig_training}.
+\begin{tikzpicture}[rl]
+  \node[blk=5.2cm] (sim) at (0,0) {\textbf{Simulator of our measured drone}\\
+      {\color{rlmuted}41.3\,g $\cdot$ 60\,ms motor lag $\cdot$ measured thrust \& noise}\\[2pt]
+      every episode, at random:\\
+      $\bullet$ take-off, landing, circle (up to 1.2\,m), line\\
+      $\bullet$ 0--12\,ms sensing delay\\
+      $\bullet$ mass, thrust, motor lag a few \% off\\
+      $\bullet$ ground effect near the floor\\
+      $\bullet$ Lighthouse-like position jumps};
+  \node[soft=5.2cm, below=0.75cm of sim] (rew) {\textbf{Reward, every 10\,ms}\\
+      \textcolor{rlflow}{\textbf{+}} close to the target\\
+      $-$ tilt \quad $-$ wrong speed \quad $-$ motor effort\\
+      $-$ fast command changes (jitter)\\
+      $-$ jerky rotation \quad $-$ hard touchdown};
+  \draw[flow] (sim) -- node[lab, right] {scores each step} (rew);
+
+  \node[learn=3.3cm, right=1.6cm of sim.north east, anchor=north west] (act) {\textcolor{rllearn}{\textbf{Actor = the network}}\\
+      sees only what the drone senses;\\picks 4 motor speeds\\(this is what flies)};
+  \node[blk=3.3cm, below=0.85cm of act] (cri) {\textbf{Critic} (training only)\\
+      predicts the future score;\\also sees true motor speeds\\and disturbances};
+  \draw[flowl] (cri) -- node[labl, right] {improves} (act);
+  \node[blk=3.3cm, below=0.5cm of cri, draw=none, fill=none, text=rlmuted, font=\sffamily\tiny] (rb) {replay memory: every step is reused many times};
+  \begin{scope}[on background layer]
+    \node[zone, fit=(act)(cri)(rb), inner sep=7pt, yshift=5pt] (td3) {};
+  \end{scope}
+  \node[zonelabel] at ($(td3.north west)+(0.1,-0.06)$) {TD3 LEARNER};
+
+  \draw[flow] ($(sim.east)+(0,0.75)$) -- node[lab, above] {state} ($(sim.east -| td3.west)+(0,0.75)$);
+  \draw[flowl] ($(sim.east -| td3.west)+(0,0.1)$) -- node[labl, below] {4 motor speeds} ($(sim.east)+(0,0.1)$);
+  \draw[flow] (rew.east) -- node[lab, above] {score} (rew.east -| td3.west);
+
+  \node[blk=3.3cm, right=1.0cm of td3.east, anchor=west] (best) {\textbf{Best snapshot}\\
+      2M steps $\approx$ 10 min, laptop CPU\\snapshot every 100k steps,\\each test-flown in the\\simulated mission\\[2pt]
+      \textcolor{rllearn}{\textbf{$\to$ drone firmware}}\\{\color{rlmuted}never trained on real flights}};
+  \draw[flowl] (td3.east) -- (best.west);
+  \node[font=\sffamily\tiny, text=rlmuted, align=left, anchor=north west] at ($(best.south west)+(0,-0.2)$)
+      {Curriculum: plain hovering first;\\harder tasks, randomness and delay\\ramp in over 800k steps.};
+\end{tikzpicture}

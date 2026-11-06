@@ -1,0 +1,67 @@
+% Three real I1 flights seen from above (0.6 / 1.0 / 1.5 m), same scale, for the
+% A1 poster. Data: data/top_*.dat, exported from logs/ (flights 2026-11-04
+% 175759, 182211, 183201). Compile on its own, then in the poster:
+%   \includegraphics[width=\linewidth]{images/fig_topviews_poster.pdf}
+\documentclass[12pt, border=4pt]{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,calc}
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{saclaydk}{RGB}{27,67,32}
+\definecolor{mandarine}{RGB}{243,115,32}
+\definecolor{vert}{RGB}{140,198,62}
+\definecolor{bleu}{RGB}{80,144,205}
+\definecolor{rouge}{RGB}{198,11,70}
+\colorlet{cmove}{saclaydk!40}
+\colorlet{c060}{vert!75!black}
+\colorlet{c100}{mandarine}
+\colorlet{c150}{rouge}
+
+% \panel{name}{x position}{data key}{colour}{target radius}{title}{circle error}{extra drawing}
+\newcommand{\panel}[8]{%
+  \begin{axis}[name=#1, at={(#2,0)}, anchor=south west, width=8.6cm, height=8.6cm,
+      axis equal image, xmin=-0.9, xmax=0.9, ymin=-0.9, ymax=0.9, axis lines=none, clip=false]
+    \pgfplotsinvokeforeach{-0.8,-0.6,-0.4,-0.2,0,0.2,0.4,0.6,0.8}{
+      \draw[saclaydk!13, line width=0.5pt] (axis cs:##1,-0.9) -- (axis cs:##1,0.9);
+      \draw[saclaydk!13, line width=0.5pt] (axis cs:-0.9,##1) -- (axis cs:0.9,##1);
+    }
+    \addplot[draw=black!65, dashed, line width=1.4pt, domain=0:360, samples=120] ({#5*cos(x)}, {#5*sin(x)});
+    \addplot[draw=cmove, line width=2.6pt] table[x=x, y=y] {data/top_#3_move.dat};
+    \addplot[draw=cmove, line width=2.6pt] table[x=x, y=y] {data/top_#3_back.dat};
+    \addplot[draw=#4, line width=2.6pt] table[x=x, y=y] {data/top_#3_circle.dat};
+    % direction of travel
+    \addplot[-{Stealth[length=4.5mm,width=3.5mm]}, draw=saclaydk, line width=1.8pt, domain=15:60, samples=30]
+      ({(#5+0.16)*cos(x)}, {(#5+0.16)*sin(x)});
+    \addplot[only marks, mark=*, mark size=4.5pt, saclaydk] coordinates {(0,0)};
+    #8
+  \end{axis}
+  \node[anchor=south, align=center, text=#4] at ($(#1.north)+(0,0.05)$) {#6};
+  \node[anchor=north, font=\normalsize, text=saclaydk] at ($(#1.south)+(0,0.05)$) {circle error #7 (mean)};
+}
+
+\begin{document}
+\begin{tikzpicture}
+  \panel{p1}{0cm}{h060}{c060}{0.3}{{\Large\bfseries 0.6\,m high}\\{\normalsize 0.3\,m circle}}{6.4\,cm}{
+    \node[anchor=north, align=center, font=\normalsize\bfseries, text=saclaydk] at (axis cs:0,-0.42)
+         {take off \& land\\at the centre};
+  }
+  \panel{p2}{8.9cm}{h100}{c100}{0.6}{{\Large\bfseries 1.0\,m high}\\{\normalsize 0.6\,m circle}}{6.7\,cm}{}
+  \panel{p3}{17.8cm}{h150}{c150}{0.6}{{\Large\bfseries 1.5\,m high}\\{\normalsize 0.6\,m circle}}{10.9\,cm}{
+    \draw[rouge, line width=1.4pt] (axis cs:-0.87,-0.36) circle (0.38cm);
+    \node[align=center, font=\normalsize\bfseries, text=rouge, fill=white, inner sep=2pt] (jl) at (axis cs:0.06,-0.42)
+         {Lighthouse jump\\36\,cm, recovered};
+    \draw[rouge, line width=1.2pt, -{Stealth[length=3mm]}] (jl.west) to[out=180, in=-30] (axis cs:-0.8,-0.4);
+    \draw[saclaydk, line width=1.6pt] (axis cs:0.55,-0.85) -- node[above, font=\normalsize, text=saclaydk] {20\,cm} (axis cs:0.75,-0.85);
+  }
+
+  % shared legend
+  \matrix[anchor=north, column sep=5pt, font=\normalsize] at ($(p2.south)+(0,-0.7)$) {
+    \draw[c060, line width=2.6pt] (0,0) -- (0.35,0); \draw[c100, line width=2.6pt] (0.35,0) -- (0.7,0);
+    \draw[c150, line width=2.6pt] (0.7,0) -- (1.05,0); & \node[anchor=west]{measured circle}; &
+    \draw[cmove, line width=2.6pt] (0,0) -- (0.8,0); & \node[anchor=west]{move out / back}; &
+    \draw[black!65, dashed, line width=1.4pt] (0,0) -- (0.8,0); & \node[anchor=west]{target}; &
+    \node[anchor=west, text=saclaydk]{each flight takes off, circles and lands on its own}; \\
+  };
+\end{tikzpicture}
+\end{document}
