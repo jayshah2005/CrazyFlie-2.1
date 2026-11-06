@@ -128,3 +128,72 @@ Lessons:
   calibration, geometry and reception.
 - If cfclient cannot reach the bootloader, `flash_cold.py <zip>` does the same
   cold-boot flash with cflib.
+
+## Measured motor speeds as input
+
+The brushless-modelling paper gives the network past actions because the drone
+"cannot measure" motor speed. Ours can: bidirectional DShot reports each
+motor's mechanical RPM (`motor.m*_rpm`). `rpm_quality.py` (repo root) checks it
+from existing logs: ~0.1% invalid reads (65535, single samples), ~14% of 100 Hz
+samples repeat the previous value, <= ~100 rpm noise, no delay beyond the
+0.06 s motor lag the simulator already models.
+
+Simulator (in the patch): `L2F_RPM_OBS` gives the actor the 4 speeds after the
+angular velocity (normalized `rpm / 12000 - 1`, Gaussian noise `L2F_RPM_NOISE`
+0.01, repeated value with probability `L2F_RPM_HOLD` 0.15); `L2F_HISTORY` sets the
+action-history length; per-motor mismatch (`L2F_MOTOR_GAIN`, `L2F_MOTOR_OFFSET`,
+with `L2F_DR`) makes the measured speeds carry information the history does
+not. The critic is unchanged. Without these flags the I1 recipe trains
+bit-identically. `train_mission.sh` has `VARIANT=I1|A|B|C|D` and `SEED`.
+
+Simulation, 3 seeds each, median over checkpoints 1.2M-2.0M (mission test;
+"harder" adds the per-motor mismatch):
+
+| Variant | Inputs | Circle clean | Circle harder | Jitter | Crashed episodes |
+| --- | --- | --- | --- | --- | --- |
+| A: I1 inputs (32 history) | 149 | 7.1 cm | 12.0 cm | 0.063 | 5.1% |
+| C: speeds + 4 history | 41 | 7.2 cm | 9.6 cm | 0.067 | 1.8% |
+| D: 4 history, no speeds | 37 | 9.0 cm | 10.2 cm | 0.086 | 1.7% |
+
+B (speeds + 32 history, one seed) was no better than A. Candidate for flight:
+C seed 2, checkpoint 1.5M (3.1 / 5.8 cm, jitter 0.057; I1 on the same test:
+4.2 / 7.7 cm, 0.050).
+
+Firmware: `HISTORY=4 RPM_OBS=1 ACTOR=<checkpoint>.h bash firmware/build_firmware.sh`.
+The controller reads `motorsGetRPM` at 100 Hz, keeps the last valid value on an
+invalid read and logs what the policy sees as `rltr.r1-r4` (`rl_trigger.py`
+columns `rin1-rin4`). HISTORY / RPM_OBS must match the training variant: the
+build only checks the total input count, and 41 inputs also fit a 5-step
+history without speeds.
+
+Variant E (speeds, no action history, 25 inputs; `train_mission.sh VARIANT=E`,
+firmware `HISTORY=0 RPM_OBS=1`) trains too: best simulated circle when clean,
+worse than C with per-motor mismatch (3 seeds: 6.1 / 11.4 cm, jitter 0.063).
+Flown: seed 0, checkpoint 1.6M.
+
+Real flights, 2026-11-06 (C, E) vs 2026-11-04 (I1), four undisturbed missions
+each (0.6 m twice with a 0.3 m circle, 1.0 m and 1.5 m with 0.6 m), mean of the
+per-flight values, distances from the drone's own Lighthouse estimate:
+
+| Policy | Inputs | Hover | Circle | Landing spot | Jitter hover / circle | Rotation |
+| --- | --- | --- | --- | --- | --- | --- |
+| I1 (32-step history) | 149 | 4.0 cm | 7.4 cm | 2.8 cm | 0.057 / 0.061 | 33 deg/s |
+| C (speeds + 4 steps) | 41 | 4.5 cm | 7.1 cm | 5.4 cm | 0.071 / 0.078 | 22 deg/s |
+| E (speeds, no history) | 25 | 5.2 cm | 7.0 cm | 4.3 cm | 0.056 / 0.050 | 28 deg/s |
+
+With measured motor speeds the long action history is not needed: circle
+tracking is equal with 41 or even 25 inputs, I1 still hovers and lands slightly
+better. E beat its simulation result, so the training's per-motor mismatch
+(+-5%, +-500 rpm) is probably larger than the real one. Small samples: 1-2 cm
+differences are within flight-to-flight spread.
+
+Notes from these flights:
+
+- Motor 3 intermittently fails the firmware's idle arming check (~230 rpm at
+  idle instead of ~2,500; 1000-3500 required) and flies normally once armed.
+  `rl_trigger.py` now waits for the supervisor's "can fly" bit and names the
+  failing motor instead of taking off disarmed.
+- `rl_trigger.py` logs the drone console (`[drone] ...`). "SUP: free falling!"
+  right after landing comes from the motor cut 6 cm above the floor.
+- A sharp styrofoam poke at 0.9 m (839 deg/s within 20 ms) flipped C; light pokes
+  were absorbed. Training has no impulse disturbances.
