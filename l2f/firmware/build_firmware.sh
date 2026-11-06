@@ -4,6 +4,10 @@
 # ../README.md. Run inside WSL Ubuntu.
 #
 #   ACTOR=<checkpoint .h>  policy to compile in (default: the controller repo's actor.h)
+#   HISTORY=32             action-history length the policy was trained with
+#                          (train_mission.sh: I1/A/B 32, C/D 4)
+#   RPM_OBS=0              1 = the policy takes the 4 measured rotor speeds
+#                          (train_mission.sh variants B and C)
 #   DEFCONFIG=cf21bl_defconfig | cf2_defconfig
 #   L2F=~/learning_to_fly  FW=~/crazyflie-firmware-2026.08  DST=~/l2f_2026
 set -euo pipefail
@@ -13,6 +17,11 @@ export FW=${FW:-$HOME/crazyflie-firmware-2026.08}
 SRC=$L2F/controller
 DST=${DST:-$HOME/l2f_2026}
 DEFCONFIG=${DEFCONFIG:-cf21bl_defconfig}
+HISTORY=${HISTORY:-32}
+RPM_OBS=${RPM_OBS:-0}
+POLICY_FLAGS="-DL2F_HISTORY=$HISTORY"
+[ "$RPM_OBS" = 1 ] && POLICY_FLAGS="$POLICY_FLAGS -DL2F_RPM_OBS"
+echo "policy inputs: action history $HISTORY, measured rotor speeds $([ "$RPM_OBS" = 1 ] && echo yes || echo no)"
 
 if [ ! -d "$FW" ]; then
   git clone -q --branch 2026.08 --depth 1 https://github.com/bitcraze/crazyflie-firmware.git "$FW"
@@ -42,6 +51,9 @@ EXTRA_CFLAGS += -I$(PWD) -I$(PWD)/external/rl_tools/include -DRL_TOOLS_CONTROLLE
 
 include $(CRAZYFLIE_BASE)/tools/make/oot.mk
 EOF
+# policy input layout (history length, measured rotor speeds), for the adapter
+sed -i "s|-DRL_TOOLS_CONTROLLER\$|-DRL_TOOLS_CONTROLLER $POLICY_FLAGS|" "$DST/Makefile"
+grep -q -- "-DL2F_HISTORY=$HISTORY" "$DST/Makefile"
 
 cat > "$DST/Kbuild" <<'EOF'
 obj-y += rl_tools_controller.o
@@ -357,6 +369,94 @@ for path, changes in edits.items():
         t = t.replace(old, new)
     path.write_text(t)
 print('position-error integral input')
+EOF
+
+# Action-history length and measured rotor speeds (L2F_HISTORY / L2F_RPM_OBS,
+# set from HISTORY / RPM_OBS above). Input layout, as in the simulator:
+#   18 state | 4 measured rotor speeds (L2F_RPM_OBS) | history x 4 | 3 integral
+# The speeds are the ESC telemetry (motorsGetRPM, the logged motor.m*_rpm), read
+# at the 100 Hz policy rate; an invalid read (65535) keeps the last good value.
+# Normalized like the simulator: rpm / (MAX_RPM / 2) - 1. Logged as rltr.r1-r4.
+python3 - "$DST/rl_tools_controller.c" "$DST/rl_tools_adapter.cpp" <<'EOF'
+import sys, pathlib
+ctrl, adapter = map(pathlib.Path, sys.argv[1:3])
+edits = {
+    ctrl: [
+        ('static float state_input[16];  // 13 state values + 3 position-error integral\n',
+         'static float state_input[20];  // 13 state values + 3 position-error integral + 4 measured rotor speeds\n'
+         'static float rpm_meas[4] = {-1, -1, -1, -1};  // last valid measured rotor speeds (rpm), -1 = none yet\n'),
+        ('  if(hand_test != 1){\n    state_input[10] = radians(sensors->gyro.x);\n',
+         '#ifdef L2F_RPM_OBS\n'
+         '#ifndef CONFIG_MOTORS_ESC_PROTOCOL_DSHOT_BIDIRECTIONAL\n'
+         '#error "L2F_RPM_OBS needs bidirectional DShot (measured motor speeds)"\n'
+         '#endif\n'
+         '  for(uint8_t i = 0; i < 4; i++){\n'
+         '    uint16_t raw = motorsGetRPM(motors[i]);\n'
+         '    if(raw < 40000){\n'
+         '      rpm_meas[i] = raw;\n'
+         '    }\n'
+         '    else if(rpm_meas[i] < 0){\n'
+         '      rpm_meas[i] = motor_rpm_now(i);  // no valid read yet: estimate from the command\n'
+         '    }\n'
+         '    state_input[16 + i] = clip(2 * rpm_meas[i] / MAX_RPM - 1, -1, 1);\n'
+         '  }\n'
+         '#endif\n'
+         '  if(hand_test != 1){\n    state_input[10] = radians(sensors->gyro.x);\n'),
+        ('LOG_GROUP_STOP(rltm)\n',
+         'LOG_GROUP_STOP(rltm)\n'
+         '\n'
+         '// measured rotor speeds as the policy sees them (L2F_RPM_OBS; -1..1)\n'
+         'LOG_GROUP_START(rltr)\n'
+         'LOG_ADD(LOG_FLOAT, r1, &state_input[16])\n'
+         'LOG_ADD(LOG_FLOAT, r2, &state_input[17])\n'
+         'LOG_ADD(LOG_FLOAT, r3, &state_input[18])\n'
+         'LOG_ADD(LOG_FLOAT, r4, &state_input[19])\n'
+         'LOG_GROUP_STOP(rltr)\n'),
+    ],
+    adapter: [
+        ('constexpr TI ACTION_HISTORY_LENGTH = 32; //rlt::checkpoint::environment::ACTION_HISTORY_LENGTH\n',
+         '// Must match the policy\'s training (train_mission.sh VARIANT); set by build_firmware.sh.\n'
+         '#ifdef L2F_HISTORY\n'
+         'constexpr TI ACTION_HISTORY_LENGTH = L2F_HISTORY;\n'
+         '#else\n'
+         'constexpr TI ACTION_HISTORY_LENGTH = 32;\n'
+         '#endif\n'
+         '#ifdef L2F_RPM_OBS\n'
+         'constexpr TI RPM_INPUT_DIM = 4;  // measured rotor speeds (state[16..19]), after the angular velocity\n'
+         '#else\n'
+         'constexpr TI RPM_INPUT_DIM = 0;\n'
+         '#endif\n'
+         '#if defined(L2F_HISTORY) && L2F_HISTORY == 0\n'
+         '#undef RL_TOOLS_ACTION_HISTORY  // policy without action-history input\n'
+         '#endif\n'),
+        ('constexpr TI BASE_INPUT_DIM = 18 + ACTION_HISTORY_LENGTH * ACTOR_TYPE::SPEC::OUTPUT_DIM;\n',
+         'constexpr TI BASE_INPUT_DIM = 18 + RPM_INPUT_DIM + ACTION_HISTORY_LENGTH * ACTOR_TYPE::SPEC::OUTPUT_DIM;\n'),
+        ('#else\nstatic_assert(ACTOR_TYPE::SPEC::INPUT_DIM == 18);\n#endif\n',
+         '#else\n'
+         'constexpr TI BASE_INPUT_DIM = 18 + RPM_INPUT_DIM;\n'
+         'constexpr bool POS_INTEGRAL_INPUT = ACTOR_TYPE::SPEC::INPUT_DIM == BASE_INPUT_DIM + 3;\n'
+         'static_assert(ACTOR_TYPE::SPEC::INPUT_DIM == BASE_INPUT_DIM || POS_INTEGRAL_INPUT);\n'
+         '#endif\n'),
+        ('    observe_rotation_matrix(state_matrix, state_rotation_matrix_input);\n',
+         '    observe_rotation_matrix(state_matrix, state_rotation_matrix_input);\n'
+         '    if constexpr(RPM_INPUT_DIM > 0){\n'
+         '        for(TI i = 0; i < RPM_INPUT_DIM; i++){\n'
+         '            rlt::set(input, 0, 18 + i, state[16 + i]);\n'
+         '        }\n'
+         '    }\n'),
+        ('    auto action_history_observation = rlt::view(device, input, rlt::matrix::ViewSpec<1, ACTION_HISTORY_LENGTH * ACTOR_TYPE::SPEC::OUTPUT_DIM>{}, 0, 18);\n',
+         '    auto action_history_observation = rlt::view(device, input, rlt::matrix::ViewSpec<1, ACTION_HISTORY_LENGTH * ACTOR_TYPE::SPEC::OUTPUT_DIM>{}, 0, 18 + RPM_INPUT_DIM);\n'),
+    ],
+}
+for path, changes in edits.items():
+    t = path.read_text()
+    for old, new in changes:
+        if new in t:
+            continue
+        assert t.count(old) == 1, f'{path.name}: not found exactly once: {old[:70]!r}'
+        t = t.replace(old, new)
+    path.write_text(t)
+print('history length / measured rotor speeds')
 EOF
 
 cd "$DST"
