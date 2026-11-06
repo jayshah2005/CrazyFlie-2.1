@@ -77,7 +77,9 @@ MODE_POSITION = 1
 MODE_FIGURE_EIGHT = 4
 
 # m1..m4: motor commands the policy computes (rltm); out1..out4: ratios actually
-# sent to the ESCs (motor.m*); rpm1..rpm4: measured eRPM (65535 = invalid read).
+# sent to the ESCs (motor.m*); rpm1..rpm4: measured motor RPM (mechanical, see
+# rpm_quality.py; 65535 = invalid read); rin1..rin4: the measured speeds as a
+# measured-RPM policy sees them (rltr.r*, -1..1; firmware built with RPM_OBS=1).
 EXTRA = ['stateEstimate.roll', 'stateEstimate.pitch', 'gyro.x', 'gyro.y', 'gyro.z',
          'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4',
          'motor.m1_rpm', 'motor.m2_rpm', 'motor.m3_rpm', 'motor.m4_rpm']
@@ -86,10 +88,12 @@ COLUMNS = ['drone_ms', 'phase', 'x', 'y', 'z', 'yaw_deg', 'vbat',
            'roll_deg', 'pitch_deg', 'gyro_x', 'gyro_y', 'gyro_z',
            'out1', 'out2', 'out3', 'out4', 'rpm1', 'rpm2', 'rpm3', 'rpm4',
            'comp_x', 'comp_y', 'comp_z',  # mission: target correction (err_* is w.r.t. the corrected target)
-           'lh_status', 'lh_receive', 'lh_active']  # Lighthouse: 2 = estimating; base-station bit masks
+           'lh_status', 'lh_receive', 'lh_active',  # Lighthouse: 2 = estimating; base-station bit masks
+           'rin1', 'rin2', 'rin3', 'rin4']
 
 
 LH_VARS = ['lighthouse.status', 'lighthouse.bsReceive', 'lighthouse.bsActive']
+RPM_IN_VARS = ['rltr.r1', 'rltr.r2', 'rltr.r3', 'rltr.r4']  # absent on older firmware
 
 
 def key_down(vk):
@@ -112,7 +116,8 @@ class Telemetry:
             b.get('rltte.x'), b.get('rltte.y'), b.get('rltte.z'),
             b.get('rltm.m1'), b.get('rltm.m2'), b.get('rltm.m3'), b.get('rltm.m4'),
         ] + [b.get(name) for name in EXTRA] + list(self.comp)
-            + [b.get(name) for name in LH_VARS])
+            + [b.get(name) for name in LH_VARS]
+            + [b.get(name) for name in RPM_IN_VARS])
 
     def other_cb(self, timestamp, data, logconf):
         self.latest.update(data)
@@ -147,6 +152,7 @@ def start_telemetry(scf, tele):
         b.add_variable(name, 'float')
     for name in ('rltm.m1', 'rltm.m2', 'rltm.m3', 'rltm.m4'):
         b.add_variable(name, 'uint16_t')
+    b.add_variable('supervisor.info', 'uint16_t')  # arming check (wait_armed)
     c = LogConfig(name='L2FAttitude', period_in_ms=20)
     for name in EXTRA[:5]:
         c.add_variable(name, 'float')
@@ -159,9 +165,14 @@ def start_telemetry(scf, tele):
         e.add_variable('lighthouse.status', 'uint8_t')
         e.add_variable('lighthouse.bsReceive', 'uint16_t')
         e.add_variable('lighthouse.bsActive', 'uint16_t')
+    f = LogConfig(name='L2FRpmInput', period_in_ms=20)
+    if toc.get_element_by_complete_name('rltr.r1') is not None:
+        for name in RPM_IN_VARS:
+            f.add_variable(name, 'float')
     confs = [(a, tele.a_cb), (b, tele.other_cb), (c, tele.other_cb), (d, tele.other_cb)]
-    if e.variables:
-        confs.append((e, tele.other_cb))
+    for extra in (e, f):
+        if extra.variables:
+            confs.append((extra, tele.other_cb))
     for conf, cb in confs:
         scf.cf.log.add_config(conf)
         conf.data_received_cb.add_callback(cb)
@@ -320,7 +331,52 @@ def preflight(scf, args):
     return pose
 
 
-SUPERVISOR_LOCKED_BIT = 1 << 6  # supervisor.info bit layout in crazyflie-firmware
+SUPERVISOR_CAN_FLY_BIT = 1 << 3  # supervisor.info bit layout in crazyflie-firmware
+SUPERVISOR_LOCKED_BIT = 1 << 6
+ARMING_RPM_RANGE = (1000, 3500)  # CONFIG_MOTORS_ARMING_RPM_MIN/MAX of the cf21bl build
+
+
+def watch_console(cf):
+    """Log the drone's console text (firmware DEBUG_PRINT) line by line, e.g. the
+    reason for a firmware assert/halt or a failed arming check."""
+    buf = []
+
+    def on_text(text):
+        buf.append(text)
+        joined = ''.join(buf)
+        *lines, rest = joined.split('\n')
+        buf[:] = [rest]
+        for line in lines:
+            if line.strip():
+                log.info('[drone] %s', line.rstrip())
+
+    cf.console.receivedChar.add_callback(on_text)
+
+
+def wait_armed(tele, timeout=4.0):
+    """Wait until the supervisor reports "can fly": armed, and every motor passed
+    the firmware's idle-RPM arming check (spin-up timeout 2 s). On failure, name
+    the motors outside the allowed idle range and return False."""
+    end = time.time() + timeout
+    spinning = []  # RPM samples while the motors were commanded to idle
+    while time.time() < end:
+        info = tele.latest.get('supervisor.info')
+        if info is not None and info & SUPERVISOR_CAN_FLY_BIT:
+            return True
+        rpm = [tele.latest.get(f'motor.m{i}_rpm') for i in range(1, 5)]
+        if tele.latest.get('motor.m1', 0) and all(r is not None and r < 40000 for r in rpm):
+            spinning.append(rpm)
+        time.sleep(0.05)
+    # typical idle RPM per motor over the last second the motors were commanded on
+    recent = spinning[-20:]
+    rpm = [sorted(s[i] for s in recent)[len(recent) // 2] for i in range(4)] if recent else None
+    bad = [f'M{i + 1} ({r} rpm)' for i, r in enumerate(rpm or [])
+           if not ARMING_RPM_RANGE[0] <= r <= ARMING_RPM_RANGE[1]]
+    log.error('Not armed: the firmware rejected arming. Idle RPM while armed %s (allowed '
+              '%d-%d); outside: %s. Check that motor/propeller (spins freely, prop seated, '
+              'no debris, wires), power-cycle, run motor_check.py.', rpm, *ARMING_RPM_RANGE,
+              ', '.join(bad) or 'none')
+    return False
 
 
 def supervisor_locked(scf):
@@ -559,6 +615,7 @@ def main(args):
         cf = scf.cf
         tele = Telemetry()
         confs = start_telemetry(scf, tele)
+        watch_console(cf)
 
         # Emergency-stop watchdog: the firmware cuts the motors if these
         # keep-alives stop for 1 s (script crash, frozen laptop, lost radio).
@@ -572,9 +629,9 @@ def main(args):
 
         threading.Thread(target=keep_alive, daemon=True).start()
         cf.supervisor.send_arming_request(True)  # the brushless firmware requires arming
-        time.sleep(1.0)
         try:
-            fly(scf, args, pose, tele)
+            if wait_armed(tele):
+                fly(scf, args, pose, tele)
         except KeyboardInterrupt:
             log.warning('Ctrl+C: EMERGENCY STOP, cutting motors.')
             cf.supervisor.send_emergency_stop()
