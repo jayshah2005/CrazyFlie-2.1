@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Train the mission policy (take-off from the floor, moving targets, landing; no
 # PID) and pick the best checkpoint with the mission evaluation. Run inside WSL
-# Ubuntu with learning-to-fly cloned at $L2F (see ../README.md).
+# Ubuntu on the training code in ../learning_to_fly (see ../README.md).
 #
 # Recipe of the flown policy "I1" (2026-11-04, checkpoint 1.4M):
 #   compile flags  brushless model, measured noise, angular-acceleration 2e-4,
@@ -39,7 +39,7 @@
 # 30 s apart (run folders are named by start time).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-L2F=${L2F:-$HOME/learning_to_fly}
+L2F=${L2F:-$HERE/../learning_to_fly}
 VARIANT=${VARIANT:-I1}
 SEED=${SEED:-0}
 STEPS=${STEPS:-2000001}
@@ -60,9 +60,6 @@ case "$VARIANT" in
 esac
 
 cd "$L2F"
-if ! grep -q L2F_MISSION src/config/parameters.h include/learning_to_fly/simulator/multirotor.h; then
-  git apply "$HERE/learning_to_fly-brushless.patch"
-fi
 
 MOO=${MOO:-0}
 if [ "$VARIANT" = I1 ]; then BUILD=build_mission_${STEPS}; else BUILD=build_mission_${VARIANT}_${STEPS}; fi

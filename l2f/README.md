@@ -13,8 +13,8 @@ repo root with `rl_trigger.py`.
 
 | Path | What |
 | --- | --- |
-| `sim/learning_to_fly-brushless.patch` | Brushless dynamics, reward terms, mission extension (below) and `evaluate_robustness` for learning-to-fly `d07592d` |
-| `sim/train_brushless.sh` | Apply patch, train the hover policy (default 1M steps), run the robustness check |
+| `learning_to_fly/` | The training code: learning-to-fly `d07592d` (MIT, Jonas Eschmann) with our changes (brushless dynamics, reward terms, mission extension, measured motor speeds, multi-objective critic, `evaluate_robustness`); `external/rl_tools` and `controller` are submodules at the upstream commits |
+| `sim/train_brushless.sh` | Train the hover policy (default 1M steps), run the robustness check |
 | `sim/train_mission.sh` | Train the mission policy (recipe of the flown "I1") and compare all checkpoints |
 | `firmware/patch_firmware.py` | Hooks into crazyflie-firmware 2026.08 (learned-controller packet, motor path, PID boot) |
 | `firmware/build_firmware.sh` | Out-of-tree controller build for `cf21bl` (fixes below), output `~/l2f_2026/build/cf21bl.bin`; target velocity and position-error integral for mission policies |
@@ -31,9 +31,12 @@ From two stock-PID flights (`sysid_hover.py` + `sysid_analyze.py`) and IDSIA
 ## Steps
 
 1. Toolchain (once): `sudo apt install cmake build-essential libhdf5-dev libopenblas-dev libboost-all-dev protobuf-compiler libprotobuf-dev gcc-arm-none-eabi`
-2. Clone learning-to-fly at `d07592d` to `~/learning_to_fly`; init submodules
-   `external/rl_tools`, `controller` (recursive) and, inside `external/rl_tools`,
-   `external/cli11 external/highfive external/json external/tensorboard`.
+2. Submodules (once, from the repo root):
+   `git submodule update --init l2f/learning_to_fly/external/rl_tools l2f/learning_to_fly/controller`, then
+   `git -C l2f/learning_to_fly/external/rl_tools submodule update --init external/cli11 external/highfive external/json external/tensorboard`
+   and, for firmware builds, `git -C l2f/learning_to_fly/controller submodule update --init external/rl_tools`.
+   The scripts build in `l2f/learning_to_fly` (override with `L2F=<path>`; a copy
+   on the WSL file system compiles faster).
 3. `bash l2f/sim/train_brushless.sh` (~4 min for 1M steps).
 4. `ACTOR=<checkpoint>.h bash l2f/firmware/build_firmware.sh`
 5. Put `cf21bl.bin` into the official `firmware-cf21bl-2026.08.zip` in place of
@@ -82,7 +85,7 @@ learned-controller packet carries the target offset and velocity (24 bytes).
 python rl_trigger.py --mode mission --height 1.0 --radius 0.6 --period 10 --descent-rate 0.25 --ki 0
 ```
 
-Simulator extension (`L2F_MISSION`, all in the patch):
+Simulator extension (`L2F_MISSION`, all in `learning_to_fly/`):
 
 - floor contact; take-off, landing, circle (up to 1.2 m, 1 m/s) and line episodes
   with a moving target; observations and reward use velocity relative to the target
@@ -138,7 +141,7 @@ from existing logs: ~0.1% invalid reads (65535, single samples), ~14% of 100 Hz
 samples repeat the previous value, <= ~100 rpm noise, no delay beyond the
 0.06 s motor lag the simulator already models.
 
-Simulator (in the patch): `L2F_RPM_OBS` gives the actor the 4 speeds after the
+Simulator (`learning_to_fly/`): `L2F_RPM_OBS` gives the actor the 4 speeds after the
 angular velocity (normalized `rpm / 12000 - 1`, Gaussian noise `L2F_RPM_NOISE`
 0.01, repeated value with probability `L2F_RPM_HOLD` 0.15); `L2F_HISTORY` sets the
 action-history length; per-motor mismatch (`L2F_MOTOR_GAIN`, `L2F_MOTOR_OFFSET`,

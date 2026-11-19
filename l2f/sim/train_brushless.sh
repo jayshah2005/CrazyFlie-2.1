@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Train the brushless policy and run the robustness check. Run inside WSL Ubuntu
-# with learning-to-fly cloned at $L2F (submodules initialised, see ../README.md).
+# on the training code in ../learning_to_fly (submodules initialised, see ../README.md).
 #
 #   STEPS=1000001     training steps (checkpoint every 100k)
 #   ANG_ACC=2e-4      angular-acceleration penalty (0 = paper reward)
 #   REAL_NOISE=1      measured sensor noise (0 = paper noise)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-L2F=${L2F:-$HOME/learning_to_fly}
+L2F=${L2F:-$HERE/../learning_to_fly}
 STEPS=${STEPS:-1000001}
 ANG_ACC=${ANG_ACC:-2e-4}
 REAL_NOISE=${REAL_NOISE:-1}
@@ -15,9 +15,6 @@ FLAGS="-DL2F_BRUSHLESS -DL2F_STEP_LIMIT=$STEPS -DL2F_ANG_ACC_WEIGHT=$ANG_ACC"
 [ "$REAL_NOISE" = 1 ] && FLAGS="$FLAGS -DL2F_REAL_NOISE"
 
 cd "$L2F"
-if ! grep -q L2F_BRUSHLESS src/config/parameters.h; then
-  git apply "$HERE/learning_to_fly-brushless.patch"
-fi
 
 BUILD=build_brushless_${STEPS}_acc${ANG_ACC}_noise${REAL_NOISE}
 cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON \

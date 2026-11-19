@@ -9,10 +9,10 @@
 #   RPM_OBS=0              1 = the policy takes the 4 measured rotor speeds
 #                          (train_mission.sh variants B and C)
 #   DEFCONFIG=cf21bl_defconfig | cf2_defconfig
-#   L2F=~/learning_to_fly  FW=~/crazyflie-firmware-2026.08  DST=~/l2f_2026
+#   L2F=../learning_to_fly  FW=~/crazyflie-firmware-2026.08  DST=~/l2f_2026
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
-L2F=${L2F:-$HOME/learning_to_fly}
+L2F=${L2F:-$HERE/../learning_to_fly}
 export FW=${FW:-$HOME/crazyflie-firmware-2026.08}
 SRC=$L2F/controller
 DST=${DST:-$HOME/l2f_2026}
