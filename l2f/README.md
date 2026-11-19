@@ -197,3 +197,44 @@ Notes from these flights:
   right after landing comes from the motor cut 6 cm above the floor.
 - A sharp styrofoam poke at 0.9 m (839 deg/s within 20 ms) flipped C; light pokes
   were absorbed. Training has no impulse disturbances.
+
+## Multi-objective critic (`MOO=1`)
+
+Groundwork for multi-objective training (gradient aggregation such as UPGrad).
+`L2F_MOO` (`src/moo/td3_moo.h`) replaces the TD3 step: the reward
+`2 - 0.5 * sum(w_k * cost_k)` is split into 8 parts that add up to it exactly
+(survival constant, position, orientation, velocity, action, action rate,
+angular acceleration, landing speed), the critics get one output per part,
+and the actor gets one gradient per part. The parts are combined by a plain sum
+for now, which is ordinary TD3 on the summed value; the twin-critic minimum is
+taken on the summed value so the summed TD target equals the scalar one.
+Without the flag training is bit-identical to before (checked on a 100k-step run).
+
+`train_mission.sh` options: `MOO=1`, `MOO_TOTAL=1` (critic loss below),
+`MOO_PARTS=1` (all parts in one output, a code-path check), `MOO_NORM=1`,
+`CRITIC_HIDDEN=<n>`. With `MOO=1` the per-part gradient norms, pairwise cosines
+and two self-checks (parts add up to the stored reward; summed per-part gradient
+equals one backward pass) go to `$BUILD/moo_seed$SEED.csv` every 1,000 steps.
+
+Sanity check, variant E, 3 seeds, medians over checkpoints 1.2M-2.0M (mission
+test as above):
+
+| Critic | Circle | Uneven motors | Crashed | Jitter |
+| --- | --- | --- | --- | --- |
+| E, one output (rerun) | 6.1 cm | 11.4 cm | 2.8% | 0.063 |
+| 8 outputs, one loss term per part | 8.2 cm | 14.5 cm | 12.9% | 0.148 |
+| 8 outputs merged into 1 (`MOO_PARTS=1`) | 6.4 cm | 11.7 cm | 2.1% | 0.069 |
+| 8 normalised outputs (`MOO_NORM=1`) | 110 cm | 112 cm | 100% | 0.185 |
+| 8 outputs, 256 hidden (1 seed) | 9.7 cm | 19.0 cm | 5.7% | 0.083 |
+| **8 outputs + total loss (`MOO_TOTAL=1`)** | **4.3 cm** | **8.8 cm** | **0.7%** | **0.059** |
+
+Fitting each part on its own learned far slower (still crashing at 1M steps,
+where E flies), because the shared 64-unit critic must get every part right
+instead of only the total. Adding the total's TD error to the loss,
+`(sum_k e_k)^2 + sum_k e_k^2`, keeps the total as accurate as in E and fixes it.
+Use `MOO=1 MOO_TOTAL=1` for multi-objective runs.
+
+Per-part gradients after 1M steps (3 seeds): survival conflicts with action
+rate, action and position (median cosine -0.35 / -0.28 / -0.22, negative in 63%
+of updates); orientation, velocity, landing speed and angular acceleration point
+the same way (cosine ~+0.9).

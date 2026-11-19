@@ -31,6 +31,10 @@
 #   SEED=0          training seed offset (same seed + recipe = identical run)
 #   STEPS=2000001   training steps (checkpoint every 100k)
 #   EPISODES=15     mission episodes per checkpoint and condition
+#   MOO=1           multi-objective TD3 (L2F_MOO, src/moo/td3_moo.h): the critic
+#                   predicts each reward part separately; the actor combines the
+#                   per-part gradients (plain sum = ordinary TD3). Writes the
+#                   per-part gradient norms and cosines to $BUILD/moo_seed$SEED.csv
 # WSL has ~8 GB: at most two of these trainings in parallel, started at least
 # 30 s apart (run folders are named by start time).
 set -euo pipefail
@@ -60,7 +64,20 @@ if ! grep -q L2F_MISSION src/config/parameters.h include/learning_to_fly/simulat
   git apply "$HERE/learning_to_fly-brushless.patch"
 fi
 
+MOO=${MOO:-0}
 if [ "$VARIANT" = I1 ]; then BUILD=build_mission_${STEPS}; else BUILD=build_mission_${VARIANT}_${STEPS}; fi
+MOO_PARTS=${MOO_PARTS:-8}  # 1 = all parts merged (diagnostic: must match ordinary TD3)
+if [ "$MOO" = 1 ]; then
+  FLAGS="$FLAGS -DL2F_MOO -DL2F_MOO_PARTS=$MOO_PARTS"
+  BUILD=${BUILD}_moo; [ "$MOO_PARTS" = 8 ] || BUILD=${BUILD}${MOO_PARTS}
+  # MOO_NORM=1: outputs learn unweighted parts scaled to O(1); curriculum weights act outside
+  if [ "${MOO_NORM:-0}" = 1 ]; then FLAGS="$FLAGS -DL2F_MOO_NORM"; BUILD=${BUILD}_norm; fi
+  # MOO_TOTAL=<lambda>: critic loss = (total error)^2 + lambda * sum of (part error)^2
+  if [ -n "${MOO_TOTAL:-}" ]; then FLAGS="$FLAGS -DL2F_MOO_TOTAL_LOSS=$MOO_TOTAL"; BUILD=${BUILD}_tot$MOO_TOTAL; fi
+fi
+# CRITIC_HIDDEN=<n>: critic hidden-layer width (default 64)
+if [ -n "${CRITIC_HIDDEN:-}" ]; then FLAGS="$FLAGS -DL2F_CRITIC_HIDDEN=$CRITIC_HIDDEN"; BUILD=${BUILD}_ch$CRITIC_HIDDEN; fi
+[ "$MOO" = 1 ] && export L2F_MOO_LOG="$L2F/$BUILD/moo_seed$SEED.csv"
 cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON \
   -DCMAKE_CXX_FLAGS="$FLAGS" > /dev/null
 cmake --build "$BUILD" -j"$(nproc)" --target training_headless evaluate_robustness
@@ -70,7 +87,7 @@ mkdir -p checkpoints/multirotor_td3
 before=$(ls -d checkpoints/multirotor_td3/*/ 2>/dev/null || true)
 L2F_MISSION_RAMP=800000 L2F_GLITCH_P=0.003 L2F_DR=1 L2F_DR_SCALE=0.3 \
 L2F_MOTOR_GAIN=$TRAIN_GAIN L2F_MOTOR_OFFSET=$TRAIN_OFFSET L2F_SEED=$SEED \
-  "./$BUILD/src/training_headless" > >(grep --line-buffered -E "Step: .*00000 |Training took") &
+  "./$BUILD/src/training_headless" > >(grep --line-buffered -E "Step: .*00000 |Training took|L2F_MOO") &
 TRAIN_PID=$!
 # this run's checkpoint folder: the one that appears after the start
 RUN=
@@ -79,7 +96,7 @@ for _ in $(seq 120); do
   [ -n "$RUN" ] && break
   sleep 1
 done
-echo "variant $VARIANT, seed $SEED, run: $RUN"
+echo "variant $VARIANT, moo $MOO, seed $SEED, run: $RUN"
 wait "$TRAIN_PID"
 [ -n "$RUN" ] || { echo "no checkpoint folder appeared" >&2; exit 1; }
 
