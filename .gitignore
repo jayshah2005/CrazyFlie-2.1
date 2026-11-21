@@ -58,7 +58,7 @@ Thumbs.db
 .env.*
 !.env.example
 
-# Local-only files that must never be published (e.g. unpublished aggregators)
+# Local-only files that must never be published
 *_local.h
 *_local.py
 

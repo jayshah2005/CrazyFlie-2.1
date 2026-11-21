@@ -5,12 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "aggregators.h"
-#if __has_include("aggregators_local.h")
-#include "aggregators_local.h"
-#endif
-#ifndef L2F_MOO_LOCAL_AGGREGATORS
-#define L2F_MOO_LOCAL_AGGREGATORS(X)
-#endif
+#include "aggregators_pga.h"
 
 using namespace learning_to_fly::moo;
 
@@ -32,8 +27,8 @@ int run_all() {
         run<M, agg::sum>(index, "sum", G);
         run<M, agg::upgrad>(index, "upgrad", G);
         run<M, agg::aligned_mtl>(index, "aligned_mtl", G);
-#define L2F_RUN_LOCAL(name) run<M, agg::name>(index, #name, G);
-        L2F_MOO_LOCAL_AGGREGATORS(L2F_RUN_LOCAL)
+        run<M, agg::svd_pga>(index, "svd_pga", G);
+        run<M, agg::osnmf_pga>(index, "osnmf_pga", G);
     }
 }
 

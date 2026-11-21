@@ -23,9 +23,7 @@
 #include <type_traits>
 #include <vector>
 #include "aggregators.h"
-#if __has_include("aggregators_local.h")
-#include "aggregators_local.h"  // optional extra aggregators kept outside the repository
-#endif
+#include "aggregators_pga.h"
 
 namespace learning_to_fly::moo {
 #ifndef L2F_MOO_PARTS

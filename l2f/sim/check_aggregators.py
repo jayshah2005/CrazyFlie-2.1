@@ -40,11 +40,12 @@ REFERENCE = {  # TorchJD weightings with an all-ones preference vector
     'upgrad': lambda G: UPGradWeighting(pref_vector=torch.ones(len(G), dtype=torch.float64))(G),
     'aligned_mtl': lambda G: AlignedMTLWeighting(pref_vector=torch.ones(len(G), dtype=torch.float64))(G),
 }
-try:  # optional local-only aggregators (gitignored)
-    from check_aggregators_local import REFERENCE_LOCAL
-    REFERENCE.update(REFERENCE_LOCAL)
+try:  # SVDPGA / OSNMFPGA: only in the rkhosrowshahi/torchjd fork (branch feat/pga-aggregators)
+    from torchjd.aggregation._pga import OSNMFPGAWeighting, SVDPGAWeighting
+    REFERENCE['svd_pga'] = SVDPGAWeighting()
+    REFERENCE['osnmf_pga'] = OSNMFPGAWeighting()
 except ImportError:
-    pass
+    log.warning('torchjd without the PGA weightings: svd_pga / osnmf_pga not checked')
 
 
 def wsl_path(p: Path) -> str:
