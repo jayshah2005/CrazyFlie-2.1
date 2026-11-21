@@ -24,7 +24,7 @@ STARTED_AT = datetime.now().astimezone()
 
 - Pass `__file__` so every line is tagged with the script name.
 - Replace `print(...)` with `log.info` / `log.warning` / `log.error`.
-- See `flip.py` and `script.py` as reference.
+- See `flip.py` and `tricks.py` as reference.
 
 ## CSV / flight logs
 
