@@ -220,6 +220,7 @@ matrix (`src/moo/aggregators.h`, double precision), chosen with `AGG=`:
 | `sum` (default) | plain sum: ordinary TD3 on the summed value |
 | `upgrad` | UPGrad (Quinton & Rey, 2024): each gradient projected onto the dual cone of all of them, then added |
 | `aligned_mtl` | Aligned-MTL (Senushkin et al., 2023): gradients rescaled to equal, smallest-eigenvalue strength |
+| `svd_pga`, `osnmf_pga` | SVD-PGA / OS-NMF-PGA (`src/moo/aggregators_pga.h`), ported from R. Khosrowshahi's TorchJD fork ([rkhosrowshahi/torchjd](https://github.com/rkhosrowshahi/torchjd), branch `feat/pga-aggregators`) |
 
 They follow TorchJD's defaults with an all-ones preference vector (TorchJD's
 default is all 1/8; the weights are exactly 8 times those). Adam makes the actor
@@ -231,7 +232,25 @@ training run logged. Results (2026-11-18, relative error of the combined
 direction): UPGrad 3e-12 or better, Aligned-MTL 2e-11 or better, except 1e-7
 when the gradient norms span 6 decades (condition number 1e12, the limit of
 any eigensolver). `AGG=sum` gives the same updates as before the change
-(identical gradient logs over a 100k-step run).
+(identical gradient logs over a 100k-step run). The PGA references need the
+fork installed (otherwise they are skipped); SVD-PGA matches to 1e-12 or better
+(5e-9 on the weights logged in training). OS-NMF-PGA matches except when a row
+of its factor H is zero (~7% of real updates): the method then completes the
+basis with an arbitrary null-space vector, so any two implementations differ
+there (up to 60% in direction).
+
+Aggregators on the 8 reward parts (variant E, `MOO_TOTAL=1`, seed 0, medians
+over checkpoints 1.2M-2.0M): none beats the plain sum.
+
+| `AGG=` | Circle | Uneven motors | Crashed | Jitter |
+| --- | --- | --- | --- | --- |
+| `sum` | 6.1 cm | 8.3 cm | 1.7% | 0.056 |
+| `aligned_mtl` | 8.3 cm | 17.0 cm | 10.1% | 0.109 |
+| `osnmf_pga` | 8.3 cm | 18.2 cm | 18.5% | 0.125 |
+| `svd_pga` | 14.9 cm | 56.5 cm | 27% | 0.106 |
+| `upgrad` | 348 cm | 199 cm | 66% | 0.214 |
+
+UPGrad is unstable here (it raises the action-rate weight to 7-18x).
 
 `train_mission.sh` options: `MOO=1`, `MOO_TOTAL=1` (critic loss below),
 `AGG=<name>`, `MOO_PARTS=1` (all parts in one output, a code-path check),
@@ -282,6 +301,10 @@ With `MOO=1`, `$BUILD/moo_noise_seed$SEED.csv` repeats each objective's gradient
 on a second, independent minibatch (own random generator, training unchanged):
 `same_k` is the cosine of objective k across the two batches (is its direction
 reproducible?), `cross_a__b` the a-b cosine without shared-sample noise.
+`python l2f/sim/moo_summary.py conflicts $BUILD` summarises these logs per
+training window (for reward parts also the tracking / smoothness / safety
+groups); `moo_summary.py checkpoints <outputs>` gives the late-checkpoint medians
+used in the tables here.
 
 Findings (2026-11-18/19, seed 0 unless noted): per-objective gradients are not
 noise (same-objective cosine 0.92-0.99). Splitting by task gives no conflict:
