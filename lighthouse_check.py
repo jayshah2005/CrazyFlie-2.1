@@ -42,6 +42,7 @@ MAX_BS = 16
 
 
 def param(cf, name):
+    """Return parameter `name` from the drone, or None if the firmware does not have it."""
     try:
         return cf.param.get_value(name)
     except (KeyError, AttributeError):
@@ -49,6 +50,7 @@ def param(cf, name):
 
 
 def main(seconds):
+    """Check the deck and per-base-station calibration/geometry, then sample reception for `seconds`."""
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ... (cfclient must be closed)', URI)
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
@@ -90,6 +92,7 @@ def main(seconds):
 
 
 def report(fields, rows):
+    """Log per-base-station reception and the overall Lighthouse status from the samples."""
     if not rows:
         log.error('No samples received from the drone.')
         return

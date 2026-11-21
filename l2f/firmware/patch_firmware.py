@@ -10,6 +10,7 @@ FW = pathlib.Path(os.environ.get('FW', pathlib.Path.home() / 'crazyflie-firmware
 
 
 def edit(rel, old, new):
+    """Replace `old` with `new` in FW/rel. Skips files already patched; aborts unless `old` matches exactly once."""
     path = FW / rel
     text = path.read_text()
     if new in text:

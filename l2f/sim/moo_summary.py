@@ -39,6 +39,7 @@ GROUPS = {'tracking': [1, 3], 'smoothness': [4, 5, 6], 'safety': [0, 2, 7]}
 
 
 def checkpoint_rows(path: Path, first: int) -> list[tuple[float, ...]]:
+    """Parse the checkpoint table printed by train_mission.sh, keeping checkpoints from step `first` on."""
     rows = []
     for line in path.read_text(errors='replace').splitlines():
         m = ROW.match(line)
@@ -48,6 +49,7 @@ def checkpoint_rows(path: Path, first: int) -> list[tuple[float, ...]]:
 
 
 def describe(rows: list[tuple[float, ...]], episodes: int) -> str:
+    """One-line medians (circle error, uneven-motor error, crash share, jitter) over checkpoint rows."""
     med = lambda i: st.median(r[i] for r in rows)
     crashes = [r[1] + r[4] + r[7] for r in rows]
     share = 100 * sum(crashes) / (len(rows) * 3 * episodes)
@@ -56,6 +58,7 @@ def describe(rows: list[tuple[float, ...]], episodes: int) -> str:
 
 
 def cmd_checkpoints(args: argparse.Namespace) -> None:
+    """`checkpoints` subcommand: per-file and pooled late-checkpoint medians."""
     pooled = []
     for path in args.files:
         rows = checkpoint_rows(path, args.first)
@@ -69,15 +72,18 @@ def cmd_checkpoints(args: argparse.Namespace) -> None:
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
+    """Read a CSV file into a list of dicts."""
     with path.open(newline='') as f:
         return list(csv.DictReader(f))
 
 
 def in_window(rows: list[dict[str, str]], lo: int, hi: int) -> list[dict[str, str]]:
+    """Rows whose training step lies in [lo, hi)."""
     return [r for r in rows if lo <= int(r['step']) < hi]
 
 
 def group_lines(gram_rows: list[dict[str, str]]) -> list[str]:
+    """Median cosine between the gradient groups (tracking, smoothness, safety), from logged Gram matrices."""
     def cosine(r, A, B):
         g = lambda a, b: float(r[f'g_{min(a, b)}_{max(a, b)}'])
         ab = sum(g(i, j) for i in A for j in B)
@@ -94,6 +100,7 @@ def group_lines(gram_rows: list[dict[str, str]]) -> list[str]:
 
 
 def cmd_conflicts(args: argparse.Namespace) -> None:
+    """`conflicts` subcommand: per-window gradient norms, weights and conflicts from a run's MOO logs."""
     main = read_csv(args.build / f'moo_seed{args.seed}.csv')
     noise_path = args.build / f'moo_noise_seed{args.seed}.csv'
     gram_path = args.build / f'moo_gram_seed{args.seed}.csv'
@@ -131,6 +138,7 @@ def cmd_conflicts(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    """Parse the subcommand and run it."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('checkpoints', help='late-checkpoint medians of train_mission.sh outputs')

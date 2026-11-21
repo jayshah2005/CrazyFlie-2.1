@@ -5,9 +5,11 @@
 #
 #   ACTOR=<checkpoint .h>  policy to compile in (default: the controller repo's actor.h)
 #   HISTORY=32             action-history length the policy was trained with
-#                          (train_mission.sh: I1/A/B 32, C/D 4)
+#                          (train_mission.sh: I1/A/B 32, C/D 4, E 0)
 #   RPM_OBS=0              1 = the policy takes the 4 measured rotor speeds
-#                          (train_mission.sh variants B and C)
+#                          (train_mission.sh variants B, C and E)
+# Both must match the variant the checkpoint was trained with: the build only
+# checks the total input count, which some wrong combinations also pass.
 #   DEFCONFIG=cf21bl_defconfig | cf2_defconfig
 #   L2F=../learning_to_fly  FW=~/crazyflie-firmware-2026.08  DST=~/l2f_2026
 set -euo pipefail

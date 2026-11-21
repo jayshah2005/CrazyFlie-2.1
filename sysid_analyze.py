@@ -48,6 +48,7 @@ def load(path):
 
 
 def lowpass(x, alpha):
+    """First-order low-pass filter with a one-sample delay: y[k] follows x[k-1] at rate alpha."""
     y = np.empty_like(x)
     y[0] = x[0]
     for k in range(1, len(x)):
@@ -89,6 +90,7 @@ def delay(t, u, rpm, max_lag_s=0.1):
 
 
 def main(args):
+    """Fit the motor model to every motor of the newest (or given) sysid log and print the results."""
     path = args.log or max(glob.glob('logs/sysid_hover_sysid_*.csv'), key=os.path.getmtime)
     rows = load(path)
     log.info('Log: %s (%d samples)', path, len(rows))

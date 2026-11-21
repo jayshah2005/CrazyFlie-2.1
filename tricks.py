@@ -1,9 +1,9 @@
 """
 Crazyflie show: figure 8 -> backflip -> side flip (optional) -> land.  v3
 
-    python show.py                  # figure 8, backflip, side flip, land
-    python show.py --no-side-flip   # figure 8, backflip, land
-    python show.py --no-flips       # figure 8 only (test this FIRST)
+    python tricks.py                # figure 8, backflip, side flip, land
+    python tricks.py --no-side-flip # figure 8, backflip, land
+    python tricks.py --no-flips     # figure 8 only (test this FIRST)
 
 Or set DO_SIDE_FLIP = False below to turn the side flip off permanently.
 
@@ -35,7 +35,7 @@ takeoff point, and each flip drifts ~0.5 m. Keep ~3 x 2 m clear and stay
 inside Lighthouse coverage. Fully charged battery, hand on Ctrl+C.
 
 Ctrl+C once -> tries to land.  Ctrl+C twice -> cuts the motors.
-Logs: console via run_log, CSV at logs/show_flight_YYYYmmdd_HHMMSS.csv.
+Logs: console via run_log, CSV at logs/tricks_flight_YYYYmmdd_HHMMSS.csv.
 """
 import argparse
 import math
@@ -183,6 +183,7 @@ class Telemetry:
         self.received = False
 
     def state_cb(self, ts, d, lc):
+        """State block (10 ms): position, attitude; flags estimate jumps (glitches) during a flip."""
         with self.lock:
             x, y = d['stateEstimate.x'], d['stateEstimate.y']
             z, vz = d['stateEstimate.z'], d['stateEstimate.vz']
@@ -206,6 +207,7 @@ class Telemetry:
                               int(self.watching and self.glitch is not None), *self.sent])
 
     def gyro_cb(self, ts, d, lc):
+        """Gyro block (10 ms): integrates roll and pitch rotation during a flip."""
         with self.lock:
             self.gx, self.gy = d['gyro.x'], d['gyro.y']
             self.yaw = d['stabilizer.yaw']
@@ -218,12 +220,14 @@ class Telemetry:
             self.last_gyro_ts = ts
 
     def slow_cb(self, ts, d, lc):
+        """Slow block: thrust command, battery and supervisor flags."""
         with self.lock:
             self.thrust = d['controller.cmd_thrust']
             self.vbat = d['pm.vbat']
             self.sup = int(d['supervisor.info'])
 
     def _flip_rot(self):
+        """Integrated rotation about the current flip axis (deg)."""
         return self.rot_roll if self.flip_axis == 'roll' else self.rot_pitch
 
     def start_flip(self, axis):
@@ -239,10 +243,12 @@ class Telemetry:
             self.watching = True
 
     def end_flip(self):
+        """Stop tracking, glitch watching and rotation integration after a flip."""
         with self.lock:
             self.tracking = self.watching = self.integrating = False
 
     def get_glitch(self):
+        """The glitch recorded during the last flip, or None."""
         with self.lock:
             return self.glitch
 
@@ -258,10 +264,12 @@ class Telemetry:
             return self.rot_roll, self.rot_pitch, self.gx, self.gy
 
     def attitude(self):
+        """Current (roll, pitch, yaw), read under the lock."""
         with self.lock:
             return self.roll, self.pitch, self.yaw
 
     def position(self):
+        """Current (x, y, z, vz), read under the lock."""
         with self.lock:
             return self.x, self.y, self.z, self.vz
 
@@ -274,6 +282,7 @@ class Telemetry:
 
 
 def start_telemetry(scf, tele):
+    """Start the state, gyro and slow log blocks that feed `tele`."""
     state = LogConfig(name='ShowState', period_in_ms=10)
     for name in ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
                  'stateEstimate.vz', 'stabilizer.pitch', 'stabilizer.roll'):
@@ -325,6 +334,7 @@ def set_param_async(cf, full_name, value):
 
 
 def set_param_sync(cf, full_name, value, timeout=1.0):
+    """Set a parameter and wait up to `timeout` s for the drone to confirm it. Returns True if confirmed."""
     ev, cleanup = set_param_async(cf, full_name, value)
     ok = ev.wait(timeout)
     cleanup()
@@ -342,6 +352,7 @@ def set_stab_mode(cf, mode, timeout=1.0):
 
 
 def wait_for(pred, timeout):
+    """Poll `pred` every 50 ms until it is true or `timeout` s pass. Returns the final result."""
     end = time.time() + timeout
     while time.time() < end:
         if pred():
@@ -369,6 +380,7 @@ def set_flow(cf, enabled):
 
 
 def upload_trajectory(cf, trajectory_id, trajectory):
+    """Upload a figure-8 polynomial trajectory to the drone's memory. Returns its duration (s), or None if the upload failed."""
     traj_mem = cf.mem.get_mems(MemoryElement.TYPE_TRAJ)[0]
     traj_mem.trajectory = []
     total = 0.0
@@ -401,6 +413,7 @@ def send_axis(cf, tele, axis, value, thrust):
 
 
 def measure_hover_thrust(tele, duration=1.0):
+    """Average thrust command over `duration` s of hovering (samples below 1000 ignored); FALLBACK_HOVER_THRUST if none."""
     samples = []
     end = time.time() + duration
     while time.time() < end:
@@ -417,6 +430,7 @@ def measure_hover_thrust(tele, duration=1.0):
 
 
 def flip_allowed(tele, hover, label):
+    """Safety gate before a flip (battery under load, thrust headroom, height). Logs the reason if not allowed."""
     with tele.lock:
         vbat, z = tele.vbat, tele.z
     if vbat is not None and vbat < MIN_BATTERY_LOADED_V:
@@ -656,6 +670,7 @@ def settle(tele, hl, home, label):
 # ---- Main ------------------------------------------------------------------
 
 def main(do_backflip, do_side_flip):
+    """Connect, take off, fly the figure 8, then the enabled flips, and land."""
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
     scf = SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache'))

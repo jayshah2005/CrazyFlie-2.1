@@ -39,6 +39,7 @@ LH_STATUS = {0: 'not receiving', 1: 'receiving, not estimating', 2: 'estimating 
 
 
 def main(seconds):
+    """Log the state estimate for `seconds` with the drone still, then report and save it."""
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
@@ -74,6 +75,7 @@ def main(seconds):
 
 
 def report(fields, rows):
+    """Print mean / std / peak-to-peak per variable with a verdict against expected noise."""
     rows = [r for r in rows if None not in r]
     if len(rows) < 10:
         log.error('Too few samples to analyse.')

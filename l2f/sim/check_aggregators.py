@@ -49,11 +49,13 @@ except ImportError:
 
 
 def wsl_path(p: Path) -> str:
+    """Convert a Windows path (C:\\...) to its WSL path (/mnt/c/...); other paths pass through."""
     s = str(p).replace('\\', '/')
     return f'/mnt/{s[0].lower()}{s[2:]}' if s[1] == ':' else s
 
 
 def run_harness(grams: np.ndarray) -> dict[tuple[int, str], np.ndarray]:
+    """Compile check_aggregators.cpp, feed it the Gram matrices, return {(case index, aggregator): weights}."""
     text = '\n'.join(' '.join(f'{x:.17g}' for x in G.ravel()) for G in grams) + '\n'
     src, exe = SRC / 'check_aggregators.cpp', '$HOME/.cache/l2f_check_aggregators'
     M = grams.shape[1]
@@ -68,6 +70,7 @@ def run_harness(grams: np.ndarray) -> dict[tuple[int, str], np.ndarray]:
 
 
 def test_grams(rng: np.random.Generator, M: int) -> list[tuple[str, np.ndarray]]:
+    """Synthetic M x M Gram matrices: random, conflicting, rank-deficient and badly scaled."""
     cases = []
     n = 200
     for i in range(20):
@@ -89,6 +92,7 @@ def test_grams(rng: np.random.Generator, M: int) -> list[tuple[str, np.ndarray]]
 
 
 def logged_grams(path: Path) -> list[tuple[str, np.ndarray, np.ndarray]]:
+    """Read (label, Gram matrix, logged weights) for every update in a moo_gram_seed*.csv log."""
     header = open(path).readline().strip().split(',')
     n_tri = sum(c.startswith('g_') for c in header)
     M = int(round((np.sqrt(8 * n_tri + 1) - 1) / 2))
@@ -104,6 +108,7 @@ def logged_grams(path: Path) -> list[tuple[str, np.ndarray, np.ndarray]]:
 
 
 def errors(w: np.ndarray, wt: np.ndarray, G: np.ndarray) -> tuple[float, float]:
+    """Relative error of weights `w` against reference `wt`: (max weight error, combined-direction error)."""
     d = w - wt
     err_w = np.abs(d).max() / max(np.abs(wt).max(), 1e-300)
     err_d = np.sqrt(max(d @ G @ d, 0)) / max(np.sqrt(max(wt @ G @ wt, 0)), 1e-300)
@@ -111,6 +116,7 @@ def errors(w: np.ndarray, wt: np.ndarray, G: np.ndarray) -> tuple[float, float]:
 
 
 def main() -> None:
+    """Compare the C++ aggregators with TorchJD on the test (and logged) matrices and print the worst errors."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--log', type=Path, action='append', default=[], help='moo_gram_seed*.csv from a run')
     ap.add_argument('--agg', help='aggregator the logged run used (compares its logged weights)')

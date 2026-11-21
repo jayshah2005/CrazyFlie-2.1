@@ -78,6 +78,7 @@ def segments(rows, cmd):
 
 
 def longest_run(mask):
+    """Length of the longest run of True values in `mask`."""
     best = cur = 0
     for m in mask:
         cur = cur + 1 if m else 0
@@ -148,6 +149,7 @@ def fitted_trace(t, x, f):
 
 
 def main(args):
+    """Analyse every given (or found) log and print per-motor and pooled RPM quality."""
     paths = args.logs or sorted(glob.glob('logs/sysid_hover_sysid_*.csv')
                                 + glob.glob('logs/rl_trigger_flight_*.csv'))
     table, hover_means = [], []

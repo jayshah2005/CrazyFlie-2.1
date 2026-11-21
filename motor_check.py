@@ -32,6 +32,7 @@ LOW_FRACTION = 0.6  # flag a motor below 60% of the median idle RPM
 
 
 def main(args):
+    """Arm at idle for each round, log every motor's eRPM, disarm; flag motors far below the median."""
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
     rows = []
@@ -56,6 +57,7 @@ def main(args):
         alive.set()
 
         def keep_alive():
+            """Feed the emergency-stop watchdog while the motors are armed."""
             while alive.is_set():
                 cf.supervisor.send_emergency_stop_watchdog()
                 time.sleep(0.2)

@@ -97,10 +97,12 @@ RPM_IN_VARS = ['rltr.r1', 'rltr.r2', 'rltr.r3', 'rltr.r4']  # absent on older fi
 
 
 def key_down(vk):
+    """True while the key with Windows virtual-key code `vk` is held down (any window focused)."""
     return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
 
 
 class Telemetry:
+    """Collects the flight log: state rows at 20 ms plus the newest values of the other log blocks."""
     def __init__(self):
         self.rows = []
         self.phase = 'idle'
@@ -108,6 +110,7 @@ class Telemetry:
         self.comp = (0.0, 0.0, 0.0)  # mission target correction currently applied
 
     def a_cb(self, timestamp, data, logconf):
+        """Append one CSV row: the state block plus the latest policy / motor values."""
         b = self.latest
         self.rows.append([
             timestamp, self.phase,
@@ -120,6 +123,7 @@ class Telemetry:
             + [b.get(name) for name in RPM_IN_VARS])
 
     def other_cb(self, timestamp, data, logconf):
+        """Remember the newest values of a secondary log block."""
         self.latest.update(data)
 
     def save(self, path):
@@ -128,6 +132,7 @@ class Telemetry:
         log.info('Flight log written to %s (%s samples)', written, len(self.rows))
 
     def summarize(self):
+        """Log tracking error and how long the policy had control."""
         active = [r for r in self.rows if r[7] == 1 and r[8] is not None]
         if not active:
             log.info('The learned policy never had control of the motors.')
@@ -142,6 +147,7 @@ class Telemetry:
 
 
 def start_telemetry(scf, tele):
+    """Start the state, policy and motor log blocks that feed `tele`."""
     a = LogConfig(name='L2FState', period_in_ms=20)
     for name in ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
                  'stateEstimate.yaw', 'pm.vbat'):
@@ -280,6 +286,7 @@ class MissionProfile:
 
 
 def configure(cf, args):
+    """Select the learned controller and set the rlt.* parameters for the chosen mode."""
     log.info('Setting controller parameters:')
     set_param(cf, 'stabilizer.controller', CONTROLLER_OOT)  # learned controller (PID inside until triggered)
     set_param(cf, 'rlt.trigger', 0)  # policy runs while learned packets arrive
@@ -300,6 +307,7 @@ def configure(cf, args):
 
 
 def preflight(scf, args):
+    """Check firmware, estimator, battery, yaw and arming. Returns the start pose, or None to abort."""
     cf = scf.cf
     if cf.param.toc.get_element_by_complete_name('rlt.wn') is None:
         log.error('No rlt.* parameters: this drone is not running the '
@@ -342,6 +350,7 @@ def watch_console(cf):
     buf = []
 
     def on_text(text):
+        """Forward complete console lines from the drone to the log as "[drone] ..."."""
         buf.append(text)
         joined = ''.join(buf)
         *lines, rest = joined.split('\n')
@@ -533,6 +542,7 @@ def fly_mission(scf, args, pose, tele):
 
 
 def fly(scf, args, pose, tele):
+    """Fly one flight in the chosen mode; mission mode is handed to fly_mission."""
     if args.mode == 'mission':
         fly_mission(scf, args, pose, tele)
         return
@@ -601,6 +611,7 @@ def fly(scf, args, pose, tele):
 
 
 def main(args):
+    """Connect, run the pre-flight checks, configure, fly, then save and summarise the log."""
     if sys.platform != 'win32':
         log.error('The Enter dead-man switch uses the Windows key API.')
         return

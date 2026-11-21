@@ -28,6 +28,7 @@ STARTED_AT = datetime.now().astimezone()
 
 
 def main(path, wait):
+    """Wait up to `wait` s for a cold-booted bootloader, then flash the zip at `path`."""
     cflib.crtp.init_drivers()
     bl = Bootloader(None)  # no URI: scan for a cold-booted bootloader
     log.info('Put the drone in bootloader mode NOW: power off, then hold the power '

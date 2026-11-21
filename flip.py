@@ -105,6 +105,7 @@ class Telemetry:
         self.received = False
 
     def fast_cb(self, timestamp, data, logconf):
+        """Fast (10 ms) log block: position, pitch, gyro; integrates rotation during the flip."""
         with self.lock:
             self.x = data['stateEstimate.x']
             self.y = data['stateEstimate.y']
@@ -126,29 +127,35 @@ class Telemetry:
                               self.sent_rate, self.sent_thrust])
 
     def slow_cb(self, timestamp, data, logconf):
+        """Slow log block: the controller's thrust command (for hover-thrust measurement)."""
         with self.lock:
             self.thrust = data['controller.cmd_thrust']
 
     def start_rotation(self):
+        """Reset and start integrating the pitch rotation (gyro.y)."""
         with self.lock:
             self.rotation = 0.0
             self.rot_max = 0.0
             self.integrating = True
 
     def stop_rotation(self):
+        """Stop integrating the pitch rotation."""
         with self.lock:
             self.integrating = False
 
     def start_tracking(self):
+        """Start tracking the minimum and maximum height."""
         with self.lock:
             self.min_z = self.max_z = self.z
             self.tracking = True
 
     def stop_tracking(self):
+        """Stop tracking the height extremes."""
         with self.lock:
             self.tracking = False
 
     def snapshot(self):
+        """Current (z, vz, pitch, gyro_y, rotation), read under the lock."""
         with self.lock:
             return self.z, self.vz, self.pitch, self.gyro_y, self.rotation
 
@@ -168,6 +175,7 @@ class Telemetry:
 
 
 def start_telemetry(scf, tele):
+    """Start the fast and slow log blocks that feed `tele`."""
     fast = LogConfig(name='FlipFast', period_in_ms=10)
     for name in ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
                  'stateEstimate.vz', 'stabilizer.pitch', 'gyro.y'):
@@ -185,6 +193,7 @@ def start_telemetry(scf, tele):
 
 
 def read_battery(scf, timeout=3.0):
+    """Read the battery voltage once; None if no sample arrives within `timeout`."""
     result = {}
 
     def cb(timestamp, data, logconf):
@@ -227,6 +236,7 @@ def set_param_async(cf, full_name, value):
 
 
 def set_param_sync(cf, full_name, value, timeout=1.0):
+    """Set a parameter and wait up to `timeout` s for the drone to confirm it. Returns True if confirmed."""
     ev, cleanup = set_param_async(cf, full_name, value)
     ok = ev.wait(timeout)
     cleanup()
@@ -241,6 +251,7 @@ def send(cf, tele, pitch_rate, thrust):
 
 
 def measure_hover_thrust(tele, duration=1.0):
+    """Average thrust command over `duration` s of hovering (samples below 1000 ignored); None if none."""
     samples = []
     end = time.time() + duration
     while time.time() < end:
@@ -252,6 +263,7 @@ def measure_hover_thrust(tele, duration=1.0):
 
 
 def backflip(cf, tele, hover):
+    """Fly one backflip from hover thrust `hover`: boost, rotate in rate mode, brake, recover."""
     up = min(hover * UP_FACTOR, MAX_THRUST)
     inv = min(hover * INVERTED_FACTOR, MAX_THRUST)
     boost = min(hover * BOOST_FACTOR, MAX_THRUST)
@@ -338,6 +350,7 @@ def backflip(cf, tele, hover):
 
 
 def main(do_flip):
+    """Connect, take off, measure hover thrust, flip (unless --no-flip), hold position, land."""
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
     scf = SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache'))

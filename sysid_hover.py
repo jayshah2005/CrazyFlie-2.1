@@ -45,12 +45,14 @@ COLUMNS = ['drone_ms', 'phase', 'm1', 'm2', 'm3', 'm4',
 
 
 class Telemetry:
+    """Collects motor commands and reported RPM at 100 Hz, tagged with the flight phase."""
     def __init__(self):
         self.rows = []
         self.phase = 'ground'
         self.latest_b = {}
 
     def a_cb(self, timestamp, data, logconf):
+        """Append one row: motor commands, motor RPM and the latest battery / height values."""
         b = self.latest_b
         self.rows.append([
             timestamp, self.phase,
@@ -60,10 +62,12 @@ class Telemetry:
         ])
 
     def b_cb(self, timestamp, data, logconf):
+        """Remember the newest battery and height values."""
         self.latest_b = data
 
 
 def start_telemetry(scf, tele):
+    """Start the motor (command + RPM) and state log blocks that feed `tele`."""
     a = LogConfig(name='SysIdMotors', period_in_ms=10)
     for i in range(1, 5):
         a.add_variable(f'motor.m{i}', 'uint16_t')
@@ -80,6 +84,7 @@ def start_telemetry(scf, tele):
 
 
 def fly(cf, tele):
+    """Take off, hover, do height steps so the motors change speed, then land."""
     hlc = cf.high_level_commander
     tele.phase = 'takeoff'
     log.info('Taking off to %.1f m', HOVER_Z)
@@ -104,6 +109,7 @@ def fly(cf, tele):
 
 
 def summarize(rows):
+    """Log mean hover command, RPM and battery as a quick sanity check."""
     hover = [r for r in rows if r[1] == 'hover' and r[6]]
     if not hover:
         log.warning('No hover samples with RPM: is bidirectional DShot telemetry enabled?')
@@ -157,6 +163,7 @@ def estimate_is_sane(scf, seconds=2.0):
 
 
 def main(args):
+    """Connect, select PID, fly the sysid sequence, save the CSV and summarise it."""
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
     with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:

@@ -19,7 +19,7 @@
 #   C   + measured rotor speeds, 4-step action history (41)
 #   D   no rotor speeds, 4-step action history (37)
 #   E   + measured rotor speeds, no action history (25)
-# A-D train with per-motor mismatch (each motor: gain 1 +- 5%, offset +-500 rpm,
+# A-E train with per-motor mismatch (each motor: gain 1 +- 5%, offset +-500 rpm,
 # from rpm_quality.py), so the measured speeds carry information the action
 # history does not. The "randomized" evaluation column includes the same
 # mismatch for every variant, I1 too.
@@ -36,8 +36,12 @@
 #                   per-part gradients (plain sum = ordinary TD3). Writes the
 #                   per-part gradient norms and cosines to $BUILD/moo_seed$SEED.csv
 #                   and the Gram matrices to $BUILD/moo_gram_seed$SEED.csv
-#   AGG=sum         (MOO=1) gradient aggregator from src/moo/aggregators.h: sum,
-#                   upgrad or aligned_mtl (with TASKS=1 also task_share: each task
+#   MOO_TOTAL=1     (MOO=1) also train the critic on the total's TD error:
+#                   loss = (total error)^2 + MOO_TOTAL * sum of (part error)^2.
+#                   Needed for MOO runs to fly as well as the scalar critic
+#   AGG=sum         (MOO=1) gradient aggregator from src/moo/aggregators.h and
+#                   aggregators_pga.h: sum, upgrad, aligned_mtl, svd_pga or
+#                   osnmf_pga (with TASKS=1 also task_share: each task
 #                   weighted by its replay-buffer share, i.e. plain TD3 split per
 #                   task); anything else adds _$AGG to the build
 #   TASKS=1         (MOO=1) framing B: one actor objective per mission episode type
@@ -52,6 +56,11 @@
 #                   delay model; L2F_DR_MASS=0.2). Adds _moo1_tasksR to the build
 #   HARD=1          the harder episode mix of TASKS=9 without task objectives (e.g.
 #                   framing A with harder tracking). Adds _hard to the build
+#   MOO_PARTS=8     (MOO=1) 1 = all reward parts merged into one critic output: the
+#                   MOO code path learning the scalar reward (must match ordinary TD3)
+#   MOO_NORM=1      (MOO=1) critic outputs learn unweighted parts scaled to O(1)
+#                   (did not fly: 100% crashed)
+#   CRITIC_HIDDEN=64  critic hidden-layer width
 #   REWARD=tuned    tuned: the hand-tuned weights and weight curriculum (all flown
 #                   policies); uniform: every cost weight 1, no weight curriculum
 #                   (untuned-reward experiment, adds _uniform to the build)
