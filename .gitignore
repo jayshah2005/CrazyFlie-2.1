@@ -57,3 +57,11 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local-only files that must never be published (e.g. unpublished aggregators)
+*_local.h
+*_local.py
+
+# LaTeX build files of the poster figures
+poster/**/*.aux
+poster/**/*.log
