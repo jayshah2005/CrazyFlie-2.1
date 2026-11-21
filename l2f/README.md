@@ -19,6 +19,65 @@ repo root with `rl_trigger.py`.
 | `firmware/patch_firmware.py` | Hooks into crazyflie-firmware 2026.08 (learned-controller packet, motor path, PID boot) |
 | `firmware/build_firmware.sh` | Out-of-tree controller build for `cf21bl` (fixes below), output `~/l2f_2026/build/cf21bl.bin`; target velocity and position-error integral for mission policies |
 
+## Start here
+
+**What is going on.** A small neural network (the *policy* or *actor*) reads the drone's
+state (position and velocity error to a target, orientation, angular velocity, and its recent
+motor commands or the measured motor speeds) 100 times a second and outputs the four motor
+commands. It is trained in a fast C++ simulator of this drone with TD3, an actor-critic
+reinforcement-learning algorithm: a second network (the *critic*) learns how good each
+action is, and the actor is pushed towards actions the critic rates highly. Training runs on
+a CPU (about 4 minutes for the 1M-step hover policy). The trained actor is exported as a C header, compiled into the
+Crazyflie firmware, and runs on the drone itself.
+
+**The order things were done in**, and the section that covers each:
+
+1. Measure the real drone and build its simulator model ([Brushless model](#brushless-model)).
+2. Hover with the learned controller, fix the firmware and the motor chatter
+   ([Firmware fixes](#firmware-fixes-needed-on-top-of-the-papers-controller),
+   [Motor chatter](#motor-chatter)).
+3. One policy for the whole flight: take-off, circle, landing ([Mission](#mission)).
+4. Give the policy the measured motor speeds ([Measured motor speeds](#measured-motor-speeds-as-input)).
+5. Multi-objective training, which did not beat ordinary training
+   ([Multi-objective critic](#multi-objective-critic-moo1)).
+
+**Words used below:**
+
+| Term | Meaning |
+| --- | --- |
+| checkpoint | The actor saved every 100k training steps (`actor_<step>.h5` / `.h`). TD3 is noisy late in training, so every checkpoint is evaluated and the best one is flown. |
+| I1 | The first flown mission policy (checkpoint 1.4M of `train_mission.sh`, default recipe). |
+| variant A-E | Which inputs the actor gets (`VARIANT=` in `train_mission.sh`): I1 and A use the last 32 motor commands, C adds the measured motor speeds and keeps 4 commands, E has the speeds and no commands. |
+| jitter | The paper's smoothness metric of the motor commands; lower is smoother. |
+| domain randomization (DR) | Each training episode varies mass, inertia, motor constants and so on, so the policy copes with model error. |
+| MOO | Multi-objective optimisation: the reward is split into parts (or tasks) and the actor gets one gradient per part, combined by an *aggregator* (`AGG=`). |
+| framing A / B | MOO objectives are the reward parts (A) or the mission episode types (B, `TASKS=`). |
+
+**Where the code is.** `learning_to_fly/` is upstream learning-to-fly with our changes. The
+changes sit behind `L2F_*` switches, so with no switches the code trains like the original.
+There are two kinds:
+
+- compile-time flags (`-DL2F_MISSION`, `-DL2F_RPM_OBS`, `-DL2F_MOO`, ...), set in
+  `sim/train_*.sh`. They decide the model, inputs, reward and training algorithm.
+- runtime environment variables (`L2F_DR`, `L2F_GLITCH_P`, `L2F_EVAL_*`, ...). They set
+  randomization, the curriculum and the evaluation conditions.
+
+`grep -rn L2F_ learning_to_fly/src learning_to_fly/include` finds every one; each has a
+comment where it is read. The files we changed:
+
+| File (under `learning_to_fly/`) | Our changes |
+| --- | --- |
+| `include/.../parameters/dynamics/crazyflie_brushless.h` | Measured model of this drone |
+| `include/.../parameters/reward_functions/brushless.h` | Reward terms (action rate, angular acceleration, landing speed, ...) |
+| `include/.../simulator/multirotor.h` | Mission state, randomization and glitch settings (runtime variables) |
+| `include/.../simulator/operations_generic.h` | Mission episodes, floor contact, ground effect, delay, measured-speed inputs |
+| `src/config/parameters.h` | Which model, reward, noise and inputs a build uses |
+| `src/config/config.h`, `actor_and_critic.h` | Step limit, replay-buffer cap, critic width and outputs |
+| `src/training.h`, `training.cpp` | Swaps in the MOO training step; `L2F_SEED` |
+| `src/steps/curriculum.h` | Upstream reward-weight curriculum, with the untuned-reward option (`REWARD=uniform`) |
+| `src/evaluate_robustness.cpp` | Offline evaluation, including the flight script's mission (`mission` mode) |
+| `src/moo/` | Multi-objective TD3 step and gradient aggregators |
+
 ## Brushless model
 
 From two stock-PID flights (`sysid_hover.py` + `sysid_analyze.py`) and IDSIA
