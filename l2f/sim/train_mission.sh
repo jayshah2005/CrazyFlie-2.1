@@ -35,6 +35,26 @@
 #                   predicts each reward part separately; the actor combines the
 #                   per-part gradients (plain sum = ordinary TD3). Writes the
 #                   per-part gradient norms and cosines to $BUILD/moo_seed$SEED.csv
+#                   and the Gram matrices to $BUILD/moo_gram_seed$SEED.csv
+#   AGG=sum         (MOO=1) gradient aggregator from src/moo/aggregators.h: sum,
+#                   upgrad or aligned_mtl (with TASKS=1 also task_share: each task
+#                   weighted by its replay-buffer share, i.e. plain TD3 split per
+#                   task); anything else adds _$AGG to the build
+#   TASKS=1         (MOO=1) framing B: one actor objective per mission episode type
+#                   (free flight, take-off, landing, circle, line), each from its own
+#                   minibatch; ordinary scalar critic. Adds _moo1_tasks to the build
+#   TASKS=9         as TASKS=1 plus four harder episode types (figure-eight, fast
+#                   circle, point-to-point, gust hover); every mission type 10% of
+#                   the episodes, free flight 20%. Adds _moo1_tasks9 to the build
+#   TASKS=regime    as TASKS=1 but the 9 objectives are hidden dynamics regimes (delay
+#                   0-7 / 7-13 / 13-20 ms x mass -20..-7 / -7..+7 / +7..+20 %), with
+#                   those wider ranges in training (L2F_DELAY_MAX_MS=20, the cap of the
+#                   delay model; L2F_DR_MASS=0.2). Adds _moo1_tasksR to the build
+#   HARD=1          the harder episode mix of TASKS=9 without task objectives (e.g.
+#                   framing A with harder tracking). Adds _hard to the build
+#   REWARD=tuned    tuned: the hand-tuned weights and weight curriculum (all flown
+#                   policies); uniform: every cost weight 1, no weight curriculum
+#                   (untuned-reward experiment, adds _uniform to the build)
 # WSL has ~8 GB: at most two of these trainings in parallel, started at least
 # 30 s apart (run folders are named by start time).
 set -euo pipefail
@@ -64,17 +84,40 @@ cd "$L2F"
 MOO=${MOO:-0}
 if [ "$VARIANT" = I1 ]; then BUILD=build_mission_${STEPS}; else BUILD=build_mission_${VARIANT}_${STEPS}; fi
 MOO_PARTS=${MOO_PARTS:-8}  # 1 = all parts merged (diagnostic: must match ordinary TD3)
+# TASKS=1 (with MOO=1): framing B, the objectives are the 5 mission episode types; scalar critic
+TASKS=${TASKS:-0}
+TASK_ENV=()
+if [ "$TASKS" = 1 ] || [ "$TASKS" = 9 ] || [ "$TASKS" = regime ]; then MOO_PARTS=1; fi
+if [ "$TASKS" = regime ]; then TASK_ENV=(L2F_DELAY_MAX_MS=20 L2F_DR_MASS=0.2); fi
+if [ "$TASKS" = 9 ] || [ "${HARD:-0}" = 1 ]; then
+  TASK_ENV=(L2F_P_TAKEOFF=0.1 L2F_P_LAND=0.1 L2F_P_CIRCLE=0.1 L2F_P_LINE=0.1
+            L2F_P_EIGHT=0.1 L2F_P_FAST_CIRCLE=0.1 L2F_P_P2P=0.1 L2F_P_GUST=0.1)
+fi
 if [ "$MOO" = 1 ]; then
   FLAGS="$FLAGS -DL2F_MOO -DL2F_MOO_PARTS=$MOO_PARTS"
   BUILD=${BUILD}_moo; [ "$MOO_PARTS" = 8 ] || BUILD=${BUILD}${MOO_PARTS}
+  if [ "$TASKS" = 1 ]; then FLAGS="$FLAGS -DL2F_MOO_TASKS"; BUILD=${BUILD}_tasks; fi
+  if [ "$TASKS" = 9 ]; then FLAGS="$FLAGS -DL2F_MOO_TASKS -DL2F_MOO_NTASKS=9"; BUILD=${BUILD}_tasks9; fi
+  if [ "$TASKS" = regime ]; then FLAGS="$FLAGS -DL2F_MOO_TASKS -DL2F_MOO_NTASKS=9 -DL2F_TASK_REGIME"; BUILD=${BUILD}_tasksR; fi
   # MOO_NORM=1: outputs learn unweighted parts scaled to O(1); curriculum weights act outside
   if [ "${MOO_NORM:-0}" = 1 ]; then FLAGS="$FLAGS -DL2F_MOO_NORM"; BUILD=${BUILD}_norm; fi
   # MOO_TOTAL=<lambda>: critic loss = (total error)^2 + lambda * sum of (part error)^2
   if [ -n "${MOO_TOTAL:-}" ]; then FLAGS="$FLAGS -DL2F_MOO_TOTAL_LOSS=$MOO_TOTAL"; BUILD=${BUILD}_tot$MOO_TOTAL; fi
+  AGG=${AGG:-sum}
+  if [ "$AGG" != sum ]; then FLAGS="$FLAGS -DL2F_MOO_AGG=$AGG"; BUILD=${BUILD}_$AGG; fi
 fi
+if [ "${HARD:-0}" = 1 ]; then BUILD=${BUILD}_hard; fi
+case "${REWARD:-tuned}" in
+  tuned) ;;
+  uniform) FLAGS="$FLAGS -DL2F_REWARD_UNIFORM"; BUILD=${BUILD}_uniform ;;
+  *) echo "unknown REWARD=$REWARD (tuned, uniform)" >&2; exit 1 ;;
+esac
 # CRITIC_HIDDEN=<n>: critic hidden-layer width (default 64)
 if [ -n "${CRITIC_HIDDEN:-}" ]; then FLAGS="$FLAGS -DL2F_CRITIC_HIDDEN=$CRITIC_HIDDEN"; BUILD=${BUILD}_ch$CRITIC_HIDDEN; fi
-[ "$MOO" = 1 ] && export L2F_MOO_LOG="$L2F/$BUILD/moo_seed$SEED.csv"
+if [ "$MOO" = 1 ]; then
+  export L2F_MOO_LOG="$L2F/$BUILD/moo_seed$SEED.csv" L2F_MOO_GRAM_LOG="$L2F/$BUILD/moo_gram_seed$SEED.csv"
+  export L2F_MOO_NOISE_LOG="$L2F/$BUILD/moo_noise_seed$SEED.csv"
+fi
 cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON \
   -DCMAKE_CXX_FLAGS="$FLAGS" > /dev/null
 cmake --build "$BUILD" -j"$(nproc)" --target training_headless evaluate_robustness
@@ -84,7 +127,7 @@ mkdir -p checkpoints/multirotor_td3
 before=$(ls -d checkpoints/multirotor_td3/*/ 2>/dev/null || true)
 L2F_MISSION_RAMP=800000 L2F_GLITCH_P=0.003 L2F_DR=1 L2F_DR_SCALE=0.3 \
 L2F_MOTOR_GAIN=$TRAIN_GAIN L2F_MOTOR_OFFSET=$TRAIN_OFFSET L2F_SEED=$SEED \
-  "./$BUILD/src/training_headless" > >(grep --line-buffered -E "Step: .*00000 |Training took|L2F_MOO") &
+  env "${TASK_ENV[@]}" "./$BUILD/src/training_headless" > >(grep --line-buffered -E "Step: .*00000 |Training took|L2F_MOO") &
 TRAIN_PID=$!
 # this run's checkpoint folder: the one that appears after the start
 RUN=

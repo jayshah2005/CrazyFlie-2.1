@@ -51,7 +51,12 @@ namespace parameters{
         template<typename T, typename TI, typename T_ABLATION_SPEC>
         struct environment {
             using ABLATION_SPEC = T_ABLATION_SPEC;
-#ifdef L2F_BRUSHLESS
+#if defined(L2F_BRUSHLESS) && defined(L2F_REWARD_UNIFORM)
+            // untuned-reward experiment: every cost weight 1, no weight curriculum
+            static constexpr auto initial_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_uniform_brushless<T>;
+            static constexpr auto target_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_uniform_brushless<T>;
+            static constexpr T MASS = 0.0413;
+#elif defined(L2F_BRUSHLESS)
             static constexpr auto initial_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_squared_position_only_torque_brushless<T>;
             static constexpr auto target_reward_function = rl_tools::rl::environments::multirotor::parameters::reward_functions::reward_squared_position_only_torque_curriculum_target_brushless<T>;
             static constexpr T MASS = 0.0413;

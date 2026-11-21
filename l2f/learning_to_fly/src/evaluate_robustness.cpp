@@ -186,6 +186,7 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
         apply_eval_noise(env);
         env.mission.enabled = true;
         env.mission.p_takeoff = env.mission.p_land = env.mission.p_circle = env.mission.p_line = 0;
+        env.mission.p_eight = env.mission.p_fast_circle = env.mission.p_p2p = env.mission.p_gust = 0;
         env.mission.domain_randomization = dr;
         env.mission.delay_max_steps = 0;
         rlt::malloc(dev, env);

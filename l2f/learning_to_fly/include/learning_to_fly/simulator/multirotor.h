@@ -317,8 +317,14 @@ namespace rl_tools::rl::environments::multirotor{
         T target_velocity[3];  // velocity of the target (observations and reward use v - target_velocity)
         T floor_z;             // floor height (drone resting height) in the target-relative frame
         T traj_t;              // time since episode start (s)
-        TI traj_type;          // 0 static, 1 ramp (constant velocity for traj[3] s), 2 horizontal circle
-        T traj[6];             // ramp: vx, vy, vz, duration | circle: radius, omega, phase
+        TI traj_type;          // 0 static, 1 ramp (constant velocity for traj[3] s), 2 horizontal circle,
+                               // 3 figure-eight, 4 static target with a gust, 5 target step
+        TI task;               // episode type (label only, no effect on dynamics or reward):
+                               // 0 free flight, 1 take-off, 2 landing, 3 circle, 4 line,
+                               // 5 figure-eight, 6 fast circle, 7 point-to-point, 8 gust
+        T traj[6];             // ramp: vx, vy, vz, duration | circle: radius, omega, phase |
+                               // eight: size, omega, phase, cos/sin heading | gust: accel xyz,
+                               // start, duration | step: offset xyz, time
         T delay_steps;         // state-estimate delay in simulation steps (0..2, fractional)
         T ground_effect;       // ground-effect strength k (0 = none), see Mission
         T glitch_offset[3];    // position-estimate glitch added to the actor's observation (m)
@@ -464,10 +470,18 @@ namespace rl_tools::rl::environments{
             T p_land = env_or("L2F_P_LAND", 0.2);
             T p_circle = env_or("L2F_P_CIRCLE", 0.2);
             T p_line = env_or("L2F_P_LINE", 0.1);
+            // harder episode types (MOO framing B, phase 2), off by default: figure-eight,
+            // fast circle, point-to-point (target step), hover in a gust
+            T p_eight = env_or("L2F_P_EIGHT", 0);
+            T p_fast_circle = env_or("L2F_P_FAST_CIRCLE", 0);
+            T p_p2p = env_or("L2F_P_P2P", 0);
+            T p_gust = env_or("L2F_P_GUST", 0);
             T delay_max_steps = env_or("L2F_DELAY_MAX_MS", 12) / 10;  // uniform 0..max (dt = 10 ms)
             bool domain_randomization = env_or("L2F_DR", 1) != 0;
             T dr_scale = env_or("L2F_DR_SCALE", 1);  // 1 = the paper's ranges
-            T dr_mass = 0.1 * dr_scale, dr_inertia = 0.2 * dr_scale, dr_motor_tau = 0.2 * dr_scale;
+            // L2F_DR_MASS: absolute mass range (e.g. 0.2 = +-20%), overrides 0.1 * dr_scale
+            T dr_mass = std::getenv("L2F_DR_MASS") ? env_or("L2F_DR_MASS", 0) : 0.1 * dr_scale;
+            T dr_inertia = 0.2 * dr_scale, dr_motor_tau = 0.2 * dr_scale;
             T dr_thrust = 0.2 * dr_scale, dr_torque = 0.2 * dr_scale, dr_cog = 0.01 * dr_scale;
             // Curriculum: training ramps this from 0 to 1 over L2F_MISSION_RAMP steps
             // (src/steps/curriculum.h); episode-type probabilities and randomization

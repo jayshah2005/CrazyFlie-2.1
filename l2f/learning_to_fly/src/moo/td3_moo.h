@@ -7,16 +7,25 @@
 // a terminated step, like the scalar reward). The critics have K outputs, one per
 // part, trained on that part's TD target. The twin-critic minimum is taken on the
 // summed value, so the summed target equals the scalar TD3 target exactly.
-// The actor gets one gradient per output and combines them; with the "sum"
-// aggregator this is the gradient of the summed value, i.e. plain TD3.
-// Optional log (L2F_MOO_LOG=path): per logged actor update the per-objective
-// gradient norms and pairwise cosines, plus the two built-in checks.
+// The actor gets one gradient per output and combines them with weights from their
+// Gram matrix (aggregators.h, chosen at compile time with -DL2F_MOO_AGG=<name>,
+// default sum); with "sum" this is the gradient of the summed value, i.e. plain TD3.
+// Optional logs, every 50 actor updates:
+//   L2F_MOO_LOG=path       per-objective gradient norms, pairwise cosines, the
+//                          aggregator weights and the two built-in checks
+//   L2F_MOO_GRAM_LOG=path  the full Gram matrix and weights (for check_aggregators.py)
+//   L2F_MOO_NOISE_LOG=path per-objective gradient agreement between two independent
+//                          minibatches, and cross-batch conflict cosines (noise check)
 #pragma once
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <type_traits>
 #include <vector>
+#include "aggregators.h"
+#if __has_include("aggregators_local.h")
+#include "aggregators_local.h"  // optional extra aggregators kept outside the repository
+#endif
 
 namespace learning_to_fly::moo {
 #ifndef L2F_MOO_PARTS
@@ -29,6 +38,31 @@ namespace learning_to_fly::moo {
     inline const char* NAMES8[8] = {"survival", "position", "orientation", "linear_velocity",
                                     "action", "action_rate", "angular_acceleration", "landing_speed"};
     inline const char* name(int k) { return K == 1 ? "total" : NAMES8[k]; }
+#ifdef L2F_MOO_TASKS
+    // Framing B: the actor's objectives are the mission episode types (state.task), each
+    // the mean critic value over a minibatch of that task's transitions; the critic is the
+    // ordinary scalar one. The policy does not see the task (same inputs as the firmware).
+    constexpr bool TASKS = true;
+#ifndef L2F_MOO_NTASKS
+#define L2F_MOO_NTASKS 5  // 9 = with the harder episode types (figure-eight .. gust)
+#endif
+    constexpr int NOBJ = L2F_MOO_NTASKS;
+    static_assert(NOBJ == 5 || NOBJ == 9, "L2F_MOO_NTASKS: 5 or 9");
+    static_assert(K == 1, "L2F_MOO_TASKS uses the scalar critic: build with L2F_MOO_PARTS=1");
+#else
+    constexpr bool TASKS = false;
+    constexpr int NOBJ = K;  // framing A: the objectives are the reward parts
+#endif
+    inline const char* TASK_NAMES[9] = {"free_flight", "takeoff", "landing", "circle", "line",
+                                        "eight", "fast_circle", "p2p", "gust"};
+#ifdef L2F_TASK_REGIME
+    static_assert(!TASKS || NOBJ == 9, "L2F_TASK_REGIME labels 9 regimes: L2F_MOO_NTASKS=9");
+    // hidden-dynamics regimes: delay (short/mid/long) x mass (light/nominal/heavy)
+    inline const char* REGIME_NAMES[9] = {"dS_mL", "dS_mN", "dS_mH", "dM_mL", "dM_mN", "dM_mH", "dL_mL", "dL_mN", "dL_mH"};
+    inline const char* obj_name(int k) { return TASKS ? REGIME_NAMES[k] : name(k); }
+#else
+    inline const char* obj_name(int k) { return TASKS ? TASK_NAMES[k] : name(k); }
+#endif
 #ifdef L2F_MOO_NORM
     // Each critic output learns its UNWEIGHTED part divided by a fixed scale s_k (the part's
     // RMS reward / (1 - gamma), measured once from the replay buffer when critic training
@@ -117,12 +151,23 @@ namespace learning_to_fly::moo {
         });
     }
 
-    // Aggregator: combination weights from the K x K Gram matrix (double precision).
-    // Only the plain sum for now (= TD3 on the summed value).
-    inline void aggregate_weights(const double gram[K][K], double w[K]) {
-        (void)gram;
-        for (int k = 0; k < K; k++) w[k] = 1;
+#ifndef L2F_MOO_AGG
+#define L2F_MOO_AGG sum
+#endif
+#define L2F_MOO_STR2(x) #x
+#define L2F_MOO_STR(x) L2F_MOO_STR2(x)
+    // Aggregator: combination weights from the NOBJ x NOBJ Gram matrix (double precision).
+    namespace agg {
+        // Tasks only, not a Gram-matrix aggregator: weight each task by its share of the
+        // replay buffer (times NOBJ), i.e. ordinary TD3 on the mixed buffer, split per task.
+        // The fair "no aggregation" baseline for framing B.
+        struct task_share {};
     }
+    using AGG = agg::L2F_MOO_AGG;
+    static_assert(!std::is_same_v<AGG, agg::task_share> || TASKS, "AGG=task_share needs L2F_MOO_TASKS");
+    inline const char* AGG_NAME = L2F_MOO_STR(L2F_MOO_AGG);
+    template <typename A = AGG>  // template: only instantiated for Gram-matrix aggregators
+    void aggregate_weights(const double gram[NOBJ][NOBJ], double w[NOBJ]) { agg::weights<NOBJ>(A{}, gram, w); }
 
     template <typename CONFIG>
     struct State {
@@ -132,6 +177,8 @@ namespace learning_to_fly::moo {
         rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, B, K>> rewards, next_value_1, next_value_2, target, d_output, value;
         bool ready = false;
         FILE* log = nullptr;
+        FILE* gram_log = nullptr;
+        FILE* noise_log = nullptr;
         TI actor_updates = 0;
         double reward_check_max = 0;  // max |sum of parts - stored scalar reward| since the last log line
         double scale[K];              // L2F_MOO_NORM: s_k (1 otherwise)
@@ -139,8 +186,10 @@ namespace learning_to_fly::moo {
     };
 
     // Same sampling as rl_tools' gather_batch (same random draws), plus the reward parts.
-    template <typename TS, typename BATCH, typename REWARDS>
-    void gather_batch(TS& ts, BATCH& batch, REWARDS& rewards, double& reward_check_max) {
+    // task >= 0: only transitions of that episode type (rejection sampling); returns false
+    // if none is found (the task is not in the buffer yet).
+    template <typename TS, typename BATCH, typename REWARDS, typename RNG>
+    bool gather_batch(TS& ts, BATCH& batch, REWARDS& rewards, double& reward_check_max, RNG& sample_rng, int task = -1) {
         using RUNNER = std::remove_reference_t<decltype(ts.off_policy_runner)>;
         using RSPEC = typename RUNNER::SPEC;
         using DEVICE = std::remove_reference_t<decltype(ts.device)>;
@@ -151,11 +200,18 @@ namespace learning_to_fly::moo {
         constexpr TI BATCH_SIZE = std::remove_reference_t<BATCH>::BATCH_SIZE;
         static auto rng_reward = rlt::random::default_engine(typename DEVICE::SPEC::RANDOM(), 0);
         for (TI b = 0; b < BATCH_SIZE; b++) {
-            TI env_i = rlt::random::uniform_int_distribution(typename DEVICE::SPEC::RANDOM(), (TI)0, RSPEC::N_ENVIRONMENTS - 1, ts.rng);
+            TI env_i = 0, i = 0;
+            bool found = false;
+            for (int attempt = 0; attempt < (task < 0 ? 1 : 5000) && !found; attempt++) {
+                env_i = rlt::random::uniform_int_distribution(typename DEVICE::SPEC::RANDOM(), (TI)0, RSPEC::N_ENVIRONMENTS - 1, sample_rng);
+                auto& rb = runner.replay_buffers[env_i];
+                using RB_SPEC = typename std::remove_reference_t<decltype(rb)>::SPEC;
+                TI index_max = (rb.full ? RB_SPEC::CAPACITY : rb.position) - 1;
+                i = rlt::random::uniform_int_distribution(typename DEVICE::SPEC::RANDOM(), (TI)0, index_max, sample_rng);
+                found = task < 0 || (int)rlt::get(rb.states, i, 0).task == task;
+            }
+            if (!found) return false;
             auto& rb = runner.replay_buffers[env_i];
-            using RB_SPEC = typename std::remove_reference_t<decltype(rb)>::SPEC;
-            TI index_max = (rb.full ? RB_SPEC::CAPACITY : rb.position) - 1;
-            TI i = rlt::random::uniform_int_distribution(typename DEVICE::SPEC::RANDOM(), (TI)0, index_max, ts.rng);
 
             auto obs_t = rlt::row(device, batch.observations, b);
             auto obs_s = rlt::row(device, rb.observations, i);
@@ -191,6 +247,7 @@ namespace learning_to_fly::moo {
             double diff = std::abs(sum - (double)rlt::get(rb.rewards, i, 0));
             if (diff > reward_check_max) reward_check_max = diff;
         }
+        return true;
     }
 
     // L2F_MOO_NORM: fix s_k = RMS(u_k) / (1 - gamma) from 20k replay-buffer samples.
@@ -247,7 +304,7 @@ namespace learning_to_fly::moo {
         auto& critic = critic_i == 0 ? ac.critic_1 : ac.critic_2;
 
         rlt::target_action_noise(device, ac, tb.target_next_action_noise, ts.rng);
-        gather_batch(ts, batch, st.rewards, st.reward_check_max);
+        gather_batch(ts, batch, st.rewards, st.reward_check_max, ts.rng);
         rlt::zero_gradient(device, critic);
         rlt::evaluate(device, ac.actor_target, batch.next_observations, tb.next_actions, ts.actor_buffers[critic_i]);
         rlt::noisy_next_actions(device, tb);
@@ -308,61 +365,137 @@ namespace learning_to_fly::moo {
         auto& batch = ts.actor_batch;
         auto& critic = ac.critic_1;
 
-        gather_batch(ts, batch, st.rewards, st.reward_check_max);
-        rlt::forward(device, ac.actor, batch.observations, tb.actions);
-        rlt::copy(device, device, batch.observations_privileged, tb.observations);
-        rlt::forward(device, critic, tb.state_action_value_input, st.value);
+        // sample a minibatch (only episodes of `task` if task >= 0) and run actor and critic
+        // forward on it; false if the task has no transitions in the buffer yet
+        auto prepare = [&](auto& rng, int task) {
+            if (!gather_batch(ts, batch, st.rewards, st.reward_check_max, rng, task)) return false;
+            rlt::forward(device, ac.actor, batch.observations, tb.actions);
+            rlt::copy(device, device, batch.observations_privileged, tb.observations);
+            rlt::forward(device, critic, tb.state_action_value_input, st.value);
+            return true;
+        };
         auto d_actor_output = rlt::view(device, tb.d_critic_input, rlt::matrix::ViewSpec<B, ACTION_DIM>{}, 0, CRITIC_INPUT_DIM - ACTION_DIM);
         double f[K];
         value_factors(ts, st, f);
 
-        // gradient of objective k: d(-mean_b Q_k)/d(actor parameters)
-        auto objective_gradient = [&](int k, std::vector<double>& g) {
+        // gradient of sum_j c_j * (-mean_b Q_j) w.r.t. the actor parameters (current batch)
+        auto weighted_gradient = [&](const double* c, std::vector<double>& g) {
             rlt::zero_gradient(device, ac.actor);
             for (TI b = 0; b < B; b++)
-                for (int j = 0; j < K; j++) rlt::set(st.d_output, b, j, (k < 0 || j == k) ? (T)(-f[j] / B) : 0);
+                for (int j = 0; j < K; j++) rlt::set(st.d_output, b, j, (T)(-c[j] * f[j] / B));
             rlt::backward_input(device, critic, st.d_output, tb.d_critic_input, ts.critic_buffers[0]);
             rlt::backward(device, ac.actor, batch.observations, d_actor_output, ts.actor_buffers[0]);
             read_gradient(ac.actor, g);
         };
-        static std::vector<double> G[K];
-        for (int k = 0; k < K; k++) objective_gradient(k, G[k]);
+        // The NOBJ objective gradients. Reward parts (framing A): one batch, one critic output
+        // each. Tasks (framing B, L2F_MOO_TASKS): one batch per task, the scalar critic value;
+        // a task without transitions yet gets a zero gradient.
+        auto collect = [&](auto& rng, std::vector<double>* out) {
+            if constexpr (TASKS) {
+                for (int t = 0; t < NOBJ; t++) {
+                    double c[K] = {prepare(rng, t) ? 1.0 : 0.0};
+                    weighted_gradient(c, out[t]);
+                }
+            } else {
+                prepare(rng, -1);
+                for (int k = 0; k < K; k++) {
+                    double c[K];
+                    for (int j = 0; j < K; j++) c[j] = j == k;
+                    weighted_gradient(c, out[k]);
+                }
+            }
+        };
+        static std::vector<double> G[NOBJ];
+        collect(ts.rng, G);
         const size_t P = G[0].size();
-        double gram[K][K];
-        for (int a = 0; a < K; a++)
-            for (int b = a; b < K; b++) {
+        double gram[NOBJ][NOBJ];
+        for (int a = 0; a < NOBJ; a++)
+            for (int b = a; b < NOBJ; b++) {
                 double s = 0;
                 for (size_t i = 0; i < P; i++) s += G[a][i] * G[b][i];
                 gram[a][b] = gram[b][a] = s;
             }
-        double w[K];
-        aggregate_weights(gram, w);
+        double w[NOBJ];
+        if constexpr (std::is_same_v<AGG, agg::task_share>) {
+            // task shares from 4096 random replay-buffer entries (own RNG)
+            static auto rng_share = rlt::random::default_engine(typename std::remove_reference_t<decltype(device)>::SPEC::RANDOM(), 54321);
+            using RSPEC = typename std::remove_reference_t<decltype(ts.off_policy_runner)>::SPEC;
+            constexpr int SAMPLES = 4096;
+            double count[NOBJ] = {};
+            for (int s = 0; s < SAMPLES; s++) {
+                TI env_i = rlt::random::uniform_int_distribution(typename std::remove_reference_t<decltype(device)>::SPEC::RANDOM(), (TI)0, RSPEC::N_ENVIRONMENTS - 1, rng_share);
+                auto& rb = ts.off_policy_runner.replay_buffers[env_i];
+                using RB_SPEC = typename std::remove_reference_t<decltype(rb)>::SPEC;
+                TI index_max = (rb.full ? RB_SPEC::CAPACITY : rb.position) - 1;
+                TI i = rlt::random::uniform_int_distribution(typename std::remove_reference_t<decltype(device)>::SPEC::RANDOM(), (TI)0, index_max, rng_share);
+                int t = (int)rlt::get(rb.states, i, 0).task;
+                if (t >= 0 && t < NOBJ) count[t] += 1;
+            }
+            for (int k = 0; k < NOBJ; k++) w[k] = NOBJ * count[k] / SAMPLES;
+        } else {
+            aggregate_weights(gram, w);
+        }
         static std::vector<double> combined;
         combined.assign(P, 0);
-        for (int k = 0; k < K; k++)
+        for (int k = 0; k < NOBJ; k++)
             for (size_t i = 0; i < P; i++) combined[i] += w[k] * G[k][i];
 
         st.actor_updates++;
-        bool log_now = st.log && st.actor_updates % 50 == 0;
-        if (log_now) {
-            // check: sum of per-objective gradients == one backward pass on the summed value
-            static std::vector<double> reference;
-            objective_gradient(-1, reference);
-            double diff = 0, scale = 0;
-            for (size_t i = 0; i < P; i++) {
-                diff = std::max(diff, std::abs(combined[i] - reference[i]));
-                scale = std::max(scale, std::abs(reference[i]));
+        bool log_now = (st.log || st.gram_log || st.noise_log) && st.actor_updates % 50 == 0;
+        if (log_now && st.log) {
+            // check: combined per-objective gradients == one backward pass on the weighted value
+            // (reward parts only: the tasks use different batches, grad_check is then 0)
+            double check = 0;
+            if constexpr (!TASKS) {
+                static std::vector<double> reference;
+                weighted_gradient(w, reference);
+                double diff = 0, scale = 0;
+                for (size_t i = 0; i < P; i++) {
+                    diff = std::max(diff, std::abs(combined[i] - reference[i]));
+                    scale = std::max(scale, std::abs(reference[i]));
+                }
+                check = scale > 0 ? diff / scale : 0.0;
             }
-            std::fprintf(st.log, "%lu,%.3e,%.3e", (unsigned long)ts.step, st.reward_check_max, scale > 0 ? diff / scale : 0.0);
-            for (int k = 0; k < K; k++) std::fprintf(st.log, ",%.4e", std::sqrt(gram[k][k]));
-            for (int a = 0; a < K; a++)
-                for (int b = a + 1; b < K; b++) {
+            std::fprintf(st.log, "%lu,%.3e,%.3e", (unsigned long)ts.step, st.reward_check_max, check);
+            for (int k = 0; k < NOBJ; k++) std::fprintf(st.log, ",%.4e", std::sqrt(gram[k][k]));
+            for (int a = 0; a < NOBJ; a++)
+                for (int b = a + 1; b < NOBJ; b++) {
                     double d = std::sqrt(gram[a][a] * gram[b][b]);
                     std::fprintf(st.log, ",%.4f", d > 0 ? gram[a][b] / d : 0.0);
                 }
+            for (int k = 0; k < NOBJ; k++) std::fprintf(st.log, ",%.4e", w[k]);
             std::fprintf(st.log, "\n");
             std::fflush(st.log);
             st.reward_check_max = 0;
+        }
+        if (log_now && st.gram_log) {
+            std::fprintf(st.gram_log, "%lu", (unsigned long)ts.step);
+            for (int a = 0; a < NOBJ; a++)
+                for (int b = a; b < NOBJ; b++) std::fprintf(st.gram_log, ",%.17g", gram[a][b]);
+            for (int k = 0; k < NOBJ; k++) std::fprintf(st.gram_log, ",%.17g", w[k]);
+            std::fprintf(st.gram_log, "\n");
+            std::fflush(st.gram_log);
+        }
+        if (log_now && st.noise_log) {
+            // Noise check: the same objectives on second, independent minibatches (own RNG, so
+            // training is unchanged). same_k = cos(g_k batch 1, g_k batch 2): is objective k's
+            // direction reproducible? cross_ab = mean of cos(g_a batch 1, g_b batch 2) and
+            // cos(g_b batch 1, g_a batch 2): the a-b conflict without shared-sample noise.
+            static auto rng_noise = rlt::random::default_engine(typename std::remove_reference_t<decltype(device)>::SPEC::RANDOM(), 12345);
+            static std::vector<double> H[NOBJ];
+            collect(rng_noise, H);
+            auto cosine = [&](const std::vector<double>& x, const std::vector<double>& y) {
+                double xy = 0, xx = 0, yy = 0;
+                for (size_t i = 0; i < P; i++) { xy += x[i] * y[i]; xx += x[i] * x[i]; yy += y[i] * y[i]; }
+                return xx > 0 && yy > 0 ? xy / std::sqrt(xx * yy) : 0.0;
+            };
+            std::fprintf(st.noise_log, "%lu", (unsigned long)ts.step);
+            for (int k = 0; k < NOBJ; k++) std::fprintf(st.noise_log, ",%.4f", cosine(G[k], H[k]));
+            for (int a = 0; a < NOBJ; a++)
+                for (int b = a + 1; b < NOBJ; b++)
+                    std::fprintf(st.noise_log, ",%.4f", 0.5 * (cosine(G[a], H[b]) + cosine(H[a], G[b])));
+            std::fprintf(st.noise_log, "\n");
+            std::fflush(st.noise_log);
         }
         write_gradient(ac.actor, combined);
         rlt::step(device, ts.actor_optimizer, ac.actor);
@@ -388,11 +521,29 @@ namespace learning_to_fly::moo {
             if (const char* path = std::getenv("L2F_MOO_LOG")) {
                 st.log = std::fopen(path, "w");
                 std::fprintf(st.log, "step,reward_check,grad_check");
-                for (int k = 0; k < K; k++) std::fprintf(st.log, ",norm_%s", name(k));
-                for (int a = 0; a < K; a++)
-                    for (int b = a + 1; b < K; b++) std::fprintf(st.log, ",cos_%s__%s", name(a), name(b));
+                for (int k = 0; k < NOBJ; k++) std::fprintf(st.log, ",norm_%s", obj_name(k));
+                for (int a = 0; a < NOBJ; a++)
+                    for (int b = a + 1; b < NOBJ; b++) std::fprintf(st.log, ",cos_%s__%s", obj_name(a), obj_name(b));
+                for (int k = 0; k < NOBJ; k++) std::fprintf(st.log, ",w_%s", obj_name(k));
                 std::fprintf(st.log, "\n");
             }
+            if (const char* path = std::getenv("L2F_MOO_GRAM_LOG")) {
+                st.gram_log = std::fopen(path, "w");
+                std::fprintf(st.gram_log, "step");
+                for (int a = 0; a < NOBJ; a++)
+                    for (int b = a; b < NOBJ; b++) std::fprintf(st.gram_log, ",g_%d_%d", a, b);
+                for (int k = 0; k < NOBJ; k++) std::fprintf(st.gram_log, ",w_%s", obj_name(k));
+                std::fprintf(st.gram_log, "\n");
+            }
+            if (const char* path = std::getenv("L2F_MOO_NOISE_LOG")) {
+                st.noise_log = std::fopen(path, "w");
+                std::fprintf(st.noise_log, "step");
+                for (int k = 0; k < NOBJ; k++) std::fprintf(st.noise_log, ",same_%s", obj_name(k));
+                for (int a = 0; a < NOBJ; a++)
+                    for (int b = a + 1; b < NOBJ; b++) std::fprintf(st.noise_log, ",cross_%s__%s", obj_name(a), obj_name(b));
+                std::fprintf(st.noise_log, "\n");
+            }
+            std::printf("L2F_MOO aggregator: %s, objectives: %s (%d)\n", AGG_NAME, TASKS ? "tasks" : "reward parts", NOBJ);
             st.ready = true;
         }
         rlt::set_step(device, device.logger, ts.step);

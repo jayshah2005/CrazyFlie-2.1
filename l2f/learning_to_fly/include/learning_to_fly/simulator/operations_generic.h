@@ -223,6 +223,7 @@ namespace rl_tools{
             state.floor_z = -100;  // no floor
             state.traj_t = 0;
             state.traj_type = 0;
+            state.task = 0;
             for(TI i = 0; i < 6; i++){
                 state.traj[i] = 0;
             }
@@ -268,6 +269,25 @@ namespace rl_tools{
                 v[0] = -r * w * math::sin(device.math, a);
                 v[1] =  r * w * math::cos(device.math, a);
             }
+            else if(state.traj_type == 3){
+                // horizontal figure-eight (lemniscate of Gerono) of size traj[0], angular
+                // rate traj[1], phase traj[2], rotated to heading (cos traj[3], sin traj[4]);
+                // positions relative to the start point
+                T A = state.traj[0], w = state.traj[1], a = w * t + state.traj[2], a0 = state.traj[2];
+                T x = A * (math::sin(device.math, a) - math::sin(device.math, a0));
+                T y = A / 2 * (math::sin(device.math, 2 * a) - math::sin(device.math, 2 * a0));
+                T vx = A * w * math::cos(device.math, a), vy = A * w * math::cos(device.math, 2 * a);
+                T c = state.traj[3], s = state.traj[4];
+                p[0] = c * x - s * y;  p[1] = s * x + c * y;
+                v[0] = c * vx - s * vy; v[1] = s * vx + c * vy;
+            }
+            else if(state.traj_type == 5){
+                // target step: jumps by traj[0..2] at time traj[3], static otherwise
+                if(t >= state.traj[3]){
+                    for(TI i = 0; i < 3; i++){ p[i] = state.traj[i]; }
+                }
+            }
+            // traj_type 4 (gust): static target, the gust acts in post_integration
         }
         // Nominal motors: no per-motor mismatch.
         template<typename T, typename TI>
@@ -374,6 +394,7 @@ namespace rl_tools{
                     rpm[i] = clamp_rpm(idle);
                 }
                 state.floor_z = 0;
+                state.task = 1;
                 T vz = U(0.15, 0.8);
                 T height = U(0.2, 0.8);
                 T start = U(0, 1.0);
@@ -388,6 +409,7 @@ namespace rl_tools{
             else if(r < m.p_takeoff + m.p_land){
                 // hovering; the target descends to (slightly below) the floor
                 near_hover();
+                state.task = 2;
                 T height = U(0.1, 0.8);
                 T vz = U(0.1, 0.5);
                 T below = U(0, 0.03);
@@ -401,6 +423,7 @@ namespace rl_tools{
             else if(r < m.p_takeoff + m.p_land + m.p_circle){
                 // horizontal circle
                 near_hover();
+                state.task = 3;
                 state.floor_z = -U(0.3, 1.0);
                 T radius = U(0.15, m.circle_r_max);
                 T speed = U(0.1, m.circle_v_max);
@@ -423,6 +446,7 @@ namespace rl_tools{
             else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line){
                 // straight line at constant speed
                 near_hover();
+                state.task = 4;
                 state.floor_z = -U(0.3, 1.0);
                 T speed = U(0.05, 0.5);
                 T heading = U(0, 2 * math::PI<T>), climb = U(-0.3, 0.3);
@@ -436,7 +460,101 @@ namespace rl_tools{
                     state.target_velocity[i] = state.traj[i];
                 }
             }
+            // Harder episode types (off unless L2F_P_EIGHT / _FAST_CIRCLE / _P2P / _GUST are
+            // set; with all four 0 no branch is taken and no random numbers are drawn)
+            else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line + m.p_eight){
+                // figure-eight, peak speed up to 1.5 m/s, peak acceleration <= 6 m/s^2
+                near_hover();
+                state.task = 5;
+                state.floor_z = -U(0.3, 1.0);
+                T A = U(0.3, 0.8);
+                T v_max = math::sqrt(device.math, 6 * A);
+                T speed = U(0.3, v_max < 1.5 ? v_max : (T)1.5);
+                T dir = U(0, 1) < 0.5 ? -1 : 1;
+                T heading = U(0, 2 * math::PI<T>);
+                state.traj_type = 3;
+                state.traj[0] = A;
+                state.traj[1] = dir * speed / (A * math::sqrt(device.math, (T)2));
+                state.traj[2] = U(0, 2 * math::PI<T>);
+                state.traj[3] = math::cos(device.math, heading);
+                state.traj[4] = math::sin(device.math, heading);
+                T p[3], v[3];
+                target_at(device, state, (T)0, p, v);
+                bool matched = U(0, 1) < 0.5;
+                for(TI i = 0; i < 3; i++){
+                    state.target_velocity[i] = v[i];
+                    if(matched){
+                        state.linear_velocity[i] += v[i];
+                    }
+                }
+            }
+            else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line + m.p_eight + m.p_fast_circle){
+                // fast circle: 1-2 m/s, centripetal acceleration <= 6 m/s^2
+                near_hover();
+                state.task = 6;
+                state.floor_z = -U(0.3, 1.0);
+                T radius = U(0.4, 1.0);
+                T v_max = math::sqrt(device.math, 6 * radius);
+                T speed = U(1.0, v_max < 2.0 ? v_max : (T)2.0);
+                T dir = U(0, 1) < 0.5 ? -1 : 1;
+                state.traj_type = 2;
+                state.traj[0] = radius;
+                state.traj[1] = dir * speed / radius;
+                state.traj[2] = U(0, 2 * math::PI<T>);
+                T p[3], v[3];
+                target_at(device, state, (T)0, p, v);
+                bool matched = U(0, 1) < 0.5;
+                for(TI i = 0; i < 3; i++){
+                    state.target_velocity[i] = v[i];
+                    if(matched){
+                        state.linear_velocity[i] += v[i];
+                    }
+                }
+            }
+            else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line + m.p_eight + m.p_fast_circle + m.p_p2p){
+                // point-to-point: the target jumps 0.2-0.45 m (the position termination is
+                // 0.6 m) in a random, mostly horizontal direction after 0.3-2 s
+                near_hover();
+                state.task = 7;
+                state.floor_z = -U(0.5, 1.0);
+                T dist = U(0.2, 0.45);
+                T heading = U(0, 2 * math::PI<T>), climb = U(-0.3, 0.3);
+                T n = math::sqrt(device.math, 1 + climb * climb);
+                state.traj_type = 5;
+                state.traj[0] = dist * math::cos(device.math, heading) / n;
+                state.traj[1] = dist * math::sin(device.math, heading) / n;
+                state.traj[2] = dist * climb / n;
+                state.traj[3] = U(0.3, 2.0);
+            }
+            else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line + m.p_eight + m.p_fast_circle + m.p_p2p + m.p_gust){
+                // hover in a gust: a constant push of 1-4 m/s^2 (mostly horizontal) for
+                // 0.2-1.5 s, starting after 0.3-3 s; the policy does not observe it
+                near_hover();
+                state.task = 8;
+                state.floor_z = -U(0.3, 1.0);
+                T a = U(1.0, 4.0);
+                T heading = U(0, 2 * math::PI<T>), climb = U(-0.3, 0.3);
+                T n = math::sqrt(device.math, 1 + climb * climb);
+                state.traj_type = 4;
+                state.traj[0] = a * math::cos(device.math, heading) / n;
+                state.traj[1] = a * math::sin(device.math, heading) / n;
+                state.traj[2] = a * climb / n;
+                state.traj[3] = U(0.3, 3.0);
+                state.traj[4] = U(0.2, 1.5);
+            }
             // else: the original free-flight start, static target, no floor
+#ifdef L2F_TASK_REGIME
+            // MOO framing B with hidden-dynamics tasks: the label is the episode's dynamics
+            // regime instead of its type, 3 x delay (thirds of 0..delay_max) + mass (thirds of
+            // the randomized range); the policy observes neither
+            {
+                T fd = m.delay_max_steps > 0 ? state.delay_steps / m.delay_max_steps : 0;
+                T fm = m.domain_randomization && m.dr_mass > 0 ? (env.parameters.dynamics.mass / env.nominal_dynamics.mass - 1) / m.dr_mass : 0;
+                TI bd = fd < (T)1 / 3 ? 0 : (fd < (T)2 / 3 ? 1 : 2);
+                TI bm = fm < -(T)1 / 3 ? 0 : (fm < (T)1 / 3 ? 1 : 2);
+                state.task = 3 * bd + bm;
+            }
+#endif
             for(TI k = 0; k < 2; k++){
                 for(TI i = 0; i < 3; i++){
                     state.prev[k][0 + i] = state.position[i];
@@ -958,6 +1076,7 @@ namespace rl_tools{
         }
         next_state.floor_z = state.floor_z;
         next_state.traj_type = state.traj_type;
+        next_state.task = state.task;
         for(TI i = 0; i < 6; i++){
             next_state.traj[i] = state.traj[i];
         }
@@ -1015,6 +1134,12 @@ namespace rl_tools{
         }
         T t0 = state.traj_t, t1 = state.traj_t + env.parameters.integration.dt;
         next_state.traj_t = t1;
+        if(state.traj_type == 4 && t0 >= state.traj[3] && t0 < state.traj[3] + state.traj[4]){
+            // gust: external acceleration traj[0..2] (applied over the step, after RK4)
+            for(TI i = 0; i < 3; i++){
+                next_state.linear_velocity[i] += state.traj[i] * env.parameters.integration.dt;
+            }
+        }
         if(state.traj_type != 0){
             T p0[3], v0[3], p1[3], v1[3];
             rl::environments::multirotor::mission::target_at(device, state, t0, p0, v0);

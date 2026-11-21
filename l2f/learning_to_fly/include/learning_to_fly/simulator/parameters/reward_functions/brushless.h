@@ -61,4 +61,24 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             L2F_ACTION_RATE_WEIGHT, // action rate
             L2F_LANDING_SPEED_WEIGHT, // landing speed
     };
+    // Untuned reward (L2F_REWARD_UNIFORM, multi-objective experiment): the same seven cost
+    // terms with every weight 1 and no weight curriculum, i.e. no hand tuning. Not used by
+    // any flown policy; the tuned weights above stay the default.
+    template<typename T>
+    constexpr Squared<T> reward_uniform_brushless = {
+            false, // non-negative
+            0.5, // scale
+            2, // constant
+            0, // termination penalty
+            1, // position
+            1, // orientation
+            1, // linear_velocity
+            0, // angular_velocity
+            0, // linear_acceleration
+            1, // angular_acceleration
+            L2F_CF21BL_ACTION_BASELINE, // action baseline
+            1, // action
+            1, // action rate
+            1, // landing speed
+    };
 }

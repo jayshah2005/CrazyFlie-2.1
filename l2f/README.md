@@ -208,16 +208,38 @@ Groundwork for multi-objective training (gradient aggregation such as UPGrad).
 `2 - 0.5 * sum(w_k * cost_k)` is split into 8 parts that add up to it exactly
 (survival constant, position, orientation, velocity, action, action rate,
 angular acceleration, landing speed), the critics get one output per part,
-and the actor gets one gradient per part. The parts are combined by a plain sum
-for now, which is ordinary TD3 on the summed value; the twin-critic minimum is
-taken on the summed value so the summed TD target equals the scalar one.
+and the actor gets one gradient per part. The twin-critic minimum is taken on
+the summed value so the summed TD target equals the scalar one.
 Without the flag training is bit-identical to before (checked on a 100k-step run).
 
+The per-part gradients are combined with weights computed from their 8 x 8 Gram
+matrix (`src/moo/aggregators.h`, double precision), chosen with `AGG=`:
+
+| `AGG=` | Combination |
+| --- | --- |
+| `sum` (default) | plain sum: ordinary TD3 on the summed value |
+| `upgrad` | UPGrad (Quinton & Rey, 2024): each gradient projected onto the dual cone of all of them, then added |
+| `aligned_mtl` | Aligned-MTL (Senushkin et al., 2023): gradients rescaled to equal, smallest-eigenvalue strength |
+
+They follow TorchJD's defaults with an all-ones preference vector (TorchJD's
+default is all 1/8; the weights are exactly 8 times those). Adam makes the actor
+step almost blind to that overall scale. `python l2f/sim/check_aggregators.py`
+builds `src/moo/check_aggregators.cpp` and compares its weights with TorchJD
+on random, conflicting, rank-deficient and badly scaled Gram matrices, and with
+`--log $BUILD/moo_gram_seed0.csv --agg upgrad` on the matrices and weights a
+training run logged. Results (2026-11-18, relative error of the combined
+direction): UPGrad 3e-12 or better, Aligned-MTL 2e-11 or better, except 1e-7
+when the gradient norms span 6 decades (condition number 1e12, the limit of
+any eigensolver). `AGG=sum` gives the same updates as before the change
+(identical gradient logs over a 100k-step run).
+
 `train_mission.sh` options: `MOO=1`, `MOO_TOTAL=1` (critic loss below),
-`MOO_PARTS=1` (all parts in one output, a code-path check), `MOO_NORM=1`,
-`CRITIC_HIDDEN=<n>`. With `MOO=1` the per-part gradient norms, pairwise cosines
-and two self-checks (parts add up to the stored reward; summed per-part gradient
-equals one backward pass) go to `$BUILD/moo_seed$SEED.csv` every 1,000 steps.
+`AGG=<name>`, `MOO_PARTS=1` (all parts in one output, a code-path check),
+`MOO_NORM=1`, `CRITIC_HIDDEN=<n>`. With `MOO=1`, every 50 actor updates, the
+per-part gradient norms, pairwise cosines, aggregator weights and two
+self-checks (parts add up to the stored reward; the combined per-part gradients
+equal one backward pass on the weighted value) go to `$BUILD/moo_seed$SEED.csv`,
+and the full Gram matrices with the weights to `$BUILD/moo_gram_seed$SEED.csv`.
 
 Sanity check, variant E, 3 seeds, medians over checkpoints 1.2M-2.0M (mission
 test as above):
@@ -241,3 +263,33 @@ Per-part gradients after 1M steps (3 seeds): survival conflicts with action
 rate, action and position (median cosine -0.35 / -0.28 / -0.22, negative in 63%
 of updates); orientation, velocity, landing speed and angular acceleration point
 the same way (cosine ~+0.9).
+
+### Task objectives and conflict diagnostics
+
+More `train_mission.sh` options (all off by default; the default build trains
+bit-identically, checked on 100k-step runs):
+
+| Option | Effect |
+| --- | --- |
+| `TASKS=1` | framing B: the actor objectives are the 5 mission episode types (free flight, take-off, landing, circle, line), each from its own minibatch; scalar critic, the policy does not see the task |
+| `TASKS=9` | as `TASKS=1` plus figure-eight, fast circle, point-to-point (target step) and gust hover; every mission type 10% of the episodes |
+| `TASKS=regime` | the 9 objectives are hidden dynamics regimes: delay 0-20 ms x mass +-20%, in thirds |
+| `HARD=1` | the harder episode mix of `TASKS=9` without task objectives |
+| `AGG=task_share` | (tasks only) each task weighted by its replay-buffer share = plain TD3 split per task |
+| `REWARD=uniform` | every cost weight 1, no weight curriculum (untuned-reward test) |
+
+With `MOO=1`, `$BUILD/moo_noise_seed$SEED.csv` repeats each objective's gradient
+on a second, independent minibatch (own random generator, training unchanged):
+`same_k` is the cosine of objective k across the two batches (is its direction
+reproducible?), `cross_a__b` the a-b cosine without shared-sample noise.
+
+Findings (2026-11-18/19, seed 0 unless noted): per-objective gradients are not
+noise (same-objective cosine 0.92-0.99). Splitting by task gives no conflict:
+mission tasks, the harder tasks and the dynamics regimes all have pairwise
+cosines of +0.87 to +0.99 after 800k steps, never negative, so a task split
+looks like a random split; Aligned-MTL on tasks (3 seeds: 6.3 cm, 3.0% crashed)
+matches `task_share` (5.6 cm, 3.4%) and plain E. Equal task weights (`AGG=sum`
+with `TASKS=1`) collapse (100% crashed). Real conflict appears only between
+reward parts, mainly survival against the costs during the curriculum (cosine
+about -0.8 until ~1.2M steps, near 0 later). The untuned reward crashes every
+episode for every aggregator (the actor saturates within ~50 updates).

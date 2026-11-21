@@ -12,7 +12,12 @@ namespace learning_to_fly {
                     env.mission.progress = ramp > 0 ? (ts.step >= ramp ? (T)1 : (T)ts.step / ramp) : (T)1;
                 }
             }
-            if constexpr(CONFIG::ABLATION_SPEC::ENABLE_CURRICULUM == true) {
+#ifdef L2F_REWARD_UNIFORM
+            constexpr bool WEIGHT_CURRICULUM = false;  // untuned-reward experiment: weights stay 1
+#else
+            constexpr bool WEIGHT_CURRICULUM = true;
+#endif
+            if constexpr(CONFIG::ABLATION_SPEC::ENABLE_CURRICULUM == true && WEIGHT_CURRICULUM) {
                 if(ts.step != 0 && ts.step % 100000 == 0 && ts.step != (CONFIG::STEP_LIMIT - 1)){
                     rlt::add_scalar(ts.device, ts.device.logger, "td3/gamma", ts.actor_critic.gamma);
                     rlt::add_scalar(ts.device, ts.device.logger, "td3/target_next_action_noise_std", ts.actor_critic.target_next_action_noise_std);
