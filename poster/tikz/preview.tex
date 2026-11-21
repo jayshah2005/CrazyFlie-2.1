@@ -1,0 +1,16 @@
+% Preview of the three figures (one per page). In the poster, use the same
+% preamble lines and \input each figure inside a figure/column.
+\documentclass[varwidth=19cm, border=6pt]{standalone}
+\renewcommand{\familydefault}{\sfdefault}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds}
+\input{rl_styles}
+\begin{document}
+\input{fig_loop}
+
+\vspace{14pt}
+\input{fig_network}
+
+\vspace{14pt}
+\input{fig_training}
+\end{document}

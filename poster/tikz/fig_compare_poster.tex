@@ -3,7 +3,9 @@
 % Hover: Graefe et al. 2026 (arXiv 2603.05944), Table III, real Crazyflie Brushless, mean distance, mocap.
 % Path following: Eschmann et al. 2024 (arXiv 2311.13081), Table III, slow figure-eight, RMSE, mocap.
 % Lighthouse accuracy: Taffanel et al. 2021 (arXiv 2104.11523), mean error vs motion capture 2-4 cm.
-% Ours: flight logs 2026-11-04 (policy I1), hover = mean distance in the 2 s hover phase.
+% Ours: range over the undisturbed mission flights (hover = mean distance in the hover
+% phase, circle = mean distance in the circle phase): I1 2026-11-04 (5 flights, 0.6-1.5 m),
+% C and E 2026-11-06 (4 flights each, 0.6 m x2, 1.0 m, 1.5 m).
 \documentclass[12pt, border=4pt]{standalone}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta}
@@ -16,7 +18,7 @@
 \begin{document}
 \begin{tikzpicture}[x=0.75cm, y=1cm]
   \def\h{0.33}   % half bar height
-  \def\top{1.6}  \def\bot{-8.6}
+  \def\top{1.6}  \def\bot{-12.0}
   % Lighthouse accuracy band
   \fill[bleu!15] (2,\top) rectangle (4,\bot);
   \node[anchor=south, align=center, font=\normalsize\bfseries, text=bleu!70!black] at (3,\top+0.05)
@@ -31,26 +33,32 @@
 
   % group headers
   \node[anchor=west, font=\large\bfseries, text=saclaydk] at (5.2,1.0) {Hover \textendash\ same drone (Crazyflie Brushless) [3]};
-  \node[anchor=west, font=\large\bfseries, text=saclaydk] at (5.2,-3.9) {Following a path \textendash\ older Crazyflie, figure-eight [2]};
+  \node[anchor=west, font=\large\bfseries, text=saclaydk] at (5.2,-5.7) {Following a path \textendash\ older Crazyflie, figure-eight [2]};
 
   % published results (grey bars)
   \foreach \y/\lab/\v in {0/{Stock PID}/2.8, -0.9/{RL policy}/4.3, -1.8/{Stock Mellinger}/5.5,
-                          -4.9/{Stock PID}/23, -5.8/{RL policy}/8, -6.7/{Best hand-designed}/6} {
+                          -6.7/{Stock PID}/23, -7.6/{RL policy}/8, -8.5/{Best hand-designed}/6} {
     \fill[saclaydk!35] (0,\y-\h) rectangle (\v,\y+\h);
     \node[anchor=east, font=\large, text=saclaydk] at (-0.3,\y) {\lab};
     \node[anchor=west, font=\large\bfseries, text=saclaydk] at (\v+0.2,\y) {\v\,cm};
   }
-  % ours (orange ranges)
-  \foreach \y/\lab/\a/\b in {-2.7/{\textbf{Ours}: hover}/3.2/5.0, -7.6/{\textbf{Ours}: circle}/6/11} {
+  % ours: range over the real flights (light = up to the best flight, dark = best to worst)
+  % I1 = original (32-step action history), C = measured motor speeds + 4-step history,
+  % E = measured motor speeds, no history
+  \foreach \y/\lab/\a/\b in {-2.7/{original, long memory}/3.2/5.0, -3.6/{motor sensing, short memory}/2.9/5.6,
+                             -4.5/{motor sensing, no memory}/4.4/6.0,
+                             -9.4/{original, long memory}/5.7/10.9, -10.3/{motor sensing, short memory}/4.7/10.3,
+                             -11.2/{motor sensing, no memory}/3.7/10.7} {
     \fill[mandarine!25] (0,\y-\h) rectangle (\a,\y+\h);
     \fill[mandarine] (\a,\y-\h) rectangle (\b,\y+\h);
-    \node[anchor=east, font=\large, text=mandarine!80!black] at (-0.3,\y) {\lab};
+    \node[anchor=east, font=\large, text=mandarine!80!black] at (-0.3,\y) {\textbf{Ours}: \lab};
     \node[anchor=west, font=\large\bfseries, text=mandarine!80!black] at (\b+0.2,\y) {\a--\b\,cm};
   }
   \draw[saclaydk, line width=1.2pt] (0,\top) -- (0,\bot) -- (25.5,\bot);
 
   % caveat
   \node[anchor=south east, align=right, font=\normalsize\itshape, text=saclaydk!80] at (25.5,\top+0.05)
-       {Approximate comparison: published numbers use motion capture,\\ours use the drone's own Lighthouse estimate.};
+       {Approximate comparison: published numbers use motion capture,\\ours use the drone's own Lighthouse estimate.
+        Ours = best to worst flight.};
 \end{tikzpicture}
 \end{document}

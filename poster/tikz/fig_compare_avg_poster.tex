@@ -1,0 +1,57 @@
+% Comparison with published work using our mean results, for the A1 poster.
+% Same sources as fig_compare_poster.tex. Ours: mean over 4 mission flights each
+% (0.6 m x2, 1.0 m, 1.5 m); hover = mean distance in the hover phase, circle = mean
+% distance in the circle phase. Original 2026-11-04, motor sensing 2026-11-06.
+% Compile on its own, then: \includegraphics[width=\linewidth]{images/fig_compare_avg_poster.pdf}
+\documentclass[12pt, border=4pt]{standalone}
+\usepackage{tikz}
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{saclaydk}{RGB}{27,67,32}
+\definecolor{mandarine}{RGB}{243,115,32}
+\definecolor{bleu}{RGB}{80,144,205}
+
+\begin{document}
+\begin{tikzpicture}[x=0.75cm, y=1cm]
+  \def\h{0.33}   % half bar height
+  \def\top{1.6}  \def\bot{-12.0}
+  % Lighthouse accuracy band
+  \fill[bleu!15] (2,\top) rectangle (4,\bot);
+  \node[anchor=south, align=center, font=\normalsize\bfseries, text=bleu!70!black] at (3,\top+0.05)
+       {Lighthouse's own\\error: 2--4\,cm [4]};
+
+  % grid and axis
+  \foreach \x in {0,5,...,25} {
+    \draw[saclaydk!15, line width=0.6pt] (\x,\top) -- (\x,\bot);
+    \node[anchor=north, font=\large, text=saclaydk] at (\x,\bot) {\x};
+  }
+  \node[anchor=north, font=\large, text=saclaydk] at (14.5,\bot-0.7) {position error (cm)};
+
+  % group headers
+  \node[anchor=west, font=\large\bfseries, text=saclaydk] at (5.2,1.0) {Hover \textendash\ same drone (Crazyflie Brushless) [3]};
+  \node[anchor=west, font=\large\bfseries, text=saclaydk] at (5.2,-5.7) {Following a path \textendash\ older Crazyflie, figure-eight [2]};
+
+  % published results (grey bars)
+  \foreach \y/\lab/\v in {0/{Stock PID}/2.8, -0.9/{RL policy}/4.3, -1.8/{Stock Mellinger}/5.5,
+                          -6.7/{Stock PID}/23, -7.6/{RL policy}/8, -8.5/{Best hand-designed}/6} {
+    \fill[saclaydk!35] (0,\y-\h) rectangle (\v,\y+\h);
+    \node[anchor=east, font=\large, text=saclaydk] at (-0.3,\y) {\lab};
+    \node[anchor=west, font=\large\bfseries, text=saclaydk] at (\v+0.2,\y) {\v\,cm};
+  }
+  % ours: mean of 4 real flights each
+  \foreach \y/\lab/\v in {-2.7/{original, long memory}/4.0, -3.6/{motor sensing, short memory}/4.5,
+                          -4.5/{motor sensing, no memory}/5.2,
+                          -9.4/{original, long memory}/7.4, -10.3/{motor sensing, short memory}/7.1,
+                          -11.2/{motor sensing, no memory}/7.0} {
+    \fill[mandarine] (0,\y-\h) rectangle (\v,\y+\h);
+    \node[anchor=east, font=\large, text=mandarine!80!black] at (-0.3,\y) {\textbf{Ours}: \lab};
+    \node[anchor=west, font=\large\bfseries, text=mandarine!80!black] at (\v+0.2,\y) {\v\,cm};
+  }
+  \draw[saclaydk, line width=1.2pt] (0,\top) -- (0,\bot) -- (25.5,\bot);
+
+  % caveat
+  \node[anchor=south east, align=right, font=\normalsize\itshape, text=saclaydk!80] at (25.5,\top+0.05)
+       {Approximate comparison: published numbers use motion capture,\\ours use the drone's own Lighthouse estimate.
+        Ours = average of 4 flights.};
+\end{tikzpicture}
+\end{document}
