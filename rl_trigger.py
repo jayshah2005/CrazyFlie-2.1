@@ -46,6 +46,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from pathlib import Path
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -94,6 +95,53 @@ COLUMNS = ['drone_ms', 'phase', 'x', 'y', 'z', 'yaw_deg', 'vbat',
 
 LH_VARS = ['lighthouse.status', 'lighthouse.bsReceive', 'lighthouse.bsActive']
 RPM_IN_VARS = ['rltr.r1', 'rltr.r2', 'rltr.r3', 'rltr.r4']  # absent on older firmware
+GYRO_VARS = ['gyro.x', 'gyro.y', 'gyro.z']
+# A gyro sample counts as saturated at or above this rate on any axis (deg/s): just
+# under the BMI088's +-2000 deg/s range, since readings can exceed 2000 slightly after
+# the firmware removes the bias.
+GYRO_SATURATION_DPS = 1990
+GYRO_PERIOD_MS = 10
+LANDING_FILE = Path(__file__).resolve().parent / 'config' / 'landing.yaml'
+
+
+def load_landing(path=LANDING_FILE):
+    """Landing values shared with training ("key: value" lines of config/landing.yaml)."""
+    values = {}
+    for line in path.read_text().splitlines():
+        line = line.split('#', 1)[0].strip()
+        if ':' in line:
+            key, value = (part.strip() for part in line.split(':', 1))
+            values[key] = float(value)
+    return values
+
+
+LANDING = load_landing()
+
+
+class FlowSwitch:
+    """Plan E4 (Q13): the Flow deck off below `below` m above the take-off point
+    (motion.disable = 1), on again above it; the simulator's sensor path does the same
+    (config/sensors.yaml estimator.flow_off_below). The PMW3901 works from 80 mm, and below
+    0.1 m the firmware's flow model uses 0.1 m for the height. below = 0: never (as before)."""
+
+    def __init__(self, cf, below):
+        self.cf, self.below, self.off = cf, below, False
+
+    def update(self, height):
+        """Switch on the latest height estimate (no hysteresis, as in the simulator)."""
+        if self.below <= 0:
+            return
+        off = height < self.below
+        if off != self.off:
+            self.cf.param.set_value('motion.disable', '1' if off else '0')
+            self.off = off
+            log.info('Flow deck %s (height %.3f m).', 'off' if off else 'on', height)
+
+    def restore(self):
+        """Leave the flow on after the flight."""
+        if self.off:
+            self.cf.param.set_value('motion.disable', '0')
+            self.off = False
 
 
 def key_down(vk):
@@ -108,6 +156,12 @@ class Telemetry:
         self.phase = 'idle'
         self.latest = {}  # newest values from the other log blocks
         self.comp = (0.0, 0.0, 0.0)  # mission target correction currently applied
+        # gyro saturation (every 10 ms sample, not only the 20 ms CSV rows)
+        self.gyro_samples = 0
+        self.gyro_saturated = 0
+        self.gyro_run = 0
+        self.gyro_longest_run = 0
+        self.gyro_peak = [0.0, 0.0, 0.0]
 
     def a_cb(self, timestamp, data, logconf):
         """Append one CSV row: the state block plus the latest policy / motor values."""
@@ -126,13 +180,33 @@ class Telemetry:
         """Remember the newest values of a secondary log block."""
         self.latest.update(data)
 
+    def gyro_cb(self, timestamp, data, logconf):
+        """Remember the newest gyro values and count samples at the gyro's range."""
+        self.latest.update(data)
+        rates = [abs(data[name]) for name in GYRO_VARS]
+        self.gyro_samples += 1
+        self.gyro_peak = [max(p, r) for p, r in zip(self.gyro_peak, rates)]
+        if max(rates) >= GYRO_SATURATION_DPS:
+            self.gyro_saturated += 1
+            self.gyro_run += 1
+            self.gyro_longest_run = max(self.gyro_longest_run, self.gyro_run)
+        else:
+            self.gyro_run = 0
+
     def save(self, path):
         written = run_log.write_csv(path, COLUMNS, self.rows, script=__file__,
                                     generated_at=datetime.now().astimezone())
         log.info('Flight log written to %s (%s samples)', written, len(self.rows))
 
     def summarize(self):
-        """Log tracking error and how long the policy had control."""
+        """Log gyro saturation, tracking error and how long the policy had control."""
+        if self.gyro_samples:
+            log.info('Gyro: peak |x| %.0f, |y| %.0f, |z| %.0f deg/s; %d of %d samples at the '
+                     '+-2000 deg/s range (longest run %d ms)', *self.gyro_peak,
+                     self.gyro_saturated, self.gyro_samples, self.gyro_longest_run * GYRO_PERIOD_MS)
+            if self.gyro_saturated:
+                log.warning('The gyro saturated: the estimate integrated a clipped rate, so its '
+                            'attitude may have been wrong for a while after that.')
         active = [r for r in self.rows if r[7] == 1 and r[8] is not None]
         if not active:
             log.info('The learned policy never had control of the motors.')
@@ -160,8 +234,11 @@ def start_telemetry(scf, tele):
         b.add_variable(name, 'uint16_t')
     b.add_variable('supervisor.info', 'uint16_t')  # arming check (wait_armed)
     c = LogConfig(name='L2FAttitude', period_in_ms=20)
-    for name in EXTRA[:5]:
+    for name in EXTRA[:2]:
         c.add_variable(name, 'float')
+    g = LogConfig(name='L2FGyro', period_in_ms=GYRO_PERIOD_MS)  # every sample counts for saturation
+    for name in GYRO_VARS:
+        g.add_variable(name, 'float')
     d = LogConfig(name='L2FMotors', period_in_ms=20)
     for name in EXTRA[5:]:
         d.add_variable(name, 'uint16_t')
@@ -175,7 +252,7 @@ def start_telemetry(scf, tele):
     if toc.get_element_by_complete_name('rltr.r1') is not None:
         for name in RPM_IN_VARS:
             f.add_variable(name, 'float')
-    confs = [(a, tele.a_cb), (b, tele.other_cb), (c, tele.other_cb), (d, tele.other_cb)]
+    confs = [(a, tele.a_cb), (b, tele.other_cb), (c, tele.other_cb), (g, tele.gyro_cb), (d, tele.other_cb)]
     for extra in (e, f):
         if extra.variables:
             confs.append((extra, tele.other_cb))
@@ -245,7 +322,7 @@ class MissionProfile:
         self.v_up, self.v_down = args.climb_rate, args.descent_rate
         # sit only briefly: on the floor the policy rocks and slides the drone
         self.t_idle, self.t_hover1, self.t_move, self.t_back, self.t_hover2 = 0.3, 2.0, 2.0, 2.0, 1.0
-        self.t_ground, self.below = 1.5, 0.02
+        self.t_ground, self.below = 1.5, LANDING['below']
 
     def duration(self):
         return (self.t_idle + self.H / self.v_up + self.t_hover1 + self.t_move + self.laps * self.P
@@ -307,7 +384,10 @@ def configure(cf, args):
 
 
 def preflight(scf, args):
-    """Check firmware, estimator, battery, yaw and arming. Returns the start pose, or None to abort."""
+    """Check firmware, estimator, battery, yaw and the emergency-stop lock. Returns the start pose, or None to abort.
+
+    Arming is checked later, by wait_armed().
+    """
     cf = scf.cf
     if cf.param.toc.get_element_by_complete_name('rlt.wn') is None:
         log.error('No rlt.* parameters: this drone is not running the '
@@ -445,6 +525,7 @@ def fly_mission(scf, args, pose, tele):
             start = now
             log.info('Enter held: mission started.')
         height = tele.rows[-1][4] - pose['z'] if tele.rows else 0.0
+        tele.flow.update(height)
         # Safety 1: telemetry stopped (drone reset or power loss, or only the radio
         # downlink dropped). Do NOT stop sending: if our packets still get through,
         # stopping would cut the motors in the air (2026-11-04 1 m flight). Land
@@ -513,7 +594,7 @@ def fly_mission(scf, args, pose, tele):
         # 0.6 m flight).
         if phase == 'ground':
             low_since = low_since or now
-        if (phase == 'ground' or (phase == 'landing' and offset[2] < 0.1)) and height < args.cut_height \
+        if (phase == 'ground' or (phase == 'landing' and offset[2] < LANDING['cut_window'])) and height < args.cut_height \
                 or (low_since is not None and now - low_since > args.floor_timeout):
             done = True
             tele.phase = 'landed'
@@ -595,6 +676,7 @@ def fly(scf, args, pose, tele):
             descend_for = now - learned_start - args.hover_time
             dz = -min(args.height, max(0.0, descend_for * args.descent_rate))
             height = tele.rows[-1][4] - pose['z'] if tele.rows else args.height
+            tele.flow.update(height)
             at_floor_for = descend_for - args.height / args.descent_rate
             if height < args.cut_height or at_floor_for > args.floor_timeout:
                 landed = True
@@ -625,6 +707,7 @@ def main(args):
 
         cf = scf.cf
         tele = Telemetry()
+        tele.flow = FlowSwitch(cf, args.flow_off_below)
         confs = start_telemetry(scf, tele)
         watch_console(cf)
 
@@ -649,6 +732,7 @@ def main(args):
         finally:
             alive.clear()
             cf.commander.send_stop_setpoint()
+            tele.flow.restore()
             cf.supervisor.send_arming_request(False)
             for conf in confs:
                 conf.stop()
@@ -692,12 +776,15 @@ if __name__ == '__main__':
                              'settled at 0.20 0.07 0)')
     parser.add_argument('--hover-time', type=float, default=5.0,
                         help='land: s of learned hover before descending')
-    parser.add_argument('--descent-rate', type=float, default=0.1,
-                        help='land, mission: target descent speed in m/s (default 0.1)')
-    parser.add_argument('--cut-height', type=float, default=0.06,
-                        help='land: cut motors below this height above take-off (m)')
-    parser.add_argument('--floor-timeout', type=float, default=2.0,
-                        help='land: cut motors this long after the target reached the floor')
+    parser.add_argument('--descent-rate', type=float, default=LANDING['descent_rate'],
+                        help='land, mission: target descent speed in m/s '
+                             '(default from config/landing.yaml: %(default)s)')
+    parser.add_argument('--cut-height', type=float, default=LANDING['cut_height'],
+                        help='land, mission: cut motors below this height above take-off in m '
+                             '(default from config/landing.yaml: %(default)s)')
+    parser.add_argument('--floor-timeout', type=float, default=LANDING['floor_timeout'],
+                        help='land, mission: cut motors this long after the target reached the '
+                             'floor (default from config/landing.yaml: %(default)s)')
     parser.add_argument('--height', type=float, default=0.3,
                         help='m above the take-off point (default 0.3)')
     parser.add_argument('--switch-after', type=float, default=3.0,
@@ -710,4 +797,7 @@ if __name__ == '__main__':
                         help='refuse to fly if |yaw| is larger than this')
     parser.add_argument('--min-vbat', type=float, default=3.8,
                         help='refuse to fly below this battery voltage')
+    parser.add_argument('--flow-off-below', type=float, default=0.0,
+                        help='plan E4 (Q13): Flow deck off below this height above the take-off point, '
+                             'e.g. 0.1 (0 = never, as before)')
     main(parser.parse_args())

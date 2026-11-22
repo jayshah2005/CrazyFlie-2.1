@@ -29,7 +29,8 @@ if [ ! -d "$FW" ]; then
   git clone -q --branch 2026.08 --depth 1 https://github.com/bitcraze/crazyflie-firmware.git "$FW"
   git -C "$FW" submodule update -q --init --recursive --depth 1
 fi
-git -C "$FW" checkout -q -- src/modules/src/controller/controller.c   src/modules/src/crtp_commander.c src/modules/src/stabilizer.c
+git -C "$FW" checkout -q -- src/modules/src/controller/controller.c   src/modules/src/crtp_commander.c src/modules/src/stabilizer.c \
+  src/deck/drivers/src/zranger2.c
 python3 "$HERE/patch_firmware.py"
 
 mkdir -p "$DST/external" "$DST/data"

@@ -89,3 +89,18 @@ edit('src/modules/src/stabilizer.c',
      '#else\n'
      '        controlMotors(&control);\n'
      '#endif\n')
+
+# 4. Plan E4 (Q13), only with L2F_RANGE_MIN_PATCH=1: below a sensor distance of
+#    L2F_RANGE_MIN_DISTANCE (0.04 m: the VL53L1X is accurate only from 4 cm, datasheet
+#    DS12385 7.3) the range reading gets sigma L2F_RANGE_LOW_STD (0.05 m) instead of the
+#    firmware's 2.5 mm, or is skipped if that is <= 0. The simulator's sensor path applies the
+#    same rule (config/sensors.yaml estimator.range_min_distance / range_low_std).
+if os.environ.get('L2F_RANGE_MIN_PATCH') == '1':
+    min_d = float(os.environ.get('L2F_RANGE_MIN_DISTANCE', '0.04'))
+    low_std = float(os.environ.get('L2F_RANGE_LOW_STD', '0.05'))
+    rule = (f'      if (distance < {min_d}f) {{ stdDev = {low_std}f; }}  // L2F E4: below the accurate range\n'
+            if low_std > 0 else
+            f'      if (distance < {min_d}f) {{ continue; }}  // L2F E4: below the accurate range\n')
+    edit('src/deck/drivers/src/zranger2.c',
+         '      float stdDev = expStdA * (1.0f  + expf( expCoeff * (distance - expPointA)));\n',
+         '      float stdDev = expStdA * (1.0f  + expf( expCoeff * (distance - expPointA)));\n' + rule)
