@@ -32,6 +32,7 @@ positioned by two Lighthouse base stations.
 | `still_test.py` | Leaves the drone still and measures state-estimate noise. |
 | `motor_check.py` | Spins the motors at idle and flags one that is far below the others. |
 | `rpm_quality.py` | Reads existing logs (no flying) and checks the measured motor RPM: invalid reads, noise, lag. |
+| `noise_survey.py` | Sensor survey for the simulator's noise model: still, on spacers, PID hovers, pushed along a track, and Lighthouse jumps in flight logs. Writes `l2f/sim/noise_measured.json`. |
 
 ### Measuring the drone (system identification)
 
@@ -53,7 +54,7 @@ positioned by two Lighthouse base stations.
 | --- | --- |
 | `run_log.py` | Shared console and CSV logging. **Every script uses it** (see Conventions). |
 | `flash_cold.py` | Flashes a firmware zip with a cold boot, for when cfclient cannot reach the bootloader. Never warm-boot flash this drone. |
-| `config/` | Lighthouse geometry per room; `config/current` links to the active one. |
+| `config/` | Lighthouse geometry per room (`config/current` links to the active one), `landing.yaml`: the mission landing values shared by `rl_trigger.py` and training, and `sensors.yaml`: the simulator's sensor priors (until the survey measures them). |
 
 Local-only folders (git-ignored): `logs/` (every flight's CSV), `cache/` (cflib's radio cache),
 and clones of Bitcraze repositories (`crazyflie-firmware/`, `crazyflie-lib-python/`,
