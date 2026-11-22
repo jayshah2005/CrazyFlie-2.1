@@ -1,4 +1,4 @@
-# Build settings per platform, sourced by train_brushless.sh and train_mission.sh.
+# Build settings per platform, sourced by train_mission.sh and cross_eval.sh.
 #
 #   Linux / WSL: OpenBLAS, as the team's runs have always used.
 #   macOS:       Apple's Accelerate instead of OpenBLAS. Homebrew's Boost (1.89 and

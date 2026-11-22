@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compare option sets: run train_mission.sh for every set and seed, JOBS at a time,
-# keep each run's output, and summarise each set with moo_summary.py checkpoints
+# keep each run's output, and summarise each set with summarize_checkpoints.py
 # (medians over the late checkpoints, pooled over the seeds).
 #
 #   CONFIGS=<file>  one option set per line: "name OPTION=value ...", e.g.
@@ -39,5 +39,5 @@ wait || true  # a failed run shows in its output file; summarise the rest
 echo "outputs in $OUT"
 for name in "${names[@]}"; do
   echo "== $name: $(grep -h -o 'runtime options: [^,]*' "$OUT/${name}"_s*.txt | head -1)"
-  python3 "$HERE/moo_summary.py" checkpoints "$OUT/${name}"_s*.txt 2>&1 | grep -v 'run started' | sed 's/^.*| INFO | //'
+  python3 "$HERE/summarize_checkpoints.py" "$OUT/${name}"_s*.txt 2>&1 | grep -v 'run started' | sed 's/^.*| INFO | //'
 done

@@ -50,14 +50,7 @@ namespace learning_to_fly{
                 using LAYER_1 = rlt::nn::layers::dense::LayerBackwardGradient<LAYER_1_SPEC>;
                 using LAYER_2_SPEC = rlt::nn::layers::dense::Specification<T, TI, HIDDEN_DIM, HIDDEN_DIM, ACTIVATION_FUNCTION, PARAMETER_TYPE, BATCH_SIZE, rlt::nn::parameters::groups::Normal>;
                 using LAYER_2 = rlt::nn::layers::dense::LayerBackwardGradient<LAYER_2_SPEC>;
-                #ifdef L2F_MOO
-#ifndef L2F_MOO_PARTS
-#define L2F_MOO_PARTS 8
-#endif
-                static constexpr TI OUTPUT_DIM = L2F_MOO_PARTS; // one value per reward part (src/moo/td3_moo.h)
-#else
                 static constexpr TI OUTPUT_DIM = 1;
-#endif
                 using LAYER_3_SPEC = rlt::nn::layers::dense::Specification<T, TI, HIDDEN_DIM, OUTPUT_DIM, rlt::nn::activation_functions::ActivationFunction::IDENTITY, PARAMETER_TYPE, BATCH_SIZE, rlt::nn::parameters::groups::Output>;
                 using LAYER_3 = rlt::nn::layers::dense::LayerBackwardGradient<LAYER_3_SPEC>;
 

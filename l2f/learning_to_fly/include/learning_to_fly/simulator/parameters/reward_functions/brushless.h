@@ -28,7 +28,6 @@
 // ends; with it, the motor cut ends the episode with the landing payout below.
 // Without a penalty, a crash scores 0, which beats the negative rewards of flying
 // far (> ~32 cm) off target at the final position weight. 0 = the paper's reward.
-// With L2F_MOO the penalty is in part 0 (survival), so the parts still add up.
 #ifndef L2F_CRASH_PENALTY
 #define L2F_CRASH_PENALTY 0
 #endif

@@ -81,8 +81,8 @@ class ReplayBuffer:
             self.n = min(self.n + 1, self.cap)
 
     def indices(self, rng, batch, task=None):
-        """Uniform batch indices; with `task`, only that episode type (rejection sampling, as
-        td3_moo.h's gather_batch); None if the task has no transitions in the buffer yet."""
+        """Uniform batch indices; with `task`, only that episode type (rejection sampling); None
+        if the task has no transitions in the buffer yet."""
         if task is None:
             return rng.integers(0, self.n, batch)
         picked = []

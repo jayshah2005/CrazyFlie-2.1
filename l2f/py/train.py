@@ -6,7 +6,7 @@ train_mission.sh (curriculum ramp, Lighthouse jumps, randomization, per-motor mi
 variants A-E) before creating it. Checkpoints go to
 l2f/learning_to_fly/checkpoints/multirotor_td3/<time>_py_<tag>/actor_<step>.h5, in rl_tools'
 format. With --evaluate, the late checkpoints are scored by evaluate_robustness exactly as
-train_mission.sh scores them, in the same table format (moo_summary.py checkpoints reads it).
+train_mission.sh scores them, in the same table format (l2f/sim/summarize_checkpoints.py reads it).
 --moo parts|tasks trains the multi-objective version (moo.py, TorchJD aggregator --agg); its
 per-objective gradient log goes to logs/train_moo_<tag>_<pid>_<time>.csv.
 
@@ -46,7 +46,7 @@ TRAIN_ENV = {'L2F_MISSION_RAMP': '800000', 'L2F_GLITCH_P': '0.003', 'L2F_DR': '1
 EVAL_ENV = {'L2F_MISSION_H': '0.75', 'L2F_MISSION_R': '0.6', 'L2F_MISSION_P': '10', 'L2F_MISSION_V_DOWN': '0.25',
             'L2F_EVAL_GE': '1', 'L2F_EVAL_NOISE': '1', 'L2F_DR_SCALE': '0.5', 'L2F_EVAL_DELAY_MS': '6',
             'L2F_EVAL_KI': '0', 'L2F_MOTOR_GAIN': str(MOTOR_GAIN), 'L2F_MOTOR_OFFSET': str(MOTOR_OFFSET)}
-# train_mission.sh TASKS=9 / HARD=1: every mission episode type 10%, free flight 20%
+# --tasks 9 / --hard (train_mission.sh HARD=1): every mission episode type 10%, free flight 20%
 HARD_ENV = {f'L2F_P_{k}': '0.1' for k in ('TAKEOFF', 'LAND', 'CIRCLE', 'LINE', 'EIGHT', 'FAST_CIRCLE', 'P2P', 'GUST')}
 
 
@@ -195,8 +195,8 @@ def main():
                         '(tracking, smoothness, safety), or 1 (all merged: the MOO code path on the scalar reward, '
                         'must match TD3)')
     parser.add_argument('--tasks', type=int, default=5, choices=[5, 9], help='--moo tasks: episode types')
-    parser.add_argument('--total', type=float, help='--moo parts: critic loss on the total error too (MOO_TOTAL)')
-    parser.add_argument('--norm', action='store_true', help='--moo parts: outputs scaled to O(1) (MOO_NORM)')
+    parser.add_argument('--total', type=float, help='--moo parts: critic loss on the total error too')
+    parser.add_argument('--norm', action='store_true', help='--moo parts: outputs scaled to O(1)')
     parser.add_argument('--hard', action='store_true', help='the harder episode mix of --tasks 9 (HARD=1)')
     parser.add_argument('--episodes', type=int, default=15, help='evaluation episodes per condition')
     args = parser.parse_args()

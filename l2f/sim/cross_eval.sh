@@ -62,7 +62,7 @@ names=$(ls "$OUT"/*_s[0-9].txt | sed -E 's#.*/(.*)_s[0-9]+\.txt#\1#' | sort -u)
 for level in $LEVELS; do
   echo "== tested at force $level"
   for name in $names; do
-    python3 "$SIM/moo_summary.py" checkpoints --no-jumps "$OUT/xeval/${name}"_s*_ev"$level".txt 2>&1 \
+    python3 "$SIM/summarize_checkpoints.py" --no-jumps "$OUT/xeval/${name}"_s*_ev"$level".txt 2>&1 \
       | grep ' ALL ' | sed -E "s/^.*\| INFO \| ALL +/$(printf '%-10s' "$name") /"
   done
 done

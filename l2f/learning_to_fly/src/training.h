@@ -11,9 +11,6 @@ namespace rlt = RL_TOOLS_NAMESPACE_WRAPPER ::rl_tools;
 
 
 #include "training_state.h"
-#ifdef L2F_MOO
-#include "moo/td3_moo.h"
-#endif
 
 #include "steps/checkpoint.h"
 #include "steps/critic_reset.h"
@@ -77,11 +74,7 @@ namespace learning_to_fly{
         steps::checkpoint(ts);
         steps::validation(ts);
         steps::curriculum(ts);
-#ifdef L2F_MOO
-        moo::step(ts);
-#else
         rlt::rl::algorithms::td3::loop::step(ts);
-#endif
         steps::trajectory_collection(ts);
     }
     template <typename CONFIG>

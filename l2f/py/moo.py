@@ -1,4 +1,4 @@
-"""Multi-objective TD3 with TorchJD (plan A6), the PyTorch version of src/moo/td3_moo.h.
+"""Multi-objective TD3 with TorchJD (plan A6).
 
 Framing A (objectives = reward parts): the critics have K = 8 outputs, one per part group
   (parts=3: the groups tracking = position + velocity, smoothness = action + smoothing +
@@ -16,11 +16,10 @@ Framing B (objectives = mission episode types, tasks=5 or 9): scalar critic; obj
   -mean critic value over a batch of task t's transitions only; "task_share" weights each task
   by its share of the replay buffer (plain TD3 on the mixed buffer, split per task).
 
-Options as in train_mission.sh: total (MOO_TOTAL, critic loss (sum_k f_k e_k)^2 + total *
-sum_k e_k^2 per sample instead of sum_k e_k^2) and norm (MOO_NORM, output k learns
-u_k / s_k with s_k = RMS(u_k) / (1 - gamma) from 20k buffer samples when critic training
-starts, f_k = w_k s_k). Preference vectors are all ones, as in src/moo/aggregators.h (TorchJD's
-default is 1/K; the weights are linear in it).
+Options: total (critic loss (sum_k f_k e_k)^2 + total * sum_k e_k^2 per sample instead of
+sum_k e_k^2) and norm (output k learns u_k / s_k with s_k = RMS(u_k) / (1 - gamma) from 20k
+buffer samples when critic training starts, f_k = w_k s_k). Preference vectors are all ones
+(TorchJD's default is 1/K; the weights are linear in it).
 """
 import numpy as np
 import torch
@@ -33,7 +32,7 @@ OBJECTIVES = ['survival', 'position', 'orientation', 'linear_velocity', 'action'
               'angular_acceleration', 'landing_speed']
 GROUP_OF = {'survival': 0, 'position': 1, 'orientation': 2, 'linear_velocity': 3, 'action': 4,
             'action_rate': 5, 'zigzag': 5, 'angular_acceleration': 6, 'landing_speed': 7}
-# parts=3: the groups of moo_summary.py (tracking, smoothness, safety); untested before 2026-11-22
+# parts=3: the groups tracking, smoothness, safety; untested before 2026-11-22
 GROUPS3 = ['tracking', 'smoothness', 'safety']
 GROUP3_OF = {'position': 0, 'linear_velocity': 0, 'action': 1, 'action_rate': 1, 'zigzag': 1,
              'angular_acceleration': 1, 'survival': 2, 'orientation': 2, 'landing_speed': 2}
@@ -57,7 +56,7 @@ def make_aggregator(name, m):
 
 def group_parts(part_names, weights, k):
     """(U, W): unweighted grouping U (n_parts x k) and group weights W (k) with W_j U_ij = w_i
-    for every part i in group j, as td3_moo.h's reward_vector_parts / part_weights: a group with
+    for every part i in group j: a group with
     one weighted part takes that part's weight; one with several (rate and zig-zag both on)
     holds the weighted sum with group weight 1. k = 1: one group of all parts, weight 1;
     k = 3: GROUPS3."""
