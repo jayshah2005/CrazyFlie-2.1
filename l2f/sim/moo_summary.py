@@ -30,8 +30,9 @@ import run_log  # noqa: E402
 
 log = run_log.setup(__file__)
 
-# one checkpoint row of train_mission.sh: clean | randomized (uneven motors) | 1% jumps
-ROW = re.compile(r'^(\d{7})' + r'\s+\|?\s*crash\s+(\d+) circle\s+([\d.]+) cm jitter ([\d.]+)' * 3)
+# one checkpoint row of train_mission.sh or l2f/py/train.py (after run_log's prefix):
+# clean | randomized (uneven motors) | 1% jumps
+ROW = re.compile(r'^(?:.*\| INFO \| )?(\d{7})' + r'\s+\|?\s*crash\s+(\d+) circle\s+([\d.]+) cm jitter ([\d.]+)' * 3)
 WINDOWS = [(0, 400_000), (400_000, 800_000), (800_000, 1_200_000), (1_200_000, 1_600_000), (1_600_000, 2_000_001)]
 PARTS = ['survival', 'position', 'orientation', 'linear_velocity', 'action', 'action_rate',
          'angular_acceleration', 'landing_speed']

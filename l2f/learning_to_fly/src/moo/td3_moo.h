@@ -2,9 +2,10 @@
 //
 // The per-step reward is split into K = 8 parts that add up to the scalar reward:
 //   0 survival (the constant), 1 position, 2 orientation, 3 linear velocity,
-//   4 action (effort), 5 action rate, 6 angular acceleration, 7 landing speed
-// (cost parts carry their current weight and the -scale factor; all parts are 0 on
-// a terminated step, like the scalar reward). The critics have K outputs, one per
+//   4 action (effort), 5 smoothing (action rate or zig-zag), 6 angular acceleration, 7 landing speed
+// (cost parts carry their current weight and the -scale factor; on a terminated step
+// part 0 holds the whole reward, the crash penalty or the landing payout, and the
+// others are 0). The critics have K outputs, one per
 // part, trained on that part's TD target. The twin-critic minimum is taken on the
 // summed value, so the summed target equals the scalar TD3 target exactly.
 // The actor gets one gradient per output and combines them with weights from their
@@ -98,7 +99,8 @@ namespace learning_to_fly::moo {
                              const typename ENV::State& next_state, RNG& rng, T* out) {
         auto c = rlt::rl::environments::multirotor::parameters::reward_functions::reward_components(device, env, p, state, action, next_state, rng);
         if (c.terminated) {
-            for (int k = 0; k < 8; k++) out[k] = p.termination_penalty * (k == 0);
+            // the crash penalty, or the landing payout for a landing (both in part 0)
+            for (int k = 0; k < 8; k++) out[k] = k == 0 ? c.reward : 0;
             return;
         }
         // unweighted parts u_k; the reward is sum_k w_k u_k with w from part_weights
@@ -107,14 +109,17 @@ namespace learning_to_fly::moo {
         out[2] = -p.scale * c.orientation_cost;
         out[3] = -p.scale * c.linear_vel_cost;
         out[4] = -p.scale * c.action_cost;
-        out[5] = -p.scale * c.action_rate_cost;
+        // smoothing: action rate, zig-zag, or (both weighted) their weighted sum with weight 1
+        out[5] = -p.scale * (p.zigzag == 0 ? c.action_rate_cost
+                             : (p.action_rate == 0 ? c.zigzag_cost : p.action_rate * c.action_rate_cost + p.zigzag * c.zigzag_cost));
         out[6] = -p.scale * c.angular_acc_cost;
         out[7] = -p.scale * c.landing_cost;
     }
     // Current weight of each part (the curriculum changes them during training).
     template <typename P>
     void part_weights(const P& p, double* w) {
-        double w8[8] = {1, p.position, p.orientation, p.linear_velocity, p.action, p.action_rate, p.angular_acceleration, p.landing_speed};
+        double smoothing = p.zigzag == 0 ? p.action_rate : (p.action_rate == 0 ? p.zigzag : 1.0);
+        double w8[8] = {1, p.position, p.orientation, p.linear_velocity, p.action, smoothing, p.angular_acceleration, p.landing_speed};
         for (int k = 0; k < 8; k++) w[k] = w8[k];
     }
 

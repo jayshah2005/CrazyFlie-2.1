@@ -22,6 +22,8 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         T action;
         T action_rate = 0; // weight on |a_t - a_{t-1}|^2 (needs the action history state)
         T landing_speed = 0; // weight on (downward speed)^2 within 10 cm of the floor (gentle touchdown)
+        T zigzag = 0; // weight on |a_t - 2 a_{t-1} + a_{t-2}|^2 (needs 2 past actions in the state)
+        T landing_payout = 0; // reward of the step on which a landing ends the episode (Mission::landing_cut)
         struct Components{
             T orientation_cost;
             T position_cost;
@@ -31,8 +33,10 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             T angular_acc_cost;
             T action_cost;
             T action_rate_cost;
+            T zigzag_cost;  // |a_t - 2 a_{t-1} + a_{t-2}|^2
             T landing_cost; // (downward speed)^2 near the floor
             bool terminated;
+            bool landed;    // terminated by a landing (motor cut), not a crash
             T weighted_cost;
             T scaled_weighted_cost;
             T reward;
@@ -50,6 +54,24 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         if constexpr(HISTORY_LENGTH > 0){
             for(TI_S i = 0; i < 4; i++){
                 T_S d = get(action, 0, i) - state.action_history[HISTORY_LENGTH-1][i];
+                cost += d * d;
+            }
+        }
+        return cost;
+    }
+    // Squared second difference of the action, a_t - 2 a_{t-1} + a_{t-2}: zero for a
+    // steady ramp, large for step-to-step zig-zag (chatter). Needs at least 2 past
+    // actions in the state; otherwise 0.
+    template<typename STATE, typename ACTION_SPEC>
+    RL_TOOLS_FUNCTION_PLACEMENT typename STATE::T zigzag_cost(const STATE& state, const Matrix<ACTION_SPEC>& action){
+        return 0;
+    }
+    template<typename T_S, typename TI_S, TI_S HISTORY_LENGTH, typename NEXT_COMPONENT, typename ACTION_SPEC>
+    RL_TOOLS_FUNCTION_PLACEMENT T_S zigzag_cost(const rl::environments::multirotor::StateRotorsHistory<T_S, TI_S, HISTORY_LENGTH, NEXT_COMPONENT>& state, const Matrix<ACTION_SPEC>& action){
+        T_S cost = 0;
+        if constexpr(HISTORY_LENGTH > 1){
+            for(TI_S i = 0; i < 4; i++){
+                T_S d = get(action, 0, i) - 2 * state.action_history[HISTORY_LENGTH-1][i] + state.action_history[HISTORY_LENGTH-2][i];
                 cost += d * d;
             }
         }
@@ -89,13 +111,21 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             landing_cost = state.linear_velocity[2] * state.linear_velocity[2];
         }
         components.weighted_cost = params.position * components.position_cost + params.orientation * components.orientation_cost + params.linear_velocity * components.linear_vel_cost + params.angular_velocity * components.angular_vel_cost + params.linear_acceleration * components.linear_acc_cost + params.angular_acceleration * components.angular_acc_cost + params.action * components.action_cost + params.action_rate * components.action_rate_cost + params.landing_speed * landing_cost;
+        // zig-zag (only added when weighted, so recipes without it reproduce exactly)
+        components.zigzag_cost = zigzag_cost(state, action);
+        if(params.zigzag != 0){
+            components.weighted_cost += params.zigzag * components.zigzag_cost;
+        }
         bool terminated_flag = terminated(device, env, next_state, rng);
         components.landing_cost = landing_cost;
         components.terminated = terminated_flag;
+        components.landed = terminated_flag && next_state.landed == 1;
         components.scaled_weighted_cost = params.scale * components.weighted_cost;
 
         if(terminated_flag){
-            components.reward = params.termination_penalty;
+            // a landing (motor cut) is paid the bonus it gives up; a crash or a failed
+            // landing gets the termination (crash) penalty
+            components.reward = components.landed ? params.landing_payout : params.termination_penalty;
         }
         else{
             components.reward = -components.scaled_weighted_cost + params.constant;
@@ -116,6 +146,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         add_scalar(device, device.logger, "reward/angular_acc_cost", components.angular_acc_cost, cadence);
         add_scalar(device, device.logger, "reward/action_cost",      components.action_cost, cadence);
         add_scalar(device, device.logger, "reward/action_rate_cost", components.action_rate_cost, cadence);
+        add_scalar(device, device.logger, "reward/zigzag_cost", components.zigzag_cost, cadence);
         add_scalar(device, device.logger, "reward/pre_exp",         -components.weighted_cost, cadence);
 
         add_scalar(device, device.logger, "reward_weighted/orientation_cost", params.orientation          * components.orientation_cost, cadence);

@@ -27,6 +27,12 @@ endif()
 
 add_library(learning_to_fly INTERFACE)
 target_include_directories(learning_to_fly INTERFACE include)
+# The sensor path (-DL2F_SENSOR_SIM, plan Step 2) needs the flown Kalman estimator, compiled
+# from the firmware tree by l2f/estimator (FW=, default ~/crazyflie-firmware-2026.08).
+if(CMAKE_CXX_FLAGS MATCHES "L2F_SENSOR_SIM")
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../estimator ${CMAKE_BINARY_DIR}/cf_estimator)
+    target_link_libraries(learning_to_fly INTERFACE cf_estimator)
+endif()
 
 #set(RL_TOOLS_ENABLE_TESTS ON)
 add_subdirectory(external/rl_tools)

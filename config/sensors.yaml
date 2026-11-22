@@ -1,0 +1,54 @@
+# Sensor models of the simulator's sensor path (L2F_SENSOR_SIM; plan Step 2, E2), SI units.
+# Every value here is a prior: a datasheet value or an earlier measurement. The survey
+# (noise_survey.py, plan Step 4) measures them on the drone; Step 5 replaces these priors with
+# the measured values. A value [lo, hi] is drawn uniformly per episode (domain randomization).
+# Read by include/learning_to_fly/simulator/sensor_sim.h (simple "section: / key: value" lines).
+
+imu:
+  # gyroscope (BMI088, +-2000 deg/s)
+  gyro_clip: 34.9                # rad/s, the range (2000 deg/s)
+  gyro_bias: [-0.005, 0.005]     # rad/s per axis, left after the firmware's bias calibration (datasheet
+                                 # zero-rate offset +-1 deg/s = 0.017 before it)
+  gyro_noise_avg: [0.003, 0.02]  # rad/s, std of the 10 ms average the filter predicts with (datasheet
+                                 # white noise 0.0024-0.004 per sample; vibration unknown: survey hover)
+  gyro_noise_sample: [0.05, 0.09]  # rad/s, std of the single filtered sample the actor reads
+                                 # (measured in flight 0.069, 2026-11 still and hover tests)
+  # accelerometer (BMI088, +-16 g)
+  acc_bias: [-0.05, 0.05]        # m/s^2 per axis (datasheet offset +-20 mg = 0.2 before calibration)
+  acc_noise_avg: [0.05, 0.5]     # m/s^2, std of the 10 ms average (vibration dominated: survey hover)
+
+range:
+  # VL53L1X on the Flow deck v2 (zranger2.c: medium distance mode, 25 ms timing budget)
+  period: 0.025                  # s
+  rest_gap: [0.0, 0.015]         # m, sensor distance from the floor with the drone landed (LH z = 0)
+  bias: [-0.005, 0.005]          # m
+  noise: [0.001, 0.004]          # m (the firmware assumes 2.5 mm; datasheet ranging error +-20-25 mm worst case)
+  min_distance: 0.04             # m, accurate only from here (datasheet DS12385, 7.3)
+  below_min_bias: [-0.01, 0.02]  # m, below min_distance (unknown: survey heights)
+  below_min_noise: [0.003, 0.015]  # m
+  cone_half_angle: 7.5           # deg, half of the 15 deg field of view the firmware models (mm_tof.c)
+
+flow:
+  # PMW3901 on the Flow deck v2 (flowdeck_v1v2.c: vTaskDelay(10))
+  period: [0.0100, 0.0105]       # s
+  rest_gap: [0.0, 0.015]         # m, camera distance from the floor with the drone landed
+  noise: [0.3, 1.5]              # raw counts (the firmware assumes 2.0)
+  min_height: 0.08               # m, working range from 80 mm (datasheet)
+  max_rate: 7.4                  # rad/s (datasheet)
+  out_of_spec_gain: [0.3, 1.0]   # flow gain below min_height or above max_rate (unknown: survey slide)
+
+lighthouse:
+  # Lighthouse V2 base stations and deck
+  system: config/current/config.yaml  # stored geometry and calibration of the active room (cfclient file)
+  rotation_rate: [49.5, 50.5]    # rotations / s per base station
+  angle_noise: [0.0001, 0.0003]  # rad per sweep (V2 jitter about 0.7 mm at 2-3 m)
+  geometry_error_position: 0.005  # m std per axis: true minus stored base station origin (accuracy ~1 cm)
+  geometry_error_rotation: 0.002  # rad std per axis: true minus stored base station rotation
+  dropout_rate: [0.0, 1.0]       # dropouts / s per base station (unknown: survey logs mode)
+  dropout_duration: [0.02, 0.2]  # s
+
+estimator:
+  # the firmware's switches that the plan's E4 adds (Q13); off = the firmware as flown today
+  flow_off_below: 0.0            # m estimated height: flow disabled below it (0 = never; E4: 0.1)
+  range_min_distance: 0.0        # m sensor distance: below it the range sigma is range_low_std (0 = off; E4: 0.04)
+  range_low_std: 0.05            # m (<= 0: such readings are skipped)

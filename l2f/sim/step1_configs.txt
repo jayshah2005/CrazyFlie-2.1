@@ -1,0 +1,15 @@
+# Plan Step 1 comparisons (pytorch_training_plan.html), variant E, 3 seeds each:
+#   CONFIGS=l2f/sim/step1_configs.txt bash l2f/sim/compare.sh
+# baseline: the current recipe (survival bonus 2, no crash penalty, action rate)
+base          VARIANT=E
+# B3: crash penalty, with and without the survival bonus, at two crash costs
+bonus_p200    VARIANT=E CRASH_PENALTY=200
+nobonus_p200  VARIANT=E SURVIVAL_BONUS=0 CRASH_PENALTY=200
+nobonus_p400  VARIANT=E SURVIVAL_BONUS=0 CRASH_PENALTY=400
+# B1: zig-zag instead of action rate, and no smoothing term
+zigzag        VARIANT=E SMOOTHING=zigzag
+nosmooth      VARIANT=E SMOOTHING=none
+# C1 + C2 + C5: gyro clip, rotation crash, per-axis position noise (interim ranges)
+sensors       VARIANT=E GYRO_CLIP=34.9 OMEGA_CRASH=34.9 POS_NOISE=1
+# C3: landing like the flight script
+landing_cut   VARIANT=E LANDING_CUT=1

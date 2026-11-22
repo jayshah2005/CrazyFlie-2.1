@@ -1,3 +1,4 @@
+#include <cstdlib>
 namespace learning_to_fly{
     namespace helpers{
         template <typename ABLATION_SPEC>
@@ -27,6 +28,11 @@ namespace learning_to_fly{
             }
             run_name_ss << "_" << helpers::ablation_name<ABLATION_SPEC>();
             run_name_ss << "_" << std::setw(3) << std::setfill('0') << seed;
+            // L2F_RUN_TAG: appended to the run folder name, so runs started in the same
+            // second do not share a folder (train_mission.sh sets it); names only
+            if(const char* tag = std::getenv("L2F_RUN_TAG")){
+                run_name_ss << "_" << tag;
+            }
             return run_name_ss.str();
         }
     }

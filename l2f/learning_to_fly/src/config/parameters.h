@@ -21,7 +21,14 @@
 #ifndef L2F_NOISE_SCALE
 #define L2F_NOISE_SCALE 1
 #endif
-#ifdef L2F_REAL_NOISE
+#if defined(L2F_SENSOR_SIM)
+// sensor path: the actor's inputs come from the simulated sensors and the flown estimator
+// (sensor_sim.h), which make the noise; no extra Gaussian noise on top
+#define L2F_NOISE_POSITION 0
+#define L2F_NOISE_ORIENTATION 0
+#define L2F_NOISE_LINEAR_VELOCITY 0
+#define L2F_NOISE_ANGULAR_VELOCITY 0
+#elif defined(L2F_REAL_NOISE)
 #define L2F_NOISE_POSITION (0.005 * L2F_NOISE_SCALE)
 #define L2F_NOISE_ORIENTATION (0.006 * L2F_NOISE_SCALE)
 #define L2F_NOISE_LINEAR_VELOCITY (0.010 * L2F_NOISE_SCALE)
@@ -118,7 +125,14 @@ namespace parameters{
 #else
                 static constexpr TI ACTOR_HISTORY_LENGTH = 32;
 #endif
+#ifdef L2F_ZIGZAG_WEIGHT
+                // the zig-zag reward needs the last 2 actions; the actor's inputs keep
+                // ACTOR_HISTORY_LENGTH (0 = none), so only 1 would change them
+                static_assert(ACTOR_HISTORY_LENGTH != 1, "L2F_ZIGZAG_WEIGHT needs L2F_HISTORY = 0 or >= 2");
+                static constexpr TI ACTION_HISTORY_LENGTH = ACTOR_HISTORY_LENGTH > 1 ? ACTOR_HISTORY_LENGTH : 2;
+#else
                 static constexpr TI ACTION_HISTORY_LENGTH = ACTOR_HISTORY_LENGTH > 0 ? ACTOR_HISTORY_LENGTH : 1;
+#endif
                 // L2F_POS_INTEGRAL: append the leaky position-error integral (3 values)
                 // to the actor's and the critic's observation.
 #ifdef L2F_POS_INTEGRAL

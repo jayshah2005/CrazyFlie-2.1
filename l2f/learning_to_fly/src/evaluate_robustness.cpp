@@ -173,6 +173,8 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
     TI err_n[9] = {};
     T jitter_sum = 0, touchdown_sum = 0, land_xy_sum = 0, max_tilt_all = 0, bounce_sum = 0, bounce_max = 0;
     TI crashes = 0, landed = 0, jitter_n = 0;
+    T cut_h_sum = 0;
+    TI cuts = 0, touched_before_cut = 0;
     std::FILE* csv = s_csv ? std::fopen(s_csv, "w") : nullptr;
     if(csv) std::fprintf(csv, "t,phase,tx,ty,tz,x,y,z,tilt_deg,u1,u2,u3,u4\n");
     rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
@@ -212,6 +214,11 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
         TI un = 0;
         bool crashed = false, touched = false;
         T touchdown_v = 0, max_tilt = 0, bounce = 0;
+        // the flight script's motor cut (Mission::landing_cut): one fixed cut height, the
+        // middle of the range training draws from
+        bool cut_done = false;
+        T low_since = -1;
+        const T cut_h_eval = (env.mission.cut_h_min + env.mission.cut_h_max) / 2;
         for(TI step = 0; step < steps; step++){
             T t = step * env.parameters.integration.dt, p[3], v[3];
             int phase = mp.at(t, p, v);
@@ -264,7 +271,8 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
                 last_err[i] = s.position[i] + p[i] - p_ref[i];
             }
             T err = std::sqrt(last_err[0] * last_err[0] + last_err[1] * last_err[1] + last_err[2] * last_err[2]);
-            if(tilt > 60 || err > 0.6){
+            T w_max = std::max(std::abs(s.angular_velocity[0]), std::max(std::abs(s.angular_velocity[1]), std::abs(s.angular_velocity[2])));
+            if(tilt > 60 || err > 0.6 || (env.mission.omega_crash > 0 && w_max > env.mission.omega_crash)){
                 crashed = true;
             }
             err_sum[phase] += err; err_n[phase]++;
@@ -283,6 +291,36 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
             if(touched){
                 bounce = std::max(bounce, s.position[2] - s.floor_z);
             }
+            if(env.mission.landing_cut && !crashed && phase >= 7){
+                // rl_trigger.py --mode mission: cut when the target is in its last
+                // cut_window above the floor (or on it) and the estimated height is below
+                // the cut height, or floor_timeout s after the target reached the floor
+                if(phase == 8 && low_since < 0){
+                    low_since = t;
+                }
+                bool in_window = phase == 8 || p[2] < env.mission.cut_window;
+                bool cut = in_window && rlt::rl::environments::multirotor::mission::estimated_height(dev, env, s, rng) < cut_h_eval;
+                bool timeout = low_since >= 0 && t - low_since > env.mission.floor_timeout;
+                if(cut || timeout){
+                    T h = std::max((T)0, s.position[2] - s.floor_z);
+                    if(touched){
+                        touched_before_cut++;  // already on the floor with motors on
+                    }
+                    else{
+                        // free fall from the cut: v = sqrt(v_down^2 + 2 g h), downward
+                        T vd = std::max((T)0, -s.linear_velocity[2]);
+                        touchdown_v = -std::sqrt(vd * vd + 2 * (T)9.81 * h);
+                        touched = true;
+                    }
+                    if(!cut && h >= env.mission.cut_max_height){
+                        crashed = true;  // timeout cut far above the floor: the drone drops
+                    }
+                    cut_done = true;
+                    cut_h_sum += h;
+                    cuts++;
+                    break;
+                }
+            }
             if(csv && e == 0){
                 std::fprintf(csv, "%.2f,%d,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.2f,%.3f,%.3f,%.3f,%.3f\n", (double)t, phase,
                              (double)p_ref[0], (double)p_ref[1], (double)p_ref[2],
@@ -299,7 +337,7 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
         jitter_sum += jit; jitter_n++;
         max_tilt_all = std::max(max_tilt_all, max_tilt);
         crashes += crashed;
-        if(!crashed && rlt::rl::environments::multirotor::mission::on_floor(s)){
+        if(!crashed && (cut_done || rlt::rl::environments::multirotor::mission::on_floor(s))){
             landed++;
             touchdown_sum += touched ? -touchdown_v : 0;
             bounce_sum += bounce;
@@ -319,6 +357,8 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
     if(landed) std::printf("  landing: touchdown speed %.2f m/s, final horizontal error %.1f cm, bounce after touchdown mean %.1f cm / max %.1f cm\n",
                            (double)(touchdown_sum / landed), (double)(100 * land_xy_sum / landed),
                            (double)(100 * bounce_sum / landed), (double)(100 * bounce_max));
+    if(cuts) std::printf("  motor cut: %d episodes, mean height %.1f cm above the floor, touched down before the cut %d\n",
+                         (int)cuts, (double)(100 * cut_h_sum / cuts), (int)touched_before_cut);
     return 0;
 }
 
@@ -391,9 +431,75 @@ Result run(DEVICE& dev, ACTOR& actor, BUFFER& buffer, const Variation& v, bool h
     return r;
 }
 
+// Training's own landing episodes (Mission episode type 2, sampled exactly as in
+// training) flown by the actor, with this run's L2F_* settings: how each one ends.
+// Shows whether the landing cut (L2F_LANDING_CUT) happens in the training
+// environment, not only in the mission test.
+template <typename ACTOR, typename BUFFER, typename RNG>
+int run_landing(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng){
+    ENVIRONMENT env;
+    env.parameters = PENV::parameters;
+    env.parameters.mdp.reward = PENV::target_reward_function;
+    apply_eval_noise(env);
+    env.mission.enabled = true;
+    env.mission.p_takeoff = env.mission.p_circle = env.mission.p_line = 0;
+    env.mission.p_eight = env.mission.p_fast_circle = env.mission.p_p2p = env.mission.p_gust = 0;
+    env.mission.p_land = 1;
+    rlt::malloc(dev, env);
+    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
+    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::ACTION_DIM>> action;
+    rlt::malloc(dev, observation);
+    rlt::malloc(dev, action);
+    TI landed = 0, failed = 0, crashed = 0, flying = 0;
+    T cut_h_sum = 0, touchdown_sum = 0, return_sum = 0;
+    for(TI e = 0; e < episodes; e++){
+        typename ENVIRONMENT::State s, next;
+        rlt::sample_initial_state(dev, env, s, rng);
+        bool ended = false;
+        for(TI step = 0; step < CONFIG::ENVIRONMENT_STEP_LIMIT; step++){
+            rlt::observe(dev, env, s, observation, rng);
+            rlt::evaluate(dev, actor, observation, action, buffer);
+            rlt::clamp(dev, action, (T)-1, (T)1);
+            rlt::step(dev, env, s, action, next, rng);
+            return_sum += rlt::reward(dev, env, s, action, next, rng);
+            s = next;
+            if(rlt::terminated(dev, env, s, rng)){
+                ended = true;
+                break;
+            }
+        }
+        if(!ended){
+            flying++;
+        }
+        else if(s.landed == 1){
+            landed++;
+            cut_h_sum += s.position[2] - s.floor_z;
+            touchdown_sum += s.touchdown_speed;
+        }
+        else if(s.landed == 2){
+            failed++;
+        }
+        else{
+            crashed++;
+        }
+    }
+    rlt::free(dev, observation);
+    rlt::free(dev, action);
+    std::printf("randomization %s (scale %.2f: mass +-%.0f%%, inertia +-%.0f%%), motor mismatch +-%.0f%% / +-%.0f rpm\n",
+                env.mission.domain_randomization ? "on" : "off", (double)env.mission.dr_scale, (double)(100 * env.mission.dr_mass),
+                (double)(100 * env.mission.dr_inertia), (double)(100 * env.mission.motor_gain_dr), (double)env.mission.motor_offset_dr);
+    std::printf("training landing episodes %d (landing cut %s): landed %d, failed landing %d, crashed %d, "
+                "still flying at the %d-step limit %d; mean return %.1f\n", (int)episodes,
+                env.mission.landing_cut ? "on" : "off", (int)landed, (int)failed, (int)crashed,
+                (int)CONFIG::ENVIRONMENT_STEP_LIMIT, (int)flying, (double)(return_sum / episodes));
+    if(landed) std::printf("  at the cut: mean height %.1f cm above the floor, touchdown speed %.2f m/s\n",
+                           (double)(100 * cut_h_sum / landed), (double)(touchdown_sum / landed));
+    return 0;
+}
+
 int main(int argc, char** argv){
     if(argc < 2){
-        std::printf("usage: %s <actor.h5> [episodes]\n", argv[0]);
+        std::printf("usage: %s <actor.h5> [episodes] [mission|landing|probe]\n", argv[0]);
         return 1;
     }
     TI episodes = argc > 2 ? std::atoi(argv[2]) : 200;
@@ -410,6 +516,9 @@ int main(int argc, char** argv){
 
     if(argc > 3 && std::string(argv[3]) == "mission"){
         return run_mission(dev, actor, buffer, episodes, rng);
+    }
+    if(argc > 3 && std::string(argv[3]) == "landing"){
+        return run_landing(dev, actor, buffer, episodes, rng);
     }
     if(argc > 3 && std::string(argv[3]) == "probe"){
         // Start from a perfectly hovering drone and fly 5 s. Observation noise

@@ -46,6 +46,10 @@ namespace learning_to_fly{
                 static constexpr T GAMMA = 0.99;
                 static constexpr bool IGNORE_TERMINATION = false;
             };
+#ifdef L2F_GAMMA
+            // the landing payout (reward_functions/brushless.h) is computed with L2F_GAMMA
+            static_assert(TD3PendulumParameters::GAMMA == (T)(L2F_GAMMA), "L2F_GAMMA must match the TD3 discount");
+#endif
 
             using TD3_PARAMETERS = TD3PendulumParameters;
 

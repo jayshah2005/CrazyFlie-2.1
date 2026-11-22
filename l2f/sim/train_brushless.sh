@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Train the brushless policy and run the robustness check. Run inside WSL Ubuntu
-# on the training code in ../learning_to_fly (submodules initialised, see ../README.md).
+# Train the brushless policy and run the robustness check. Runs in WSL Ubuntu or
+# on macOS (platform.sh) on the training code in ../learning_to_fly (submodules initialised, see ../README.md).
 #
 #   STEPS=1000001     training steps (checkpoint every 100k)
 #   ANG_ACC=2e-4      angular-acceleration penalty (0 = paper reward)
 #   REAL_NOISE=1      measured sensor noise (0 = paper noise)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+source "$HERE/platform.sh"
 L2F=${L2F:-$HERE/../learning_to_fly}
 STEPS=${STEPS:-1000001}
 ANG_ACC=${ANG_ACC:-2e-4}
@@ -17,9 +18,9 @@ FLAGS="-DL2F_BRUSHLESS -DL2F_STEP_LIMIT=$STEPS -DL2F_ANG_ACC_WEIGHT=$ANG_ACC"
 cd "$L2F"
 
 BUILD=build_brushless_${STEPS}_acc${ANG_ACC}_noise${REAL_NOISE}
-cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON \
+cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release "${CMAKE_PLATFORM[@]}" \
   -DCMAKE_CXX_FLAGS="$FLAGS" > /dev/null
-cmake --build "$BUILD" -j"$(nproc)" --target training_headless evaluate_robustness
+cmake --build "$BUILD" -j"$NPROC" --target training_headless evaluate_robustness
 
 export OPENBLAS_NUM_THREADS=1
 "./$BUILD/src/training_headless" | grep -E "Step: .*00000 |Training took"

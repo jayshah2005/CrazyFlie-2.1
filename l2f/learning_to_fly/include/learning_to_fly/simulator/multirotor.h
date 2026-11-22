@@ -3,6 +3,9 @@
 
 #include <rl_tools/utils/generic/typing.h>
 #include <cstdlib>
+#ifdef L2F_SENSOR_SIM
+#include "sensor_sim.h"  // simulated sensors + the flown Kalman estimator (l2f/estimator)
+#endif
 
 // Position-error integral observation (must match the firmware): leak time
 // constant (s) and clip (m s).
@@ -342,6 +345,30 @@ namespace rl_tools::rl::environments::multirotor{
         // Measured rotor speeds as the actor sees them (normalized like the actions,
         // -1..1); only used as an observation with L2F_RPM_OBS.
         T rpm_meas[4];
+        // This episode's position-noise std per axis (m); 0 = the fixed
+        // observation_noise.position (see Mission::pos_noise_min / pos_noise_max).
+        T pos_noise_sigma[3];
+        // Landing like the flight script (Mission::landing_cut): this episode's cut
+        // height (m), the outcome (0 flying, 1 landed: motors cut, 2 failed landing:
+        // timeout cut too high above the floor), and the touchdown speed after the
+        // cut, sqrt(v_down^2 + 2 g h) (m/s), for evaluation.
+        T cut_height;
+        TI landed;
+        T touchdown_speed;
+#ifdef L2F_SENSOR_SIM
+        // Sensor path (sensor_sim.h): the actor observes the estimator's output, not the
+        // truth. world_offset turns the target-relative frame into the Lighthouse (room)
+        // frame: world = position + world_offset (floor at world z = 0). est_position is in
+        // the target-relative frame like position; est_prev holds the estimate 1 and 2 steps
+        // ago in the world frame (position, quaternion, velocity, gyro), for the delay.
+        T world_offset[3];
+        T est_position[3];
+        T est_orientation[4];
+        T est_velocity[3];
+        T gyro_obs[3];         // the actor's gyro sample (rad/s)
+        T est_prev[2][13];
+        TI est_failed;         // the estimator failed (a firmware assert): terminated as a crash
+#endif
     };
     template <typename T_T, typename T_TI, typename T_NEXT_COMPONENT>
     struct StateRotors: T_NEXT_COMPONENT{
@@ -518,12 +545,52 @@ namespace rl_tools::rl::environments{
             // Measured: ~100 rpm noise, ~14% repeats at 100 Hz (rpm_quality.py).
             T rpm_noise = env_or("L2F_RPM_NOISE", 0.01);
             T rpm_hold_p = env_or("L2F_RPM_HOLD", 0.15);
+            // Gyro range: the actor's angular-velocity reading is clipped at
+            // +-gyro_clip rad/s, like the BMI088 at the firmware's +-2000 deg/s
+            // (34.9 rad/s). 0 = off.
+            T gyro_clip = env_or("L2F_GYRO_CLIP", 0);
+            // Rotation crash: an episode ends as a crash when any axis of the true
+            // angular velocity exceeds omega_crash rad/s. 0 = the termination
+            // preset's limit (1000 rad/s in fast_learning, i.e. never).
+            T omega_crash = env_or("L2F_OMEGA_CRASH", 0);
+            // Per-axis position noise: per episode, the std of the actor's position
+            // noise on axis i is drawn from U(pos_noise_min[i], pos_noise_max[i]) m.
+            // pos_noise_max[i] = 0 keeps the fixed observation_noise.position.
+            T pos_noise_min[3] = {env_or("L2F_POS_NOISE_MIN_X", 0), env_or("L2F_POS_NOISE_MIN_Y", 0), env_or("L2F_POS_NOISE_MIN_Z", 0)};
+            T pos_noise_max[3] = {env_or("L2F_POS_NOISE_MAX_X", 0), env_or("L2F_POS_NOISE_MAX_Y", 0), env_or("L2F_POS_NOISE_MAX_Z", 0)};
+            // Landing like the flight script (rl_trigger.py --mode mission, values in
+            // config/landing.yaml). With landing_cut, landing episodes descend at
+            // U(descent_min, descent_max) m/s to cut_below m under the floor, and the
+            // motors are cut, ending the episode as a landing, when the target is less
+            // than cut_window m above the floor and the estimated height is below the
+            // episode's cut height h_cut ~ U(cut_h_min, cut_h_max); or floor_timeout s
+            // after the target reached its lowest point. A timeout cut more than
+            // cut_max_height above the floor counts as a crash.
+            bool landing_cut = env_or("L2F_LANDING_CUT", 0) != 0;
+            T cut_h_min = env_or("L2F_CUT_H_MIN", 0.05);
+            T cut_h_max = env_or("L2F_CUT_H_MAX", 0.07);
+            T cut_window = env_or("L2F_CUT_WINDOW", 0.1);
+            T cut_below = env_or("L2F_CUT_BELOW", 0.02);
+            T descent_min = env_or("L2F_DESCENT_MIN", 0.1);
+            T descent_max = env_or("L2F_DESCENT_MAX", 0.25);
+            T floor_timeout = env_or("L2F_FLOOR_TIMEOUT", 2.0);
+            T cut_max_height = 0.1;
+            // Scale of the per-episode random external force (ABLATION_SPEC::DISTURBANCE,
+            // sigma m g / 20 per axis). The flown estimator reads a constant sideways force as
+            // tilt (its flight model has thrust along body z only), so on the sensor path this
+            // sets part of the estimate's attitude error. 1 = the recipe.
+            T force_scale = env_or("L2F_FORCE_SCALE", 1);
             static T env_or(const char* name, double fallback){
                 const char* s = std::getenv(name);
                 return (T)(s ? std::atof(s) : fallback);
             }
         };
         Mission mission;
+#ifdef L2F_SENSOR_SIM
+        // This environment's estimator and sensor draws, created on its first episode
+        // (mission::sensor_runtime). mutable: the rl_tools step/observe take the env const.
+        mutable learning_to_fly::sensor_sim::Runtime* sensor_rt = nullptr;
+#endif
         typename SPEC::PARAMETERS::Dynamics nominal_dynamics;
         bool nominal_dynamics_valid = false;
     };

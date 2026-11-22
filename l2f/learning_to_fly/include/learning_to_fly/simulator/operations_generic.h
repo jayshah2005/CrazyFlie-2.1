@@ -234,7 +234,28 @@ namespace rl_tools{
                 state.glitch_offset[i] = 0;
                 state.glitch_vel[i] = 0;
                 state.pos_integral[i] = 0;
+                state.pos_noise_sigma[i] = 0;
             }
+            state.cut_height = 0;
+            state.landed = 0;
+            state.touchdown_speed = 0;
+#ifdef L2F_SENSOR_SIM
+            for(TI i = 0; i < 3; i++){
+                state.world_offset[i] = 0;
+                state.est_position[i] = state.position[i];
+                state.est_velocity[i] = state.linear_velocity[i];
+                state.gyro_obs[i] = state.angular_velocity[i];
+            }
+            for(TI i = 0; i < 4; i++){
+                state.est_orientation[i] = state.orientation[i];
+            }
+            for(TI k = 0; k < 2; k++){
+                for(TI i = 0; i < 13; i++){
+                    state.est_prev[k][i] = 0;
+                }
+            }
+            state.est_failed = 0;
+#endif
             for(TI k = 0; k < 2; k++){
                 for(TI i = 0; i < 3; i++){
                     state.prev[k][0 + i] = state.position[i];
@@ -305,6 +326,122 @@ namespace rl_tools{
                 state.rpm_meas[i] = (state.rpm[i] - lim.min) / (lim.max - lim.min) * 2 - 1;
             }
         }
+#ifdef L2F_SENSOR_SIM
+        // ---- sensor path (L2F_SENSOR_SIM, sensor_sim.h) ----
+        // uniform / normal draws from the simulator's RNG for sensor_sim.h
+        template<typename DEVICE, typename T, typename RNG>
+        struct SensorDraw{
+            RNG& rng;
+            double uniform(double lo, double hi){ return random::uniform_real_distribution(typename DEVICE::SPEC::RANDOM(), (T)lo, (T)hi, rng); }
+            double normal(double sigma){ return sigma > 0 ? random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM(), (T)0, (T)sigma, rng) : 0.0; }
+        };
+        // This environment object's sensor runtime (created on first use; a copied
+        // environment gets its own).
+        template<typename SPEC>
+        learning_to_fly::sensor_sim::Runtime& sensor_runtime(const Multirotor<SPEC>& env){
+            if(!env.sensor_rt || env.sensor_rt->owner != &env){
+                env.sensor_rt = new learning_to_fly::sensor_sim::Runtime();
+                env.sensor_rt->owner = &env;
+            }
+            return *env.sensor_rt;
+        }
+        // the estimate as a 13-vector (world position, quaternion, velocity, gyro)
+        template<typename T, typename TI>
+        void estimate_world(const StateBase<T, TI>& state, T out[13]){
+            for(TI i = 0; i < 3; i++){
+                out[0 + i] = state.est_position[i] + state.world_offset[i];
+                out[7 + i] = state.est_velocity[i];
+                out[10 + i] = state.gyro_obs[i];
+            }
+            for(TI i = 0; i < 4; i++){
+                out[3 + i] = state.est_orientation[i];
+            }
+        }
+        // Episode start: place the episode in the room (Lighthouse frame: the start target
+        // within +-0.3 m of the room centre, the floor at z = 0; free flight without a floor
+        // at 0.6..1.5 m), draw the sensors and start the estimator converged at the truth.
+        template<typename DEVICE, typename SPEC, typename T, typename TI, typename RNG>
+        void sensor_begin(DEVICE& device, const Multirotor<SPEC>& env, StateBase<T, TI>& state, RNG& rng){
+            SensorDraw<DEVICE, T, RNG> d{rng};
+            state.world_offset[0] = (T)d.uniform(-0.3, 0.3);
+            state.world_offset[1] = (T)d.uniform(-0.3, 0.3);
+            state.world_offset[2] = state.floor_z > -10 ? -state.floor_z : (T)d.uniform(0.6, 1.5);
+            float p[3], v[3], q[4];
+            for(TI i = 0; i < 3; i++){
+                p[i] = (float)(state.position[i] + state.world_offset[i]);
+                v[i] = (float)state.linear_velocity[i];
+                state.pos_noise_sigma[i] = 0;  // the noise comes from the sensors now
+            }
+            for(TI i = 0; i < 4; i++){
+                q[i] = (float)state.orientation[i];
+            }
+            auto& rt = sensor_runtime(env);
+            learning_to_fly::sensor_sim::begin_episode(rt, p, v, q, d);
+            for(TI i = 0; i < 3; i++){  // the converged start estimate
+                state.est_position[i] = (T)rt.out.position[i] - state.world_offset[i];
+                state.est_velocity[i] = (T)rt.out.velocity[i];
+                state.gyro_obs[i] = state.angular_velocity[i];
+            }
+            for(TI i = 0; i < 4; i++){
+                state.est_orientation[i] = (T)rt.out.quat[i];
+            }
+            state.est_failed = 0;
+            T now[13];
+            estimate_world(state, now);
+            for(TI k = 0; k < 2; k++){
+                for(TI i = 0; i < 13; i++){
+                    state.est_prev[k][i] = now[i];
+                }
+            }
+        }
+        // One step of the sensor path (post_integration, after the frame shift and floor
+        // contact): sensors from the truth between state and next_state, 10 estimator ticks.
+        template<typename DEVICE, typename SPEC, typename T, typename TI, typename ACTION_SPEC, typename RNG>
+        void sensor_step(DEVICE& device, const Multirotor<SPEC>& env, const StateBase<T, TI>& state, const Matrix<ACTION_SPEC>& action, StateBase<T, TI>& next_state, RNG& rng){
+            static_assert(learning_to_fly::sensor_sim::TICKS_PER_STEP == 10, "the sensor path assumes 10 ms steps");
+            SensorDraw<DEVICE, T, RNG> d{rng};
+            learning_to_fly::sensor_sim::Truth x;
+            for(TI i = 0; i < 3; i++){
+                x.p0[i] = (float)(state.position[i] + state.world_offset[i]);
+                x.p1[i] = (float)(next_state.position[i] + next_state.world_offset[i]);
+                x.v0[i] = (float)state.linear_velocity[i];
+                x.v1[i] = (float)next_state.linear_velocity[i];
+                x.w0[i] = (float)state.angular_velocity[i];
+                x.w1[i] = (float)next_state.angular_velocity[i];
+            }
+            for(TI i = 0; i < 4; i++){
+                x.q0[i] = (float)state.orientation[i];
+                x.q1[i] = (float)next_state.orientation[i];
+            }
+            bool thrust = false;  // supervisor.c: a motor above idle (action -1 = idle)
+            for(TI i = 0; i < 4; i++){
+                thrust = thrust || get(action, 0, i) > (T)-0.99;
+            }
+            auto& rt = sensor_runtime(env);
+            if(!rt.est){
+                // the episode start (mission::sample, from the rotor-state sample_initial_state)
+                // never ran: no estimator to step
+                throw std::runtime_error("L2F_SENSOR_SIM: no estimator; the sensor path needs the mission episode setup with rotor state (ROTOR_DELAY)");
+            }
+            float gyro[3];
+            learning_to_fly::sensor_sim::simulate_step(rt, x, thrust, d, gyro);
+            T prev_now[13];
+            estimate_world(state, prev_now);
+            for(TI i = 0; i < 13; i++){
+                next_state.est_prev[1][i] = state.est_prev[0][i];
+                next_state.est_prev[0][i] = prev_now[i];
+            }
+            for(TI i = 0; i < 3; i++){
+                next_state.est_position[i] = (T)rt.out.position[i] - next_state.world_offset[i];
+                next_state.est_velocity[i] = (T)rt.out.velocity[i];
+                next_state.gyro_obs[i] = (T)gyro[i];
+            }
+            for(TI i = 0; i < 4; i++){
+                next_state.est_orientation[i] = (T)rt.out.quat[i];
+            }
+            next_state.est_failed = rt.failed ? 1 : 0;
+        }
+#endif
         // Per-episode setup: domain randomization, episode type, delay.
         template<typename DEVICE, typename SPEC, typename T, typename TI_S, typename RNG>
         RL_TOOLS_FUNCTION_PLACEMENT void sample(DEVICE& device, Multirotor<SPEC>& env, StateBase<T, TI_S>& state, T* rpm, RNG& rng){
@@ -377,6 +514,13 @@ namespace rl_tools{
             }
             state.delay_steps = U(0, k * m.delay_max_steps);
             state.ground_effect = U(0, k * m.ge_k_max);
+            // per-axis position noise (no random numbers drawn when off, so older
+            // recipes reproduce exactly)
+            for(TI i = 0; i < 3; i++){
+                if(m.pos_noise_max[i] > 0){
+                    state.pos_noise_sigma[i] = U(m.pos_noise_min[i], m.pos_noise_max[i]);
+                }
+            }
             // dividing by k grows the mission episode types from 0 to their full share
             T r = k > 0 ? U(0, 1) / k : 2;
             if(r < m.p_takeoff){
@@ -411,9 +555,25 @@ namespace rl_tools{
                 near_hover();
                 state.task = 2;
                 T height = U(0.1, 0.8);
-                T vz = U(0.1, 0.5);
-                T below = U(0, 0.03);
+                T vz, below;
+                if(m.landing_cut){
+                    // the flight script's descent (config/landing.yaml)
+                    vz = U(m.descent_min, m.descent_max);
+                    below = m.cut_below;
+                }
+                else{
+                    vz = U(0.1, 0.5);
+                    below = U(0, 0.03);
+                }
                 T start = U(0, 1.0);
+                if(m.landing_cut){
+                    state.cut_height = U(m.cut_h_min, m.cut_h_max);
+                    // reach the floor by 3.5 s so the cut happens inside the 5 s episode
+                    if(start + (height + below) / vz > 3.5){
+                        height = vz * (3.5 - start) - below;
+                        height = height > (T)0.05 ? height : (T)0.05;
+                    }
+                }
                 state.floor_z = -height;
                 state.traj_type = 1;
                 state.traj[2] = -vz;
@@ -565,10 +725,48 @@ namespace rl_tools{
                     state.prev[k][3 + i] = state.orientation[i];
                 }
             }
+#ifdef L2F_SENSOR_SIM
+            sensor_begin(device, env, state, rng);
+#endif
         }
         template<typename T, typename TI>
         RL_TOOLS_FUNCTION_PLACEMENT bool on_floor(const StateBase<T, TI>& state){
             return state.position[2] <= state.floor_z + (T)0.005;
+        }
+        // Height above the floor as the drone's estimator would report it: the true
+        // height plus the current position glitch and this episode's position noise.
+        // The observation delay is left out (at most 12 ms of descent, a few mm).
+        template<typename DEVICE, typename SPEC, typename T, typename TI, typename RNG>
+        RL_TOOLS_FUNCTION_PLACEMENT T estimated_height(DEVICE& device, const Multirotor<SPEC>& env, const StateBase<T, TI>& state, RNG& rng){
+#ifdef L2F_SENSOR_SIM
+            return state.est_position[2] - state.floor_z;  // the estimator's height, as rl_trigger.py reads it
+#endif
+            T sigma = state.pos_noise_sigma[2] > 0 ? state.pos_noise_sigma[2] : (T)env.parameters.mdp.observation_noise.position;
+            T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM(), (T)0, sigma, rng);
+            return state.position[2] + state.glitch_offset[2] + noise - state.floor_z;
+        }
+        // Landing like the flight script (Mission::landing_cut), landing episodes only:
+        // cut the motors when the target is within cut_window of the floor and the
+        // estimated height is below the episode's cut height, or floor_timeout s after
+        // the target reached its lowest point. Sets state.landed and the touchdown
+        // speed of the free fall that follows, v = sqrt(v_down^2 + 2 g h).
+        template<typename DEVICE, typename SPEC, typename T, typename TI, typename RNG>
+        RL_TOOLS_FUNCTION_PLACEMENT void landing_cut(DEVICE& device, const Multirotor<SPEC>& env, StateBase<T, TI>& state, RNG& rng){
+            const auto& m = env.mission;
+            if(!m.landing_cut || state.task != 2 || state.landed != 0){
+                return;
+            }
+            T target_h = -state.floor_z;                  // target height above the floor
+            T t_low = state.traj[4] + state.traj[3];      // the target reaches its lowest point
+            bool cut = target_h < m.cut_window && estimated_height(device, env, state, rng) < state.cut_height;
+            bool timeout = state.traj_t >= t_low + m.floor_timeout;
+            if(cut || timeout){
+                T h = state.position[2] - state.floor_z;
+                h = h > 0 ? h : (T)0;
+                T v_down = state.linear_velocity[2] < 0 ? -state.linear_velocity[2] : (T)0;
+                state.touchdown_speed = math::sqrt(device.math, v_down * v_down + 2 * (T)9.81 * h);
+                state.landed = (cut || h < m.cut_max_height) ? 1 : 2;
+            }
         }
     }
     template<typename DEVICE, typename T, typename TI, typename SPEC>
@@ -692,6 +890,10 @@ namespace rl_tools{
             state.force[0] = random::normal_distribution::sample(random_dev, (T)distribution.mean, (T)distribution.std, rng);
             state.force[1] = random::normal_distribution::sample(random_dev, (T)distribution.mean, (T)distribution.std, rng);
             state.force[2] = random::normal_distribution::sample(random_dev, (T)distribution.mean, (T)distribution.std, rng);
+            // L2F_FORCE_SCALE (default 1: unchanged, same draws) scales the force's deviation
+            for(int i = 0; i < 3; i++){
+                state.force[i] = (T)distribution.mean + env.mission.force_scale * (state.force[i] - (T)distribution.mean);
+            }
         }
         {
             auto distribution = env.parameters.disturbances.random_torque;
@@ -767,7 +969,9 @@ namespace rl_tools{
                     set(observation, 0, i, state.position[i]);
                 }
                 else{
-                    T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM{}, (T)0, env.parameters.mdp.observation_noise.position, rng);
+                    // this episode's per-axis std if set (Mission::pos_noise_min/max), else the fixed one
+                    T sigma = state.pos_noise_sigma[i] > 0 ? state.pos_noise_sigma[i] : (T)env.parameters.mdp.observation_noise.position;
+                    T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM{}, (T)0, sigma, rng);
                     set(observation, 0, i, state.position[i] + noise);
                 }
             }
@@ -854,7 +1058,13 @@ namespace rl_tools{
                 }
                 else{
                     T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM{}, (T)0, env.parameters.mdp.observation_noise.angular_velocity, rng);
-                    set(observation, 0, i, state.angular_velocity[i] + noise);
+                    T w = state.angular_velocity[i] + noise;
+                    // the gyro's range: readings beyond it stay at the limit (Mission::gyro_clip)
+                    const T lim = env.mission.gyro_clip;
+                    if(lim > 0){
+                        w = w > lim ? lim : (w < -lim ? -lim : w);
+                    }
+                    set(observation, 0, i, w);
                 }
             }
             auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
@@ -936,6 +1146,47 @@ namespace rl_tools{
         using ENVIRONMENT = rl::environments::Multirotor<SPEC>;
         static_assert(OBS_SPEC::COLS == ENVIRONMENT::OBSERVATION_DIM);
         static_assert(OBS_SPEC::ROWS == 1);
+#ifdef L2F_SENSOR_SIM
+        if(env.mission.enabled){
+            // Sensor path: position, orientation and velocity from the estimator, angular
+            // velocity from the gyro sample, delay_steps old (interpolated, as below); no
+            // glitch (the estimator makes its own errors). Noise is in the sensors.
+            using T = typename SPEC::T;
+            using TI = typename DEVICE::index_t;
+            STATE est = state;
+            T cur[13], mixed[13];
+            rl::environments::multirotor::mission::estimate_world(state, cur);
+            T d = state.delay_steps > 2 ? (T)2 : (state.delay_steps < 0 ? (T)0 : state.delay_steps);
+            TI k = (TI)d;
+            T f = d - (T)k;
+            const T* a = k == 0 ? cur : state.est_prev[k - 1];
+            const T* b = k == 0 ? state.est_prev[0] : state.est_prev[k < 2 ? k : 1];
+            T dot = 0;
+            for(TI i = 3; i < 7; i++){
+                dot += a[i] * b[i];
+            }
+            T sign = dot < 0 ? -1 : 1;
+            for(TI i = 0; i < 13; i++){
+                T bi = (i >= 3 && i < 7) ? sign * b[i] : b[i];
+                mixed[i] = (1 - f) * a[i] + f * bi;
+            }
+            T qn = 0;
+            for(TI i = 3; i < 7; i++){
+                qn += mixed[i] * mixed[i];
+            }
+            qn = math::sqrt(device.math, qn);
+            for(TI i = 0; i < 3; i++){
+                est.position[i] = mixed[0 + i] - state.world_offset[i];
+                est.linear_velocity[i] = mixed[7 + i];
+                est.angular_velocity[i] = mixed[10 + i];
+            }
+            for(TI i = 0; i < 4; i++){
+                est.orientation[i] = mixed[3 + i] / qn;
+            }
+            rl::environments::multirotor::observe(device, env, est, typename ENVIRONMENT::Observation{}, observation, rng);
+            return;
+        }
+#endif
         if(env.mission.enabled && (state.delay_steps > 0 || state.glitch_steps > 0)){
             // State-estimate delay: the actor sees position, orientation and
             // velocities delay_steps old (interpolated between steps); the action
@@ -1082,6 +1333,12 @@ namespace rl_tools{
         }
         next_state.delay_steps = state.delay_steps;
         next_state.ground_effect = state.ground_effect;
+        for(TI i = 0; i < 3; i++){
+            next_state.pos_noise_sigma[i] = state.pos_noise_sigma[i];
+        }
+        next_state.cut_height = state.cut_height;
+        next_state.landed = state.landed;
+        next_state.touchdown_speed = state.touchdown_speed;
         for(TI i = 0; i < 4; i++){
             next_state.motor_gain[i] = state.motor_gain[i];
             next_state.motor_offset[i] = state.motor_offset[i];
@@ -1098,7 +1355,11 @@ namespace rl_tools{
             const T dt = env.parameters.integration.dt;
             const T leak = 1 - dt / (T)L2F_POS_INTEGRAL_TAU;
             for(TI i = 0; i < 3; i++){
+#ifdef L2F_SENSOR_SIM
+                T v = leak * state.pos_integral[i] + state.est_position[i] * dt;  // the drone integrates its estimate
+#else
                 T v = leak * state.pos_integral[i] + state.position[i] * dt;
+#endif
                 next_state.pos_integral[i] = v > (T)L2F_POS_INTEGRAL_MAX ? (T)L2F_POS_INTEGRAL_MAX : (v < -(T)L2F_POS_INTEGRAL_MAX ? -(T)L2F_POS_INTEGRAL_MAX : v);
             }
         }
@@ -1140,12 +1401,20 @@ namespace rl_tools{
                 next_state.linear_velocity[i] += state.traj[i] * env.parameters.integration.dt;
             }
         }
+#ifdef L2F_SENSOR_SIM
+        for(TI i = 0; i < 3; i++){
+            next_state.world_offset[i] = state.world_offset[i];
+        }
+#endif
         if(state.traj_type != 0){
             T p0[3], v0[3], p1[3], v1[3];
             rl::environments::multirotor::mission::target_at(device, state, t0, p0, v0);
             rl::environments::multirotor::mission::target_at(device, state, t1, p1, v1);
             for(TI i = 0; i < 3; i++){
                 T shift = p1[i] - p0[i];
+#ifdef L2F_SENSOR_SIM
+                next_state.world_offset[i] += shift;  // world = position + offset is unchanged
+#endif
                 next_state.position[i] -= shift;
                 next_state.prev[0][i] -= shift;
                 next_state.prev[1][i] -= shift;
@@ -1167,6 +1436,13 @@ namespace rl_tools{
                 next_state.angular_velocity[i] *= (T)0.5;
             }
         }
+#ifdef L2F_SENSOR_SIM
+        if(env.mission.enabled){
+            rl::environments::multirotor::mission::sensor_step(device, env, state, action, next_state, rng);
+        }
+#endif
+        // landing like the flight script: maybe cut the motors (ends the episode)
+        rl::environments::multirotor::mission::landing_cut(device, env, next_state, rng);
     }
 //    template<typename DEVICE, typename SPEC, typename T, typename TI, typename NEXT_COMPONENT>
 //    RL_TOOLS_FUNCTION_PLACEMENT void post_integration(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, rl::environments::multirotor::StateRotors<T, TI, NEXT_COMPONENT>& state) {
@@ -1281,12 +1557,25 @@ namespace rl_tools{
     RL_TOOLS_FUNCTION_PLACEMENT static bool terminated(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const typename rl::environments::Multirotor<SPEC>::State& state, RNG& rng){
         using T = typename SPEC::T;
         using TI = typename DEVICE::index_t;
+        // landing like the flight script: the motors were cut (a landing, or a failed
+        // landing; the reward tells them apart)
+        if(env.mission.enabled && state.landed != 0){
+            return true;
+        }
+#ifdef L2F_SENSOR_SIM
+        // the estimator failed (a firmware assert would halt the drone): a crash
+        if(env.mission.enabled && state.est_failed){
+            return true;
+        }
+#endif
         if(env.parameters.mdp.termination.enabled){
+            // rotation crash (Mission::omega_crash), else the preset's limit
+            const T w_lim = env.mission.omega_crash > 0 ? env.mission.omega_crash : (T)env.parameters.mdp.termination.angular_velocity_threshold;
             for(TI i = 0; i < 3; i++){
                 if(
                     math::abs(device.math, state.position[i]) > env.parameters.mdp.termination.position_threshold ||
                     math::abs(device.math, state.linear_velocity[i]) > env.parameters.mdp.termination.linear_velocity_threshold ||
-                    math::abs(device.math, state.angular_velocity[i]) > env.parameters.mdp.termination.angular_velocity_threshold
+                    math::abs(device.math, state.angular_velocity[i]) > w_lim
                 ){
                     return true;
                 }
