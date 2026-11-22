@@ -1,0 +1,466 @@
+<title>PyTorch Training Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&display=swap">
+<style>
+/* Layout: one reading column (~70ch); the plan runs as numbered steps, each a group of change cards; decided / deferred / open questions at the end. */
+:root {
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --fg: #1b2127;
+  --muted: #5b6672;
+  --line: #d9dee3;
+  --accent: #0b6e8a;
+  --accent-soft: #e2f0f4;
+  --cpp: #8a4b0b;
+  --cpp-soft: #f6ebdf;
+  --py: #2f6b2a;
+  --py-soft: #e5f0e2;
+  --warn: #8a5a00;
+  --warn-soft: #fbf1dc;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-head: "IBM Plex Sans Condensed", "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12171b; --surface: #182026; --fg: #e3e8ec; --muted: #9aa6b1; --line: #2b353d;
+    --accent: #5cc0dc; --accent-soft: #15323b; --cpp: #e0a466; --cpp-soft: #33261a;
+    --py: #8fd086; --py-soft: #1d3020; --warn: #e8bf62; --warn-soft: #352a12;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12171b; --surface: #182026; --fg: #e3e8ec; --muted: #9aa6b1; --line: #2b353d;
+  --accent: #5cc0dc; --accent-soft: #15323b; --cpp: #e0a466; --cpp-soft: #33261a;
+  --py: #8fd086; --py-soft: #1d3020; --warn: #e8bf62; --warn-soft: #352a12;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg);
+  font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 80px;
+}
+main { max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+header { display: flex; flex-direction: column; gap: 12px; }
+.eyebrow { font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--font-head); font-weight: 600; font-size: clamp(30px, 5vw, 42px); line-height: 1.1; margin: 0; text-wrap: balance; }
+h2 { font-family: var(--font-head); font-weight: 600; font-size: 26px; line-height: 1.2; margin: 0; text-wrap: balance; }
+h2 .step { font-family: var(--font-mono); font-size: 15px; color: var(--accent); font-weight: 500; display: block; letter-spacing: .04em; margin-bottom: 2px; }
+h3 { font-size: 17px; font-weight: 600; margin: 0; }
+p, ul, ol { margin: 0; max-width: 70ch; }
+ul, ol { padding-left: 1.3em; display: flex; flex-direction: column; gap: 6px; }
+section { display: flex; flex-direction: column; gap: 16px; }
+.lede { font-size: 18px; max-width: 66ch; }
+code, .mono { font-family: var(--font-mono); font-size: .88em; }
+code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { margin: 0; font-family: var(--font-mono); font-size: 13.5px; line-height: 1.55; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; overflow-x: auto; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.muted { color: var(--muted); }
+.status { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+.status p, .status ul { max-width: none; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-weight: 600; font-size: 12.5px; color: var(--muted); letter-spacing: .02em; background: var(--bg); }
+tr:last-child td { border-bottom: none; }
+td.num { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; }
+.tag { display: inline-block; font-family: var(--font-mono); font-size: 11.5px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; vertical-align: 2px; }
+.tag.cpp { background: var(--cpp-soft); color: var(--cpp); }
+.tag.py { background: var(--py-soft); color: var(--py); }
+.tag.both { background: var(--accent-soft); color: var(--accent); }
+.tag.draft { background: var(--warn-soft); color: var(--warn); }
+.tag.decided { background: var(--py-soft); color: var(--py); }
+.tag.proposed { background: var(--warn-soft); color: var(--warn); }
+.changes { display: flex; flex-direction: column; gap: 14px; }
+.change { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.change h3 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.change .id { font-family: var(--font-mono); font-size: 13px; color: var(--accent); }
+.change p, .change ul, .change ol { font-size: 15px; max-width: none; }
+.kv { display: grid; grid-template-columns: 92px 1fr; gap: 4px 12px; font-size: 14.5px; }
+.kv dt { color: var(--muted); font-size: 13px; padding-top: 1px; }
+.kv dd { margin: 0; min-width: 0; }
+.eq { font-family: var(--font-mono); font-size: 13.5px; line-height: 1.7; background: var(--bg); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; padding: 9px 13px; overflow-x: auto; white-space: pre; }
+.where { font-size: 14px; color: var(--muted); }
+.plain-list { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; max-width: none; }
+.plain-list li { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; font-size: 15px; display: flex; flex-direction: column; gap: 4px; }
+.plain-list .what { font-weight: 600; }
+.plain-list .ref { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.questions { counter-reset: q; list-style: none; padding: 0; display: flex; flex-direction: column; gap: 12px; max-width: none; }
+.questions li { counter-increment: q; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px 14px 56px; position: relative; display: flex; flex-direction: column; gap: 6px; }
+.questions li::before { content: "Q" counter(q); position: absolute; left: 16px; top: 14px; font-family: var(--font-mono); font-size: 13px; font-weight: 500; color: var(--warn); }
+.questions .q { font-weight: 600; }
+.questions .ctx { font-size: 14.5px; color: var(--muted); }
+.questions .rec { font-size: 14.5px; }
+.questions .rec b { color: var(--accent); font-weight: 600; }
+.questions .affects { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.sources { font-size: 14px; }
+.sources li { overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 16px; }
+@media (max-width: 520px) { .kv { grid-template-columns: 1fr; } .kv dt { padding-top: 6px; } }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">CrazyFlie-2.1 · l2f · branch feat/moo · plan of code changes · final draft for review</div>
+    <h1>PyTorch training and reward changes</h1>
+    <p class="lede">The planned code changes, in steps 0 to 6, each change with its check. Code that needs no measurements comes first, the survey on the drone sits in the middle, then calibration and validation, then flights. The simulator moves to simulated sensors running through the firmware's own Kalman filter. Decisions made, work put off, and open questions are at the end.</p>
+  </header>
+
+  <div class="status">
+    <h3>Status</h3>
+    <ul>
+      <li>Nothing in this plan is implemented, except the crash-penalty draft (B3: <code>L2F_CRASH_PENALTY</code> in <code>reward_functions/brushless.h</code>, <code>CRASH_PENALTY=</code> in <code>train_mission.sh</code>; default 0, not yet compiled). Pushed to <code>feat/moo</code> on 2026-11-21 with it: the stale ground-effect comment removed from <code>rl_trigger.py</code>, the formula rule in <code>AGENTS.md</code>, the <code>asd-ste100</code> skill with its Foundation mode, and this plan as <code>l2f/pytorch_training_plan.html</code>.</li>
+      <li>Rule for every change: the new behaviour sits behind an option, so the old recipe can still be reproduced. A change is kept only if it beats the baseline on 3 seeds (late-checkpoint medians, <code>moo_summary.py checkpoints</code>) without raising the crash rate, and then in flight.</li>
+      <li>Every sensor number is a parameter in one file, <code>config/sensors.yaml</code>, with a published prior and a measured value. Neither is trusted on its own: the survey (Step 4) flags any parameter where the two disagree by more than 2×, and each flag needs an explanation before its value is used.</li>
+    </ul>
+  </div>
+
+  <section id="architecture">
+    <h2>Simulator architecture <span class="tag decided">decided</span></h2>
+    <p>Keep the Flow deck (it gives a better state), and simulate what the drone's estimator actually does with it: simulated sensor readings go through the firmware's own Kalman filter, and the policy sees that filter's output.</p>
+<pre><code>new path    true state ──► sensor models ──► firmware Kalman filter ──► controller input ──► actor
+            (physics)     (sensors.yaml)    (kalman_core, mm_*)        (as rl_tools_controller.c)
+                 └──────────────────────────────────────────────────────────────────────► critic (true state)
+
+old path    true state + noise + delay + jumps ──────────────────────────────────────────► actor
+(kept)      baseline for the PyTorch match (A5), old recipes, and the interim per-axis noise (C5)</code></pre>
+    <ul>
+      <li><strong>The deck's effects are structural.</strong> Below 10 cm the firmware's flow model uses 0.1 m instead of the true height; the range sensor is only accurate from 4 cm; the flow is de-rotated with the gyro; the range reading is corrected for tilt and ignored above about 84°; Lighthouse and the range sensor are blended. Running the same estimator code gets all of these without a special rule for each.</li>
+      <li><strong>The parameters are physical.</strong> Noise densities, minimum ranges, fields of view and rates have published values and can be measured one by one.</li>
+      <li><strong>The errors get the right shape.</strong> Lighthouse V2 jitter is 0.7 mm, but its accuracy is about 1 cm with flight outliers up to 5 cm [6]: mostly slow error. Slow errors, the filter's lag and correlation, and jumps from base-station drop-outs come from the filter and the base-station geometry.</li>
+      <li><strong>Firmware changes can be tested in simulation</strong> before they are flashed, because it is the same code (E4).</li>
+    </ul>
+  </section>
+
+  <section id="parameters">
+    <h2>Sensor parameters <span class="tag both">config/sensors.yaml</span></h2>
+    <p>One entry per parameter: <code>prior</code> (with its source), <code>measured</code> (with date and method), <code>use</code> (which of the two the simulator takes), and <code>randomize: [lo, hi]</code> for per-episode domain randomization. Datasheet noise figures describe the sensor's electronics alone, so for anything that vibrates they are a lower bound, not the expected value.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Sensor</th><th>Published prior (source)</th><th>Firmware assumes</th><th>Measured / to measure (Step 4)</th></tr></thead>
+      <tbody>
+        <tr><td>Gyro, BMI088</td><td>Noise density 0.014 °/s/√Hz [1], which is 0.0024–0.004 rad/s RMS at 80–230 Hz bandwidth (RMS = density · √(1.22 · BW) [2])</td><td>Range ±2000°/s = ±34.9 rad/s; 80 Hz low-pass on the readings (<code>sensors_bmi088_bmp3xx.c</code>)</td><td>0.069 rad/s (<code>parameters.h</code>, PID hover + still tests): 17–29× the electronic noise, so vibration dominates. Measure: hover spectrum against motor RPM.</td></tr>
+        <tr><td>Accelerometer, BMI088</td><td>175–230 µg/√Hz; Bosch's own documents disagree [1]</td><td>—</td><td>Vibration dominates in flight. Measure with the gyro.</td></tr>
+        <tr><td>Range, VL53L1X</td><td>Accurate only from 4 cm: "under this minimum distance, the sensor detects a target, but the measurement is not accurate" (§7.3). Ranging error ±20 mm dark, ±25 mm in ambient light (Tables 17–19, 100 ms budget). Repeatability ±1% to ±0.15% (§7.2.2). FoV 27° (15–27° programmable). Up to 50 Hz [3]</td><td>σ = 2.5 mm up to 1.5 m (<code>zranger2.c</code>); 25 ms budget, about 40 Hz; 15° cone (<code>mm_tof.c</code>)</td><td>Measure: σ and bias against known heights on spacers, including sensor distances below 4 cm, and the sensor's distance from the floor when landed.</td></tr>
+        <tr><td>Optical flow, PMW3901</td><td>Working range from 80 mm; viewing angle 42°; up to 7.4 rad/s of image motion (0.74 m/s at 10 cm, 2.2 m/s at 30 cm); at least 110 lux (Table 3) [4]. "Works best on matt surfaces" [5]</td><td>35 pixels over 0.717 rad; σ = 2 counts of <code>deltaX</code> (0.2 pixel); height clamped at ≥ 0.1 m (<code>mm_flow.c</code>, <code>flowdeck_v1v2.c</code>)</td><td>Measure: speed ratio on the slide track at several heights, and flow quality (<code>motion.squal</code>) on each floor used.</td></tr>
+        <tr><td>Lighthouse V2 (<code>systemType: 2</code>)</td><td>Onboard-filter jitter 0.7 mm stationary (RMS of consecutive differences, Table III); accuracy about 1 cm on average, up to 5 cm outliers in flight [6][7]</td><td>Sweep-angle σ = 0.001 rad (<code>sweepStd2</code>, <code>lighthouse_position_est.c</code>); geometry from <code>config/IH222A/config.yaml</code></td><td>Our base stations are only 15–24° down; in-flight jumps of 10–37 cm (README). Measure: still noise at several spots; drop-outs and jumps from flight logs.</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section id="step0">
+    <h2><span class="step">Step 0</span>Setup and fixes</h2>
+    <div class="changes">
+      <div class="change">
+        <h3><span class="id">A1</span> TorchJD fork installed <span class="tag py">setup</span></h3>
+        <p>The clone at <code>../torchjd</code> is on <code>main</code>, which has no PGA aggregators, and it is not installed in any Python on this Mac.</p>
+<pre><code>git -C ../torchjd switch feat/pga-aggregators
+pip install -e "../torchjd[quadprog_projector]"</code></pre>
+        <dl class="kv"><dt>Check</dt><dd><code>python l2f/sim/check_aggregators.py</code> runs every comparison, PGA included.</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">F1–F4</span> Fixes from the review <span class="tag both">docs</span></h3>
+        <ul>
+          <li><strong>F1</strong> l2f README "Start here" table: the <code>curriculum.h</code> row calls it the upstream curriculum; the mission ramp in it is the team's own.</li>
+          <li><strong>F2</strong> <code>rl_trigger.py</code> <code>preflight()</code> docstring says it checks arming; it checks the emergency-stop lock (arming is <code>wait_armed()</code>).</li>
+          <li><strong>F3</strong> <code>train_mission.sh</code>: "MOO_NORM … did not fly" means 100% of episodes crashed in simulation.</li>
+          <li><strong>F4</strong> <code>asd-ste100</code> skill: add the foundation triggers ("explain from the basics", "help me understand", "explain again") to its description, so the Foundation mode can load.</li>
+        </ul>
+      </div>
+      <div class="change">
+        <h3><span class="id">F5</span> A working C++ build <span class="tag cpp">C++</span></h3>
+        <p>Build the training and evaluation programs on WSL Ubuntu (CMake configure fails on this Mac), including the crash-penalty draft, which has never been compiled. Its logic was checked by reading: MOO part 0 has weight 1 and holds −P on a crash, so the parts add up; the default gives exactly +0.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="step1">
+    <h2><span class="step">Step 1</span>Shared simulator and reward changes, on today's observation path</h2>
+    <p>These live in the C++ simulator headers (<code>reward_functions/*.h</code>, <code>operations_generic.h</code>), which both the current C++ trainer and the Python binding use, so they are written once. Train them with the C++ trainer, one change at a time, using the interim noise values: each change is compared against a baseline run in the same simulator, so both sides use the same values. The survey script (D3) and the gyro logging (D2) are written in this step too, since they need no flights.</p>
+    <div class="changes">
+      <div class="change">
+        <h3><span class="id">C1</span> Gyro range limit: reading clipped like the sensor <span class="tag decided">decided</span><span class="tag cpp">C++</span></h3>
+        <div class="eq">ω_measured,i = clip(ω_i + noise_i, −34.9, +34.9) rad/s       firmware sets the BMI088 to ±2000°/s</div>
+        <p class="where">In the actor's observation only. With the crash (C2) at the same rate, the clip acts in training only on the noise tail; it matters in evaluation and in runs with C2 off. On the new path it becomes part of the gyro model (E2).</p>
+        <dl class="kv"><dt>Option</dt><dd><code>L2F_GYRO_CLIP</code>; on for new training</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">C2</span> Rotation beyond the gyro's range is a crash <span class="tag decided">decided</span><span class="tag cpp">C++</span></h3>
+        <div class="eq">crash if |ω_x|, |ω_y| or |ω_z| > ω_crash          ω_crash = 34.9 rad/s by default (true rate, per axis)</div>
+        <p class="where">Today the threshold is 1000 rad/s and never triggers. Missions peak at 14.6 rad/s. A rule that tolerates brief saturation, for flips, is deferred (Q11).</p>
+        <dl class="kv"><dt>Option</dt><dd><code>L2F_OMEGA_CRASH=&lt;rad/s&gt;</code>; on (34.9) for new training</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">C5</span> Per-axis position noise, interim <span class="tag decided">decided</span><span class="tag cpp">C++</span></h3>
+        <div class="eq">per episode, per axis i ∈ {x, y, z}:   σ_i ~ U(σ_min,i, σ_max,i),   n_i,t ~ N(0, σ_i²)
+until the survey:                     x, y: 3–10 mm      z: 5 mm fixed (today's value)</div>
+        <p class="where">On the old path only, until the new path replaces it after Step 5. Ranges come from <code>noise_measured.json</code> after the survey.</p>
+        <dl class="kv"><dt>Option</dt><dd>runtime <code>L2F_POS_NOISE_MIN_X/Y/Z</code>, <code>L2F_POS_NOISE_MAX_X/Y/Z</code>; unset keeps the fixed 5 mm</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">C3, D1</span> Landing the same way as the flight script, in training and evaluation <span class="tag decided">decided</span><span class="tag both">C++ and Python</span></h3>
+        <ol>
+          <li>The target descends at v_d (0.1–0.25 m/s) to 2 cm below the floor.</li>
+          <li>The motors cut when the target is in its last 10 cm and the estimated height is below h_cut (Q2), or 2 s after the target reaches the floor.</li>
+          <li>The drone falls; the episode ends as a landing. Reward on that step: c / (1 − γ) = 200 with the bonus, 0 without.</li>
+        </ol>
+        <div class="eq">v_touch = √(v_d² + 2·g·h_cut)        v_d = 0.1 m/s:  2 cm → 0.63 m/s,  3 cm → 0.77 m/s,  6 cm (flight today) → 1.09 m/s</div>
+        <p class="where">Applies to the training landing episodes and to <code>evaluate_robustness</code>'s mission test. The values (<code>below</code>, the 10 cm window, h_cut, the timeout, v_d) are defined once in <code>config/landing.yaml</code>, read by <code>rl_trigger.py</code> (D1: its <code>--cut-height</code> default) and by training. The cut uses the estimated height, so its realism improves once the new path is in use (Steps 2 and 5). The lower cut height is flown only after Step 5 decides it.</p>
+        <dl class="kv"><dt>Option</dt><dd><code>L2F_LANDING_CUT</code>, default off until checked</dd><dt>Report</dt><dd>height at the cut, touchdown speed, share of landings that touched down before the cut</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">B1</span> Zig-zag penalty replaces action rate <span class="tag decided">decided</span><span class="tag cpp">C++</span></h3>
+        <div class="eq">today:  C_rate   = Σ_i (a_i,t − a_i,t−1)²                weight 1
+new:    C_zigzag = Σ_i (a_i,t − 2·a_i,t−1 + a_i,t−2)²      weight 0.25 (start)</div>
+        <p class="where">At 50 Hz chatter, 0.25 · 16 = 1 · 4, so chatter costs the same as today; at 2 Hz manoeuvres about 60× less. The state keeps at least 2 past actions; the actor's input does not change. The C++ default stays <code>rate</code> so old recipes reproduce.</p>
+        <dl class="kv"><dt>Option</dt><dd><code>L2F_SMOOTHING=rate|zigzag|none</code> (<code>SMOOTHING=</code> in <code>train_mission.sh</code>)</dd><dt>Compare</dt><dd>rate vs zigzag vs none, 3 seeds: jitter, circle error, crash rate, response to a target step</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">B3</span> Crash penalty, with the survival bonus kept <span class="tag decided">decided</span><span class="tag draft">C++ drafted</span></h3>
+        <div class="eq">r_t = −P on a crash         bonus c = 2 kept by default; SURVIVAL_BONUS=0 for the test without it
+effective cost of a crash ≈ c / (1 − γ) + P = 200 + P</div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Run</th><th>Bonus c</th><th>Penalty P</th><th>Effective crash cost</th></tr></thead>
+          <tbody>
+            <tr><td>baseline (today)</td><td class="num">2</td><td class="num">0</td><td class="num">200</td></tr>
+            <tr><td>no bonus, same incentive</td><td class="num">0</td><td class="num">200</td><td class="num">200</td></tr>
+            <tr><td>bonus + penalty</td><td class="num">2</td><td class="num">200</td><td class="num">400</td></tr>
+            <tr><td>no bonus, same incentive</td><td class="num">0</td><td class="num">400</td><td class="num">400</td></tr>
+          </tbody>
+        </table></div>
+        <dl class="kv"><dt>Measure</dt><dd>crash rate, the 1%-jump evaluation, circle error, landing results</dd><dt>Decides</dt><dd>Q1</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">D2</span> Gyro-saturation count in flight logs <span class="tag decided">decided</span><span class="tag py">rl_trigger.py</span></h3>
+        <p>The real-flight counterpart of C1 and C2: it shows whether a flight ever reached the gyro's range, where the reading stops being correct. <code>rl_trigger.py</code> does not log the gyro today, so this adds a log block with <code>gyro.x</code>, <code>gyro.y</code>, <code>gyro.z</code> at 10 ms (100 Hz; saturation events last tens of milliseconds, and the show run's lasted 5 samples at 10 ms), written to the flight CSV. The flight summary reports:</p>
+        <div class="eq">saturated sample:  max(|gyro.x|, |gyro.y|, |gyro.z|) ≥ 1990°/s      (just under the ±2000°/s range;
+                                                                   readings can exceed 2000 slightly after bias removal)
+summary:           count of saturated samples · longest run of consecutive ones (ms) · peak per axis</div>
+        <p class="where">Once the reading is at the range, the log cannot show how fast the drone really turned, only that it reached the range and for how long. The longest run bounds how long the estimator integrated a wrong rate.</p>
+        <dl class="kv"><dt>Check</dt><dd>on a <code>flip.py</code> log, the count matches the samples at the range found by reading the CSV directly</dd></dl>
+      </div>
+    </div>
+  </section>
+
+  <section id="step2">
+    <h2><span class="step">Step 2</span>Sensor simulation with the firmware's Kalman filter, built with published values <span class="tag decided">decided</span></h2>
+    <p>Built and unit-checked now, with the published priors in <code>config/sensors.yaml</code> (and, for gyro vibration, today's measured 0.069 rad/s as an interim value). Everything that needs measured data, and all training on this path, waits for Step 5: training on unchecked priors would risk repeating the paper's gyro-noise mistake.</p>
+    <div class="changes">
+      <div class="change">
+        <h3><span class="id">E1</span> The flown estimator as a library, checked by replay <span class="tag cpp">C++</span></h3>
+        <p>From the same firmware tree that <code>build_firmware.sh</code> flashes (2026.08 plus <code>patch_firmware.py</code>), compile into a static library:</p>
+        <ul>
+          <li><code>kalman_core.c</code>, <code>mm_tof.c</code>, <code>mm_flow.c</code>, <code>mm_sweep_angles.c</code></li>
+          <li>the Lighthouse preprocessing (<code>lighthouse_position_est.c</code>) and outlier filter (<code>outlierFilterLighthouse.c</code>)</li>
+          <li>the estimator loop of <code>estimator_kalman.c</code> re-implemented without FreeRTOS, as the firmware's own Python emulator does: IMU averaged over 10 ms, prediction at 100 Hz with the "flying" flag, each measurement applied when it arrives</li>
+        </ul>
+        <p>The firmware's Python bindings already wrap the core, ToF and flow parts (<code>bindings/cffirmware.i</code>, <code>bindings/util/estimator_kalman_emulator.py</code>); the sweep model and the Lighthouse preprocessing still have to be added to them for check 1.</p>
+        <dl class="kv"><dt>Checks</dt><dd><ol>
+          <li>Same inputs through the C++ library and through Bitcraze's Python emulator give the same estimate to float precision.</li>
+          <li>The 100 Hz survey logs (D3) replayed through the library reproduce the logged estimate within a tolerance set from the first runs (for example a few mm of position RMS).</li>
+          <li>Only if D4 is built: the D4 stream replayed through the library reproduces the streamed estimate to float precision.</li>
+        </ol></dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">E2</span> Sensor models <span class="tag cpp">C++</span></h3>
+        <div class="eq">gyro    for the filter:  10 ms average of (ω + b_g + n_g + n_vib(rpm)), clipped at ±34.9 rad/s
+        for the actor:   LPF₈₀(…) latest sample, as rl_tools_controller.c reads sensors->gyro
+accel   10 ms average of Rᵀ(a − g) + b_a + n_a + n_vib(rpm)
+range   d = (z_sensor − z_floor) / cos α + e(d) + n_r,   e, n_r from the spacer test        ~40 Hz
+        d &lt; 0.04 m: the measured below-minimum behaviour (§7.3: not accurate)
+flow    n_x = (Δt · 35 / 0.717) · (v_x · cos θ / h_cam − ω_y) + n_f,  quantized              100 Hz
+        out of specification when h_cam &lt; 0.08 m or |v / h| > 7.4 rad/s, or on low quality
+        (squal): behaviour from the slide test (the sensor may read wrongly, not only stop)
+LH      sweep angles from the base-station geometry (+ calibration error δ_geo), σ_angle,
+        drop-outs as a random process with the logged rate and duration</div>
+        <p class="where">The filter only ever sees the 10 ms IMU averages, so the model produces those directly; their noise is the measured noise of the average (white electronic noise shrinks by √10 over 10 samples, vibration tones may not). Every constant comes from <code>config/sensors.yaml</code> and can be randomized per episode within its <code>randomize</code> range. n_vib, measured in the hover mode against motor RPM, is what makes the in-flight gyro noise 0.069 rad/s.</p>
+        <dl class="kv"><dt>Check</dt><dd>each simulated sensor's σ, spectrum and r₁ match the survey's</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">E3</span> Closed loop <span class="tag cpp">C++</span></h3>
+        <p>The actor's input is built from the in-simulation estimate exactly as <code>rl_tools_controller.c</code> builds it on the drone: position, velocity and orientation from the estimate, angular velocity from the filtered gyro. Each episode starts with the filter converged at the start state, as after <code>reset_estimator</code>. The critic keeps the true state. The 0–12 ms delay randomization stays as a robustness margin on top of the filter's own lag.</p>
+        <dl class="kv"><dt>Option</dt><dd><code>L2F_SENSOR_SIM</code>, default off (old path)</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">E4</span> Keep the Flow deck inside its specifications, on the drone and in simulation <span class="tag proposed">Q13</span><span class="tag both">firmware + rl_trigger.py</span></h3>
+        <ul>
+          <li><strong>Flow off below 10 cm.</strong> <code>rl_trigger.py</code> sets <code>motion.disable = 1</code> when the estimated height drops below 0.1 m on landing and clears it above 0.1 m on take-off. The flow sensor is outside its working range there (from 80 mm), and the firmware's flow model already substitutes 0.1 m for the height, which would make the flow alone report v · (0.1 / h), 3.3× at 3 cm.</li>
+          <li><strong>Range sensor down-weighted below 4 cm.</strong> A patch in <code>patch_firmware.py</code> raises the reading's σ (or skips it) below a sensor distance of 4 cm, where the datasheet does not guarantee accuracy. Today the firmware gives it 2.5 mm there.</li>
+          <li>The same switches run in the simulator, because the simulator runs the same estimator code (E1).</li>
+        </ul>
+        <dl class="kv"><dt>Check</dt><dd>survey <code>heights</code> and <code>slide</code> modes repeated with the patch: height bias and speed ratio in the last 10 cm</dd></dl>
+      </div>
+    </div>
+  </section>
+
+  <section id="step3">
+    <h2><span class="step">Step 3</span>Training in PyTorch, in parallel with Steps 1 and 2</h2>
+    <p>The training loop moves to PyTorch and TorchJD; the simulator stays C++ and is called from Python, with both observation paths available.</p>
+    <div class="changes">
+      <div class="change">
+        <h3><span class="id">A2</span> Simulator as a Python module <span class="tag cpp">C++</span><span class="tag py">Python</span></h3>
+        <p>pybind11 module <code>l2f_sim</code> built from the existing headers with the same <code>-D</code> flags. <code>Sim(n_envs, seed)</code>, <code>reset(mask)</code>, <code>observe()</code> (actor and critic observations), <code>step(actions)</code> (unweighted reward parts, crash, landed, truncated, task id), <code>set_progress(p)</code>, <code>info()</code>.</p>
+        <dl class="kv"><dt>Check</dt><dd>identical observations and rewards to the C++ program for a fixed seed and actions</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">A3</span> Networks and checkpoint export <span class="tag py">Python</span><span class="tag cpp">C++ tool</span></h3>
+        <p>Actor and twin critics as in <code>src/config/</code> (3 dense layers, 64 hidden, fast-tanh, tanh output; Adam lr 1e-3, ε 1e-7, RLtools-style weight decay 1e-4). A writer for the RLtools <code>.h5</code> layout and a tool converting it to the firmware's <code>actor.h</code>.</p>
+        <dl class="kv"><dt>Check</dt><dd>C++ checkpoint → PyTorch → back gives the same outputs (about 1e-6) and the same <code>evaluate_robustness</code> numbers</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">A4</span> TD3, replay buffer, curriculum, checkpoints <span class="tag py">Python</span></h3>
+        <p>The C++ recipe's settings (batch 256, γ 0.99, critic every 10 steps, actor and targets every 20, warm-up 15k / 30k, target noise σ 0.2 clip 0.5, Polyak 0.995, exploration σ 0.1 decaying ×0.9 every 100k after 500k, checkpoints every 100k). The buffer stores the unweighted reward parts, so the curriculum's weight changes need no recomputation: r = Σ_k w_k(step) · u_k at sampling time.</p>
+      </div>
+      <div class="change">
+        <h3><span class="id">A5</span> Statistical match with the C++ runs <span class="tag both">gate</span></h3>
+        <p>I1 and E with 3 seeds each, all new options off, on the old observation path. Late-checkpoint medians within the seed-to-seed spread of the README tables. Until this passes, no PyTorch result is compared with flown policies.</p>
+      </div>
+      <div class="change">
+        <h3><span class="id">A6</span> MOO with TorchJD <span class="tag py">Python</span></h3>
+<pre><code>losses = [-q_k(batch).mean() for k in objectives]
+backward(losses, inputs=actor.parameters())     # torchjd.autojac
+jac_to_grad(actor.parameters(), aggregator)     # UPGrad(), SVD-PGA, ...</code></pre>
+        <p class="where">Framing A (reward parts; the action-rate part becomes the zig-zag part, the crash penalty sits in the survival part) and framing B (tasks). <code>AGG=sum</code> must reproduce the single-critic result first.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="step4">
+    <h2><span class="step">Step 4</span>Measure on the real drone</h2>
+    <p>Run the survey as soon as its script (written in Step 1) is ready; it needs only the drone and a few hours, so it can run while Steps 1–3 are coded. The latest sensible point is before Step 5: before any training on the new path, and before flying a lower cut height or the deck changes.</p>
+    <div class="changes">
+      <div class="change">
+        <h3><span class="id">D3</span> Sensor survey <span class="tag py">new script</span><span class="tag decided">decided</span></h3>
+        <p>A new script, <code>noise_survey.py</code> (logging through <code>run_log</code>). Every survey flight is flown in the learned-flight configuration, with only the Lighthouse and Flow decks and no AI deck, so the measured vibration matches the real flights (a heavier drone hovers at higher motor RPM and vibrates differently). It records the raw sensor readings that go into the estimator and the estimate itself, so it calibrates the new path (Step 2) and the old one (C5):</p>
+        <ul>
+          <li>raw: <code>gyro.*</code>, <code>acc.*</code>, <code>range.zrange</code>, <code>motion.deltaX</code>, <code>motion.deltaY</code>, <code>motion.squal</code>, motor RPM (<code>motor.m*_rpm</code>), and the Lighthouse angles (<code>lighthouse</code> log group; which angles it carries for Lighthouse V2 is to be checked)</li>
+          <li>estimate: <code>stateEstimate.*</code></li>
+        </ul>
+        <p>cflib's logging runs at most at 100 Hz per log block (the period is set in 10 ms units, <code>cflib/crazyflie/log.py</code>), so this capture is 100 Hz, split over several log blocks. It is enough for every statistic below and for the tolerance replay in E1. Exact replay needs D4. Five modes:</p>
+        <ol>
+          <li><strong><code>still</code></strong>: on the floor, motors off, at several spots including the take-off and landing spot. Per spot: σ, mean, and the height offset from the take-off spot.</li>
+          <li><strong><code>heights</code></strong>: resting on spacers of known height (0, 1, 2, 3, 5, 10 cm). Gives the range sensor's bias and σ against a known distance, including below its 4 cm minimum, and its distance from the floor when landed.</li>
+          <li><strong><code>hover</code></strong>: stock-PID hovers at several heights (for example 0.3, 0.6, 1.0, 1.5 m). Noise in flight = x − lowpass(x) with a 5 Hz centred low-pass; gyro and accelerometer spectra against motor RPM (the vibration model).</li>
+          <li><strong><code>slide</code></strong>: on a spacer, pushed along a timed straight 1 m track. Ratio of estimated to true speed (distance / time) at each spacer height, with flow on and off.</li>
+          <li><strong><code>logs</code></strong>: reads existing <code>rl_trigger</code> flight logs (on the flying machine) for Lighthouse drop-outs and jumps: rate, size, duration, direction.</li>
+        </ol>
+        <div class="eq">σ_q,i = std(x_noise)                    per quantity q, axis i, spot / height / hover
+r₁    = corr(x_noise,t , x_noise,t−1)   lag-1 autocorrelation (≈ 0: white)
+g(h)  = mean(v_estimated) / (distance / time)</div>
+        <p>It writes the <code>measured</code> fields of <code>config/sensors.yaml</code>, and <code>l2f/sim/noise_measured.json</code> (estimate-level statistics for the old path), and flags every parameter where measurement and prior differ by more than 2×.</p>
+        <dl class="kv"><dt>Feeds</dt><dd>C5, Step 2, Q2 (cut height), all through Step 5</dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">D4</span> Estimator-input streamer through the AI deck <span class="tag proposed">optional</span><span class="tag cpp">firmware app</span><span class="tag py">host script</span></h3>
+        <p>Built only if E1's check 2 (the tolerance replay of the 100 Hz survey logs) shows differences that cannot be explained (Q12). It gives exact replay without an SD card deck. The AI deck is needed for nothing else: not for the survey, not for training, not for learned flights. A small firmware app sends what the estimator consumes, timestamped, as CPX packets to the AI deck, whose ESP32 forwards them over WiFi to a host script:</p>
+        <ul>
+          <li>the 10 ms gyro and accelerometer averages that the prediction step uses (<code>axis3fSubSamplerFinalize</code> → <code>kalmanCorePredict</code>, <code>estimator_kalman.c</code>), and the "flying" flag it is called with</li>
+          <li>every measurement event the firmware already defines for SD-card logging: <code>estTOF</code>, <code>estFlow</code>, <code>estSweepAngle</code> (<code>estimator.c</code>), in the format <code>bindings/util/sd_card_file_runner.py</code> reads</li>
+          <li>the estimate after each prediction</li>
+        </ul>
+        <div class="eq">data rate ≈ IMU averages 100 Hz · 28 B + ToF 40 Hz · 12 B + flow 100 Hz · 12 B + sweeps ≈ 400 /s · 12 B ≈ 9 kB/s
+link: CPX UART to the AI deck at 576,000 baud (Kconfig default) ≈ 57 kB/s</div>
+        <p class="where">The AI deck adds mass, so it is fitted only on these replay flights, never on survey or learned flights. The mass of each replay flight is recorded for the replay check (E5).</p>
+        <dl class="kv"><dt>Check</dt><dd>no dropped packets over a 2-minute hover (sequence numbers); the streamed estimate equals the logged <code>stateEstimate</code></dd></dl>
+      </div>
+      <div class="change">
+        <h3><span class="id">R1</span> Base-station placement check <span class="tag both">setup</span></h3>
+        <p>The README notes the base stations are only 15–24° down, which makes in-flight jumps worse, "especially high up". Mount them higher or angle them more steeply if the room allows; confirm with <code>lighthouse_check.py</code> and the survey's <code>still</code> and <code>logs</code> modes before and after. Fewer jumps means fewer failures to train against.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="step5">
+    <h2><span class="step">Step 5</span>Calibrate and validate with the measurements</h2>
+    <ol>
+      <li>Fill the <code>measured</code> fields of <code>config/sensors.yaml</code> from the survey, explain every flagged parameter (prior and measurement more than 2× apart), and set <code>use</code> and <code>randomize</code>.</li>
+      <li>Set C5's per-axis noise ranges from <code>noise_measured.json</code>.</li>
+      <li>Run E2's check (each simulated sensor's σ, spectrum and r₁ against the survey) and E1's check 2 (tolerance replay of the survey logs). Build D4 and run check 3 only if check 2 shows differences that cannot be explained.</li>
+      <li>Decide the cut height (Q2) from the spacer test; set it in <code>config/landing.yaml</code>, which gives D1's lower <code>--cut-height</code>.</li>
+      <li>Confirm the deck changes (E4, Q13) with the repeated <code>heights</code> and <code>slide</code> runs, then flash the firmware patch.</li>
+    </ol>
+    <div class="changes">
+      <div class="change">
+        <h3><span class="id">E5</span> Validation, speed, and training <span class="tag both">C++ and Python</span></h3>
+        <ol>
+          <li><strong>Replay check:</strong> feed logged motor commands from real flights to the simulator from the logged start state, with the mass and deck configuration of that flight; compare the simulated estimate with the logged estimate, and the motion with the logged motion. Shows remaining gaps such as air drag (Q6).</li>
+          <li><strong>Speed:</strong> training steps per second with and without <code>L2F_SENSOR_SIM</code>.</li>
+          <li><strong>Training:</strong> the new path against the Step 1 baseline, 3 seeds, then flights.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="step6">
+    <h2><span class="step">Step 6</span>Flights</h2>
+    <p>Fly the winners of Steps 1, 3 and 5 next to the current policies (I1, E) on the standard missions, with the lower cut height once Q2 is decided. Each flight log feeds the survey's <code>logs</code> mode and the replay check.</p>
+  </section>
+
+  <section id="decided">
+    <h2>Decided</h2>
+    <ul class="plain-list">
+      <li><span class="what">Simulated sensors through the firmware's own Kalman filter (option B) is the simulator architecture; today's path stays as the baseline.</span><span class="ref">Architecture, Steps 2 and 5</span></li>
+      <li><span class="what">Keep the Flow deck, including its optical flow: it gives a better state.</span><span class="ref">Architecture, E4</span></li>
+      <li><span class="what">No Micro SD card deck: the survey logs over the radio at 100 Hz. The AI deck is used only for optional exact-replay flights, never on survey or learned flights.</span><span class="ref">D3, D4</span></li>
+      <li><span class="what">The simulator clips the gyro reading at ±34.9 rad/s, and a faster rotation on any axis is a crash (34.9 rad/s by default).</span><span class="ref">C1, C2</span></li>
+      <li><span class="what">Position noise is drawn per episode with its own range per axis (interim, old path).</span><span class="ref">C5</span></li>
+      <li><span class="what">The flight script's landing procedure is copied into training and evaluation, with one shared set of values.</span><span class="ref">C3, D1</span></li>
+      <li><span class="what">Zig-zag replaces action rate, checked against action rate and no smoothing term.</span><span class="ref">B1</span></li>
+      <li><span class="what">The survival bonus stays; a crash penalty is added and tested with and without the bonus.</span><span class="ref">B3</span></li>
+      <li><span class="what">Gyro saturation is counted in flight logs; the energy measure is deferred.</span><span class="ref">D2, Deferred</span></li>
+      <li><span class="what">Sensor numbers are parameters with a published prior and a measurement, re-measured on the drone before use.</span><span class="ref">config/sensors.yaml, D3</span></li>
+      <li><span class="what">The stale ground-effect comment in <code>rl_trigger.py</code> is removed (done, uncommitted).</span><span class="ref">Status</span></li>
+    </ul>
+  </section>
+
+  <section id="deferred">
+    <h2>Deferred</h2>
+    <ul class="plain-list">
+      <li><span class="what">Constrained RL with λ (PID Lagrangian).</span><span>After the reward changes. Design notes still apply: per-alive-step averages measured on noise-free evaluation episodes, λ = 0 during warm-up, a loose limit tightened over the mission ramp, a margin for the simulation-to-flight gap.</span></li>
+      <li><span class="what">CAPS smoothness terms.</span><span>Not used now that zig-zag replaces action rate (Q8).</span></li>
+      <li><span class="what">Energy measure, and an optional energy cost (formerly B2).</span><span>E_t = Σ_i (ω_i / ω_hover)³ (rotor power ∝ ω³, ω_hover = 15,460 rpm), cost C_energy = E_t − 4. Comes back if battery endurance becomes a goal (Q3). Nothing is lost by waiting: it is an evaluation-time number, so it can be computed later for any saved checkpoint, and the flight logs already record measured motor RPM and battery voltage.</span></li>
+      <li><span class="what">A crash rule that tolerates brief gyro saturation, for flips.</span><span>Count the rotation the saturated gyro cannot see, e_t = e_t−1 + max(0, |ω_t| − L) · Δt per axis, and crash when e_t > θ_max. Becomes meaningful with the new path (Steps 2 and 5), where the attitude error that saturation causes comes from the estimator itself (Q11).</span></li>
+      <li><span class="what">Orientation and effort measured against the manoeuvre.</span><span>For aggressive flight: f_ref = m · (a_target − g_vec), C_orientation = 1 − ⟨q, q_ref⟩², C_effort = Σ_i (a_i − a_ref)². At today's circle the fixed-target penalty is about 1% of the reward; at 3 m/s about 49% (Q4, Q7).</span></li>
+    </ul>
+  </section>
+
+  <section id="questions">
+    <h2>Open questions</h2>
+    <ol class="questions">
+      <li><span class="q">Crash penalty size P?</span><span class="rec"><b>Recommendation:</b> decide from B3's 4-run table.</span><span class="affects">affects B3</span></li>
+      <li><span class="q">Cut height, now that the range sensor is only accurate from 4 cm?</span><span class="ctx">Lower is softer (0.63 m/s at 2 cm, 0.77 m/s at 3 cm), but near the floor the height comes mostly from the range sensor, which is out of specification below a sensor distance of 4 cm. The cut should happen while the sensor is still in specification: h_cut + (the sensor's distance from the floor when landed) ≥ 4 cm, plus margin. With flow switched off below 10 cm (E4), velocity there comes from Lighthouse and the IMU.</span><span class="rec"><b>Recommendation:</b> pick h_cut from the survey's <code>heights</code> mode. Aim the effort cost at idle once the landing target has reached the floor.</span><span class="affects">affects C3, D1, E4</span></li>
+      <li><span class="q">Is battery endurance a training goal?</span><span class="ctx">If yes, the deferred energy measure comes back, with a cost weight; if no, it stays deferred.</span><span class="affects">affects Deferred (energy)</span></li>
+      <li><span class="q">Reference-relative orientation and effort costs now, or only for aggressive flight?</span><span class="rec"><b>Recommendation:</b> with aggressive flight (Q7).</span><span class="affects">affects Deferred</span></li>
+      <li><span class="q">Keep the drafted C++ crash penalty (commit it after F5)?</span><span class="rec"><b>Recommendation:</b> yes; Step 1 is C++.</span><span class="affects">affects B3</span></li>
+      <li><span class="q">Add air drag to the simulator?</span><span class="ctx">Not modelled today. Decide from the replay check (E5).</span><span class="affects">affects E5</span></li>
+      <li><span class="q">What does "aggressive flight" mean in numbers?</span><span class="ctx">Target speeds, accelerations and manoeuvres (circle speed, flips). Also sets whether the flow sensor's 7.4 rad/s limit matters (0.74 m/s at 10 cm, 2.2 m/s at 30 cm).</span><span class="affects">affects Deferred</span></li>
+      <li><span class="q">CAPS: drop it, or keep it deferred as a fallback if zig-zag leaves jitter too high?</span><span class="rec"><b>Recommendation:</b> keep it deferred.</span><span class="affects">affects Deferred</span></li>
+      <li><span class="q">Run the Step 1 changes in C++ now, before the PyTorch port?</span><span class="ctx">They live in the simulator headers that both trainers use, so there is no double work.</span><span class="rec"><b>Recommendation:</b> yes, as Step 1 is written.</span><span class="affects">affects order</span></li>
+      <li><span class="q">Training platform: WSL Ubuntu only, or also macOS?</span><span class="ctx">The C++ build has never run on this Mac; CMake configure fails here.</span><span class="affects">affects F5, A2, E1</span></li>
+      <li><span class="q">For flips: tolerate brief gyro saturation, and with which limit θ_max?</span><span class="ctx">Counting the last N steps above the limit bounds only the duration (3 steps at 36 rad/s hide about 2°, 2 steps at 60 rad/s about 29°); counting the hidden rotation treats both correctly.</span><span class="rec"><b>Recommendation:</b> decide with aggressive flight, after Step 5.</span><span class="affects">affects C2, Deferred</span></li>
+      <li><span class="q">Build the AI-deck streamer (D4) for exact replay?</span><span class="ctx">E1's checks 1 (against Bitcraze's Python emulator) and 2 (tolerance replay of the 100 Hz survey logs) need no AI deck. D4 adds exact replay, at the cost of a firmware app and a host script. If built, the deck flies only on replay flights: it adds mass the policies are not trained for (the model uses 41.3 g with Lighthouse and Flow deck), and it has to stack with the Lighthouse deck (which needs a clear view of the base stations) and the Flow deck underneath; check Bitcraze's deck compatibility for that stack on the brushless frame first.</span><span class="rec"><b>Recommendation:</b> only if check 2 shows differences that cannot be explained.</span><span class="affects">affects D4, E1, E5</span></li>
+      <li><span class="q">Accept the two deck changes in E4: flow off below 10 cm, and the range sensor down-weighted below 4 cm (a firmware patch)?</span><span class="ctx">Both keep the deck inside its datasheet specifications in the one place it leaves them (the last centimetres), at the cost of a flight-script change and a firmware patch.</span><span class="rec"><b>Recommendation:</b> yes, but confirm each with the survey first.</span><span class="affects">affects E4, C3</span></li>
+      <li><span class="q">Retire <code>still_test.py</code> once <code>noise_survey.py still</code> replaces it?</span><span class="affects">affects D3</span></li>
+    </ol>
+  </section>
+
+  <section id="sources">
+    <h2>Sources for the published priors</h2>
+    <ol class="sources">
+      <li>Bosch Sensortec, BMI088 product flyer (gyro 0.014 °/s/√Hz, accelerometer 230 µg/√Hz): <a href="https://www.bosch-sensortec.com/media/boschsensortec/downloads/product_flyer/bst-bmi088-fl000.pdf">bst-bmi088-fl000.pdf</a>; product page (accelerometer 175 µg/√Hz): <a href="https://www.bosch-sensortec.com/products/motion-sensors/imus/bmi088/">bosch-sensortec.com</a></li>
+      <li>Bosch Sensortec community, BMI088 gyroscope output noise (RMS = density · √(1.22 · BW)): <a href="https://community.bosch-sensortec.com/t5/MEMS-sensors-forum/Gyroscope-Output-Noise-BMI088/m-p/24203">community thread</a></li>
+      <li>STMicroelectronics, VL53L1X datasheet DS12385 Rev 8 (§3.5, §7.2–7.6, Tables 5, 17–20): <a href="https://www.makerguides.com/wp-content/uploads/2024/10/VL53L1X-Datasheet.pdf">VL53L1X-Datasheet.pdf</a></li>
+      <li>PixArt, PMW3901MB datasheet v1.00 (Table 3, recommended operating conditions): <a href="https://ftcelectronics.com/datasheets-3d/114991252.pdf">114991252.pdf</a>; PX4 notes on the 80 mm working range: <a href="https://docs.px4.io/main/en/sensor/pmw3901.html">docs.px4.io</a></li>
+      <li>Bitcraze, Flow deck v2 product page and datasheet: <a href="https://www.bitcraze.io/products/flow-deck-v2/">bitcraze.io/products/flow-deck-v2</a></li>
+      <li>Taffanel et al., "Lighthouse Positioning System: Dataset, Accuracy, and Precision for UAV Research", arXiv 2104.11523 (Table III, Sec. V–VI): <a href="https://arxiv.org/pdf/2104.11523">arxiv.org/pdf/2104.11523</a></li>
+      <li>Bitcraze blog, Lighthouse positioning accuracy: <a href="https://www.bitcraze.io/2021/05/lighthouse-positioning-accuracy/">bitcraze.io</a></li>
+    </ol>
+  </section>
+
+  <footer>Final draft for review, 2026-11-21: option B decided; no SD card deck, so 100 Hz survey logging, with an optional AI-deck streamer for exact replay (never on survey or learned flights); reviewed for consistency (renumbered questions, corrected flow-noise units, the estimator's 10 ms IMU averaging, out-of-specification sensor behaviour). Firmware sources: <code>estimator_kalman.c</code>, <code>estimator.c</code>, <code>mm_tof.c</code>, <code>mm_flow.c</code>, <code>mm_sweep_angles.c</code>, <code>zranger2.c</code>, <code>flowdeck_v1v2.c</code>, <code>lighthouse_position_est.c</code>, <code>outlierFilterLighthouse.c</code>, <code>sensors_bmi088_bmp3xx.c</code>, <code>hal/src/Kconfig</code>, <code>bindings/</code>; cflib <code>crazyflie/log.py</code>.</footer>
+</main>

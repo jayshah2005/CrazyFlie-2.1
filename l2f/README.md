@@ -18,6 +18,7 @@ repo root with `rl_trigger.py`.
 | `sim/train_mission.sh` | Train the mission policy (recipe of the flown "I1") and compare all checkpoints |
 | `firmware/patch_firmware.py` | Hooks into crazyflie-firmware 2026.08 (learned-controller packet, motor path, PID boot) |
 | `firmware/build_firmware.sh` | Out-of-tree controller build for `cf21bl` (fixes below), output `~/l2f_2026/build/cf21bl.bin`; target velocity and position-error integral for mission policies |
+| `pytorch_training_plan.html` | Plan (not yet implemented) for moving training to PyTorch + TorchJD and simulating the sensors through the firmware's Kalman filter; open it in a browser |
 
 ## Start here
 
