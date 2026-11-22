@@ -442,13 +442,63 @@ mission mix; estimate against truth). Findings (2026-11-22):
   ends the episode as a crash, as the assert halts the drone; none in 4500 early-training episodes.
 - An old-path policy (E, seed 1, 1.6M) on this path with the priors: 50% of the hard training-mix
   episodes end early, against 32.5% on the old path (10% / 5% without the random force); the
-  policy has never seen estimator output. Speed: 14.6 µs per step against 2.6 µs (Python loop);
-  C++ training about 25% slower.
+  policy has never seen estimator output. Speed: 14.6 µs per step against 2.6 µs (Python loop).
+  C++ training of 2M steps, 3 runs at a time on the 8-core Mac: 18–21.5 min against 5 min on the
+  old path (2026-11-22; a first short run had suggested only 25% slower).
 
 E4 (plan Q13, off by default): `estimator.flow_off_below` / `rl_trigger.py --flow-off-below 0.1`
 switch the Flow deck off below 10 cm, and `L2F_RANGE_MIN_PATCH=1` in `patch_firmware.py` with
 `estimator.range_min_distance: 0.04` raises the range σ below 4 cm, in the simulator and the
 firmware alike.
+
+### Training on the sensor path, and the random-force strength (plan Q16, 2026-11-22)
+
+`sim/force_configs.txt`: the new baseline (no survival bonus, crash penalty 200, action rate,
+rotation crash at 34.9 rad/s) trained on the sensor path at `FORCE_SCALE` 1, 0.5 and 0.25, and
+on the old path at 1 for reference; variant E, 3 seeds each, sensor priors (not yet measured).
+`train_mission.sh` tests each run at its own force, so `sim/cross_eval.sh` re-tests every run at
+force 1, 0.5, 0.25 and 0 with the same mission test. Medians over checkpoints 1.2M–2.0M of the
+3 seeds; crashes over the clean and uneven-motor tests (the sensor path has no 1% jumps, so that
+test is left out); a collapsed checkpoint crashes ≥ 8 of 15 episodes.
+
+| Trained at | Test force | Circle | Uneven | Crashed | Per seed | Jitter | Collapsed checkpoints |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| sensor path, force 1 | 1 | 5.8 cm | 8.1 cm | **0.0%** | 0.0, 0.0, 0.0% | 0.113 | 0/27 |
+| sensor path, force 1 | 0 | 5.7 cm | 8.1 cm | 0.2% | 0.4, 0.0, 0.4% | 0.114 | 0/27 |
+| sensor path, force 0.5 | 1 | 5.4 cm | 8.6 cm | 5.3% | 1.5, 0.7, 13.7% | 0.107 | 1/27 |
+| sensor path, force 0.5 | 0 | 5.3 cm | 8.4 cm | 4.8% | 1.5, 0.4, 12.6% | 0.107 | 1/27 |
+| sensor path, force 0.25 | 1 | 6.5 cm | 10.2 cm | 3.1% | 0.0, 0.4, 8.9% | 0.124 | 1/27 |
+| sensor path, force 0.25 | 0 | 6.5 cm | 10.1 cm | 3.1% | 0.0, 0.0, 9.3% | 0.124 | 1/27 |
+| old path, force 1 | 1 | 5.3 cm | 9.0 cm | 0.9% | 1.1, 0.7, 0.7% | 0.075 | 0/27 |
+| old path, force 1 | 0 | 4.7 cm | 8.6 cm | 0.1% | 0.4, 0.0, 0.0% | 0.075 | 0/27 |
+
+(Test forces 0.5 and 0.25 lie between these rows; `cross_eval.sh` prints all of them.)
+
+- The sensor path trains as well as the old path: with full force, 5.8 cm / 8.1 cm and no
+  crash in 810 test episodes, against 5.3 cm / 9.0 cm / 0.9% on the old path.
+- A weaker training force does not help. Tracking is about the same at 0.5 and worse at 0.25,
+  and each weaker setting has one seed with a collapsed checkpoint (0.5: seed 2 at 1.9M, 30 of
+  30 crashed; 0.25: seed 2 at 1.8M, 20 of 30); the other checkpoints of those seeds are fine.
+  With 3 seeds this is no proof that weaker is worse, but nothing points to weaker being better.
+- The test force hardly matters to the sensor-path policies (within 0.2 cm and 0.7 points
+  between test forces 1 and 0; the old-path policies gain 0.6 cm and 0.8 points at force 0),
+  although the estimate's tilt error scales with it (`py/test_sensor_sim.py`, one force-1
+  policy, priors; median / 90%): force 1: 3.3° / 7.1°, 0.5: 1.4° / 3.3°, 0.25: 0.9° / 2.0°,
+  0: 0.3° / 1.4°; position error 12 mm at every force.
+- Jitter is about 50% higher on the sensor path (0.11–0.12 against 0.075). The priors' gyro
+  noise (σ 0.05–0.09 rad/s on the actor's sample) and the estimator's noise reach the actor;
+  the survey's `hover` mode measures the real values.
+
+Decision (2026-11-22, plan Q16): keep the full random force; compare again after calibration.
+
+Bug fixed on the way (`evaluate_robustness … mission`, sensor path only): the mission test put
+the drone on the floor after the episode start had started the estimator at the sampled state,
+and it moved the target without moving the room frame (`world_offset`), so the sensors saw the
+drone move against the target. Sensor-path policies crashed 82–92% in that test while training
+normally. The test now restarts the estimator at the resting state, shifts the room frame and
+the estimate as training does, and ends an episode as a crash when the estimator fails. The old
+path is unchanged (bit-identical rows, checked). No earlier result used this test on the sensor
+path.
 
 ## Multi-objective critic (`MOO=1`)
 
@@ -587,6 +637,10 @@ weights turn negative (safety −0.98, tracking −0.26 at 1.6–2.0M), which cl
 Aggregation check ≤ 1.7e-6, no non-finite values, so this is SVD-PGA itself. OS-NMF-PGA keeps
 the factor H nonnegative and stays usable (seeds 4.5 cm / 0.5% and 6.0 cm / 3.0%), but behind
 the sum and DualProj.
+
+Decision (2026-11-22, plan Q17): MOO stays, with DualProj on 3 groups as the default aggregator
+(`train.py --moo parts --parts 3 --agg dualproj --total 1`, as in the table); the sum and plain
+TD3 stay as references.
 
 Untuned weights (`build_py_E_uniform`: `-DL2F_REWARD_UNIFORM`, every cost weight 1, no weight
 curriculum, same no-bonus / crash-penalty-200 reward; `train.py` skips its weight curriculum
