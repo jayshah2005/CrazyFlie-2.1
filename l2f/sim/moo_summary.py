@@ -3,6 +3,8 @@
 checkpoints  medians over the late checkpoints of train_mission.sh outputs (the table it
              prints after training): circle error clean / with uneven motors, crash share,
              jitter and the number of checkpoints without any crash; per file and pooled.
+             --no-jumps leaves the 1%-jumps test out of the crash counts (on the sensor path,
+             SENSOR_SIM=1, it has no jumps: the estimator makes its own errors).
                python l2f/sim/moo_summary.py checkpoints out_s0.txt out_s1.txt out_s2.txt
 
 conflicts    gradient conflicts from a run's MOO logs ($BUILD/moo_seed$SEED.csv, and if
@@ -49,11 +51,14 @@ def checkpoint_rows(path: Path, first: int) -> list[tuple[float, ...]]:
     return rows
 
 
-def describe(rows: list[tuple[float, ...]], episodes: int) -> str:
-    """One-line medians (circle error, uneven-motor error, crash share, jitter) over checkpoint rows."""
+def describe(rows: list[tuple[float, ...]], episodes: int, tests: int = 3) -> str:
+    """One-line medians (circle error, uneven-motor error, crash share, jitter) over checkpoint rows.
+
+    tests: how many of the tests (clean, uneven motors, 1% jumps) count for the crashes.
+    """
     med = lambda i: st.median(r[i] for r in rows)
-    crashes = [r[1] + r[4] + r[7] for r in rows]
-    share = 100 * sum(crashes) / (len(rows) * 3 * episodes)
+    crashes = [sum(r[1 + 3 * k] for k in range(tests)) for r in rows]
+    share = 100 * sum(crashes) / (len(rows) * tests * episodes)
     return (f'circle {med(2):5.1f} cm  uneven {med(5):5.1f} cm  crashed {share:4.1f}%  '
             f'jitter {med(3):.3f}  no-crash checkpoints {sum(c == 0 for c in crashes)}/{len(rows)}')
 
@@ -61,15 +66,16 @@ def describe(rows: list[tuple[float, ...]], episodes: int) -> str:
 def cmd_checkpoints(args: argparse.Namespace) -> None:
     """`checkpoints` subcommand: per-file and pooled late-checkpoint medians."""
     pooled = []
+    tests = 2 if args.no_jumps else 3
     for path in args.files:
         rows = checkpoint_rows(path, args.first)
         if not rows:
             log.warning('%s: no checkpoint rows from step %d', path.name, args.first)
             continue
         pooled += rows
-        log.info('%-40s %s', path.name, describe(rows, args.episodes))
+        log.info('%-40s %s', path.name, describe(rows, args.episodes, tests))
     if len(args.files) > 1 and pooled:
-        log.info('%-40s %s', 'ALL', describe(pooled, args.episodes))
+        log.info('%-40s %s', 'ALL', describe(pooled, args.episodes, tests))
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -146,6 +152,7 @@ def main() -> None:
     c.add_argument('files', type=Path, nargs='+')
     c.add_argument('--first', type=int, default=1_200_000, help='first checkpoint step counted')
     c.add_argument('--episodes', type=int, default=15, help='episodes per condition (EPISODES=)')
+    c.add_argument('--no-jumps', action='store_true', help='count crashes of the clean and uneven-motor tests only')
     c.set_defaults(func=cmd_checkpoints)
     k = sub.add_parser('conflicts', help='gradient conflicts from a run\'s MOO logs')
     k.add_argument('build', type=Path, help='build folder holding moo_seed<SEED>.csv')

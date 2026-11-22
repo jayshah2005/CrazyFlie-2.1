@@ -1,0 +1,12 @@
+# Plan Q16: strength of the random external force on the sensor path, 3 seeds each:
+#   CONFIGS=l2f/sim/force_configs.txt OUT=l2f/learning_to_fly/compare_force JOBS=3 bash l2f/sim/compare.sh
+# The new baseline (Q1, Q15): no survival bonus, crash penalty 200, action rate; rotation crash
+# at the gyro's range (C2; the sensor path clips its own gyro at 34.9 rad/s). The sensors are
+# the priors of config/sensors.yaml. train_mission.sh tests each run at its own force, so
+# afterwards every run is re-tested at each force level:
+#   bash l2f/sim/cross_eval.sh l2f/learning_to_fly/compare_force
+ss_fs1     VARIANT=E SURVIVAL_BONUS=0 CRASH_PENALTY=200 OMEGA_CRASH=34.9 SENSOR_SIM=1 FORCE_SCALE=1
+ss_fs0.5   VARIANT=E SURVIVAL_BONUS=0 CRASH_PENALTY=200 OMEGA_CRASH=34.9 SENSOR_SIM=1 FORCE_SCALE=0.5
+ss_fs0.25  VARIANT=E SURVIVAL_BONUS=0 CRASH_PENALTY=200 OMEGA_CRASH=34.9 SENSOR_SIM=1 FORCE_SCALE=0.25
+# reference: the old path (Gaussian observation noise) with the same reward and full force
+old_fs1    VARIANT=E SURVIVAL_BONUS=0 CRASH_PENALTY=200 OMEGA_CRASH=34.9 GYRO_CLIP=34.9 FORCE_SCALE=1
