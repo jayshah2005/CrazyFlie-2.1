@@ -66,6 +66,12 @@ target_include_directories(cf_estimator
 target_compile_options(cf_estimator PRIVATE -O2 -fno-strict-aliasing -Wno-address-of-packed-member
   -include ${FWCONF}/include/generated/autoconf.h)
 target_compile_definitions(cf_estimator PRIVATE UNIT_TEST_MODE)
+# The base station's OOTX frame (ootx_decoder.h) stores ARM's __fp16, which Apple's clang has on
+# ARM; GCC on x86-64 has the same 2-byte format as _Float16. The frame's values are only copied
+# into float calibration fields (lighthouse_calibration.c), and the simulator does not use it.
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64)")
+  target_compile_definitions(cf_estimator PRIVATE __fp16=_Float16)
+endif()
 set_target_properties(cf_estimator PROPERTIES POSITION_INDEPENDENT_CODE ON C_STANDARD 11)
 target_link_libraries(cf_estimator PUBLIC m)
 
