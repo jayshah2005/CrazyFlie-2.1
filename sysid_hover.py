@@ -157,7 +157,7 @@ def estimate_is_sane(scf, seconds=2.0):
                       axis, value, MAX_SPREAD)
             ok = False
     if not ok:
-        log.error('Not flying. Check the Lighthouse geometry / decks with still_test.py.')
+        log.error('Not flying. Check the Lighthouse geometry / decks with lighthouse_check.py.')
     return ok
 
 
