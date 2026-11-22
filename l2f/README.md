@@ -36,6 +36,8 @@ From two stock-PID flights (`sysid_hover.py` + `sysid_analyze.py`) and IDSIA
 1. Toolchain (once):
    - macOS: Xcode Command Line Tools, then `brew install cmake hdf5 boost`; for firmware
      builds `brew install --cask gcc-arm-embedded` (the `arm-none-eabi-gcc` formula has no newlib)
+     and `brew install make gnu-sed coreutils` (the firmware's kconfig scripts need the GNU tools;
+     `build_firmware.sh` puts them first on `PATH`)
    - Ubuntu: `sudo apt install cmake build-essential libhdf5-dev libopenblas-dev libboost-all-dev protobuf-compiler libprotobuf-dev gcc-arm-none-eabi`
 2. Submodules (once, from the repo root):
    `git submodule update --init l2f/learning_to_fly/external/rl_tools l2f/learning_to_fly/controller`, then

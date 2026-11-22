@@ -12,6 +12,16 @@
 #   L2F=../learning_to_fly  FW=~/crazyflie-firmware-2026.08  DST=~/l2f_2026
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
+# macOS: the firmware build (kconfig merge_config.sh, kbuild) needs GNU make 4,
+# sed and coreutils: brew install make gnu-sed coreutils
+if [ "$(uname)" = Darwin ]; then
+  for f in make gnu-sed coreutils; do
+    d=$(brew --prefix)/opt/$f/libexec/gnubin
+    [ -d "$d" ] || { echo "missing GNU $f: brew install $f" >&2; exit 1; }
+    PATH="$d:$PATH"
+  done
+  export PATH
+fi
 L2F=${L2F:-$HERE/../learning_to_fly}
 export FW=${FW:-$HOME/crazyflie-firmware-2026.08}
 SRC=$L2F/controller
