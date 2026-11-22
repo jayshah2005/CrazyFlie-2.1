@@ -97,7 +97,7 @@ def train(args, extra_env):
     weight_index = {k: names.index(k) for k in cfg.weight_caps}
     # off only in the untuned-reward build (REWARD=uniform); modules built before the key existed are tuned
     weight_curriculum = info.get('weight_curriculum', True)
-    tag = run_tag(args) + ('' if weight_curriculum else '_uniform')
+    tag = run_tag(args) + ('' if weight_curriculum else '_uniform') + ('_ss' if info.get('sensor_sim') else '')
     run = L2F / 'checkpoints' / 'multirotor_td3' / (STARTED_AT.strftime('%Y_%m_%d_%H_%M_%S') + f'_{tag}_{os.getpid()}')
     moo_log = run_log.csv_path(f'moo_{tag}_{os.getpid()}', script=__file__, when=STARTED_AT) if args.moo else None
     run.mkdir(parents=True, exist_ok=True)
