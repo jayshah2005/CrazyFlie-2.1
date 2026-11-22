@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the learning_to_fly out-of-tree controller on crazyflie-firmware 2026.08
 # for the Crazyflie 2.1 Brushless (default) and package nothing else; see
-# ../README.md. Run inside WSL Ubuntu.
+# ../README.md. Run on macOS or Linux/WSL Ubuntu.
 #
 #   ACTOR=<checkpoint .h>  policy to compile in (default: the controller repo's actor.h)
 #   HISTORY=32             action-history length the policy was trained with
@@ -52,7 +52,7 @@ EXTRA_CFLAGS += -I$(PWD) -I$(PWD)/external/rl_tools/include -DRL_TOOLS_CONTROLLE
 include $(CRAZYFLIE_BASE)/tools/make/oot.mk
 EOF
 # policy input layout (history length, measured rotor speeds), for the adapter
-sed -i "s|-DRL_TOOLS_CONTROLLER\$|-DRL_TOOLS_CONTROLLER $POLICY_FLAGS|" "$DST/Makefile"
+sed -i.bak "s|-DRL_TOOLS_CONTROLLER\$|-DRL_TOOLS_CONTROLLER $POLICY_FLAGS|" "$DST/Makefile" && rm "$DST/Makefile.bak"
 grep -q -- "-DL2F_HISTORY=$HISTORY" "$DST/Makefile"
 
 cat > "$DST/Kbuild" <<'EOF'

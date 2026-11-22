@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Train the brushless policy and run the robustness check. Run inside WSL Ubuntu
-# on the training code in ../learning_to_fly (submodules initialised, see ../README.md).
+# Train the brushless policy and run the robustness check. Run on macOS or
+# Linux/WSL Ubuntu on the training code in ../learning_to_fly (submodules initialised, see ../README.md).
 #
 #   STEPS=1000001     training steps (checkpoint every 100k)
 #   ANG_ACC=2e-4      angular-acceleration penalty (0 = paper reward)
@@ -17,9 +17,12 @@ FLAGS="-DL2F_BRUSHLESS -DL2F_STEP_LIMIT=$STEPS -DL2F_ANG_ACC_WEIGHT=$ANG_ACC"
 cd "$L2F"
 
 BUILD=build_brushless_${STEPS}_acc${ANG_ACC}_noise${REAL_NOISE}
-cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON \
+# BLAS: Apple Accelerate on macOS (set by CMakeLists.txt), OpenBLAS elsewhere
+if [ "$(uname)" = Darwin ]; then BLAS_FLAG=; JOBS=$(sysctl -n hw.ncpu)
+else BLAS_FLAG=-DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON; JOBS=$(nproc); fi
+cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release $BLAS_FLAG \
   -DCMAKE_CXX_FLAGS="$FLAGS" > /dev/null
-cmake --build "$BUILD" -j"$(nproc)" --target training_headless evaluate_robustness
+cmake --build "$BUILD" -j"$JOBS" --target training_headless evaluate_robustness
 
 export OPENBLAS_NUM_THREADS=1
 "./$BUILD/src/training_headless" | grep -E "Step: .*00000 |Training took"

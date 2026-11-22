@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Train the mission policy (take-off from the floor, moving targets, landing; no
-# PID) and pick the best checkpoint with the mission evaluation. Run inside WSL
-# Ubuntu on the training code in ../learning_to_fly (see ../README.md).
+# PID) and pick the best checkpoint with the mission evaluation. Run on macOS or
+# Linux/WSL Ubuntu on the training code in ../learning_to_fly (see ../README.md).
 #
 # Recipe of the flown policy "I1" (2026-11-04, checkpoint 1.4M):
 #   compile flags  brushless model, measured noise, angular-acceleration 2e-4,
@@ -55,8 +55,9 @@
 #   REWARD=tuned    tuned: the hand-tuned weights and weight curriculum (all flown
 #                   policies); uniform: every cost weight 1, no weight curriculum
 #                   (untuned-reward experiment, adds _uniform to the build)
-# WSL has ~8 GB: at most two of these trainings in parallel, started at least
-# 30 s apart (run folders are named by start time).
+# Memory: one I1 training peaks at ~3 GB once the 700k replay buffer is full
+# (measured on the 16 GB M6 Mac, 2026-11-22): at most 3 in parallel there, 2 under
+# WSL (~8 GB). Start them at least 30 s apart (run folders are named by start time).
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 L2F=${L2F:-$HERE/../learning_to_fly}
@@ -118,16 +119,19 @@ if [ "$MOO" = 1 ]; then
   export L2F_MOO_LOG="$L2F/$BUILD/moo_seed$SEED.csv" L2F_MOO_GRAM_LOG="$L2F/$BUILD/moo_gram_seed$SEED.csv"
   export L2F_MOO_NOISE_LOG="$L2F/$BUILD/moo_noise_seed$SEED.csv"
 fi
-cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release -DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON \
+# BLAS: Apple Accelerate on macOS (set by CMakeLists.txt), OpenBLAS elsewhere
+if [ "$(uname)" = Darwin ]; then BLAS_FLAG=; JOBS=$(sysctl -n hw.ncpu)
+else BLAS_FLAG=-DRL_TOOLS_BACKEND_ENABLE_OPENBLAS:BOOL=ON; JOBS=$(nproc); fi
+cmake -S . -B "$BUILD" -DCMAKE_BUILD_TYPE=Release $BLAS_FLAG \
   -DCMAKE_CXX_FLAGS="$FLAGS" > /dev/null
-cmake --build "$BUILD" -j"$(nproc)" --target training_headless evaluate_robustness
+cmake --build "$BUILD" -j"$JOBS" --target training_headless evaluate_robustness
 
 export OPENBLAS_NUM_THREADS=1
 mkdir -p checkpoints/multirotor_td3
 before=$(ls -d checkpoints/multirotor_td3/*/ 2>/dev/null || true)
 L2F_MISSION_RAMP=800000 L2F_GLITCH_P=0.003 L2F_DR=1 L2F_DR_SCALE=0.3 \
 L2F_MOTOR_GAIN=$TRAIN_GAIN L2F_MOTOR_OFFSET=$TRAIN_OFFSET L2F_SEED=$SEED \
-  env "${TASK_ENV[@]}" "./$BUILD/src/training_headless" > >(grep --line-buffered -E "Step: .*00000 |Training took|L2F_MOO") &
+  env ${TASK_ENV[@]+"${TASK_ENV[@]}"} "./$BUILD/src/training_headless" > >(grep --line-buffered -E "Step: .*00000 |Training took|L2F_MOO") &
 TRAIN_PID=$!
 # this run's checkpoint folder: the one that appears after the start
 RUN=
@@ -149,8 +153,8 @@ ev(){
         L2F_EVAL_GE=1 L2F_EVAL_NOISE=1 L2F_DR_SCALE=0.5 L2F_EVAL_DR=$2 L2F_EVAL_DELAY_MS=6 L2F_EVAL_KI=0 \
         L2F_MOTOR_GAIN=$MOTOR_GAIN L2F_MOTOR_OFFSET=$MOTOR_OFFSET \
         "./$BUILD/src/evaluate_robustness" "$1" "$EPISODES" mission 2>/dev/null)
-  printf "crash %2s circle %5s cm jitter %s" "$(echo "$out" | grep -oP 'crashed \K[0-9]+')" \
-    "$(echo "$out" | grep -oP 'circle +tracking error mean +\K[0-9.]+')" "$(echo "$out" | grep -oP 'metric\) \K[0-9.]+')"
+  printf "crash %2s circle %5s cm jitter %s" "$(echo "$out" | sed -nE 's/.*crashed ([0-9]+).*/\1/p' | head -1)" \
+    "$(echo "$out" | sed -nE 's/.*circle +tracking error mean +([0-9.]+).*/\1/p' | head -1)" "$(echo "$out" | sed -nE 's/.*metric\) ([0-9.]+).*/\1/p' | head -1)"
 }
 echo "checkpoint   clean                             | randomized                        | jumps 1%"
 for ck in $(ls "$RUN"actor_*.h5 | sort | tail -11); do

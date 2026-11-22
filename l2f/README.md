@@ -8,8 +8,11 @@ First full mission with no PID (take-off from the floor, 1.2 m wide circle,
 landing): 2026-11-04, at 0.6 / 0.75 / 1.0 / 1.5 m, landing within 2-4 cm of the
 start (see [Mission](#mission)).
 
-Everything here runs in **WSL Ubuntu 24.04**. Flying runs on Windows from the
-repo root with `rl_trigger.py`.
+Everything here runs on **macOS (Apple silicon)** or **Linux / WSL Ubuntu 24.04**.
+Flying runs from the repo root with `rl_trigger.py`. On macOS the build uses Apple
+Accelerate for BLAS (OpenBLAS on Linux) and plain `-O3` (no fast-math, no AVX
+flags). Runs are not bit-identical across machines: run all seeds of one
+comparison on the same machine.
 
 | Path | What |
 | --- | --- |
@@ -30,14 +33,17 @@ From two stock-PID flights (`sysid_hover.py` + `sysid_analyze.py`) and IDSIA
 
 ## Steps
 
-1. Toolchain (once): `sudo apt install cmake build-essential libhdf5-dev libopenblas-dev libboost-all-dev protobuf-compiler libprotobuf-dev gcc-arm-none-eabi`
+1. Toolchain (once):
+   - macOS: Xcode Command Line Tools, then `brew install cmake hdf5 boost`; for firmware
+     builds `brew install --cask gcc-arm-embedded` (the `arm-none-eabi-gcc` formula has no newlib)
+   - Ubuntu: `sudo apt install cmake build-essential libhdf5-dev libopenblas-dev libboost-all-dev protobuf-compiler libprotobuf-dev gcc-arm-none-eabi`
 2. Submodules (once, from the repo root):
    `git submodule update --init l2f/learning_to_fly/external/rl_tools l2f/learning_to_fly/controller`, then
    `git -C l2f/learning_to_fly/external/rl_tools submodule update --init external/cli11 external/highfive external/json external/tensorboard`
    and, for firmware builds, `git -C l2f/learning_to_fly/controller submodule update --init external/rl_tools`.
    The scripts build in `l2f/learning_to_fly` (override with `L2F=<path>`; a copy
-   on the WSL file system compiles faster).
-3. `bash l2f/sim/train_brushless.sh` (~4 min for 1M steps).
+   on the WSL file system compiles faster under WSL).
+3. `bash l2f/sim/train_brushless.sh` (~4 min for 1M steps under WSL; ~1 min on the M6 Mac).
 4. `ACTOR=<checkpoint>.h bash l2f/firmware/build_firmware.sh`
 5. Put `cf21bl.bin` into the official `firmware-cf21bl-2026.08.zip` in place of
    `cf21bl-2026.08.bin`, flash with cfclient **Bootloader → Cold boot → From file**,
