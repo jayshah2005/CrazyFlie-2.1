@@ -509,8 +509,8 @@ def fly_mission(scf, args, pose, tele):
             last_phase = phase
         tele.phase = phase
         # Cut as soon as the drone is within --cut-height of the floor on the way
-        # down: the simulator has no ground effect, and letting the policy settle
-        # on the floor made it bounce (2026-11-04 0.6 m flight).
+        # down: letting the policy settle on the floor made it bounce (2026-11-04
+        # 0.6 m flight).
         if phase == 'ground':
             low_since = low_since or now
         if (phase == 'ground' or (phase == 'landing' and offset[2] < 0.1)) and height < args.cut_height \
