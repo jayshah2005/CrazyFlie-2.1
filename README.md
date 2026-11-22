@@ -20,19 +20,18 @@ positioned by two Lighthouse base stations.
 
 | File | What it does |
 | --- | --- |
-| `rl_trigger.py` | Starts and supervises learned-controller flights: pre-flight checks, hold-Enter dead-man switch, modes `takeoff_and_switch`, `land`, `mission`, ...; logs every flight. Windows only. |
+| `rl_trigger.py` | Starts and supervises learned-controller flights: pre-flight checks, Enter to start and Enter to stop (`--hold`: dead-man switch), modes `mission`, `takeoff_and_switch`, `land`, ...; logs every flight. Windows and macOS. |
 | `l2f/` | Training code, simulator, firmware build, and results. Start at [`l2f/README.md`](l2f/README.md). |
-| `poster/` | Research poster (LaTeX) and its figures. |
+| `poster/` | Research poster (LaTeX, `main.tex`) and its figures (`make_figures.py` draws `figures/`). |
 
 ### Checks before or after flying
 
 | File | What it does |
 | --- | --- |
 | `lighthouse_check.py` | Is the Lighthouse deck seeing both base stations, with calibration and geometry stored? |
-| `still_test.py` | Leaves the drone still and measures state-estimate noise. |
 | `motor_check.py` | Spins the motors at idle and flags one that is far below the others. |
 | `rpm_quality.py` | Reads existing logs (no flying) and checks the measured motor RPM: invalid reads, noise, lag. |
-| `noise_survey.py` | Sensor survey for the simulator's noise model: still, on spacers, PID hovers, pushed along a track, and Lighthouse jumps in flight logs. Writes `l2f/sim/noise_measured.json`. |
+| `noise_survey.py` | Sensor survey for the simulator's sensor models: still, raised on supports, PID hovers, pushed along a track, Lighthouse jumps in flight logs. Writes `l2f/sim/noise_measured.json`; the sensor-level values go into `config/sensors.yaml`. |
 
 ### Measuring the drone (system identification)
 
@@ -47,6 +46,7 @@ positioned by two Lighthouse base stations.
 | --- | --- |
 | `flip.py` | Backflip with Lighthouse positioning. Run `--no-flip` first. |
 | `tricks.py` | Show: figure 8, then backflip, then side flip, then land. Handles the Flow deck's bad estimate mid-flip. |
+| `two_cf_lighthouse.py` | Two Crazyflies on one Crazyradio with Lighthouse: connect, hover, two linked counter-rotating rings. |
 
 ### Tools and shared code
 
@@ -54,18 +54,19 @@ positioned by two Lighthouse base stations.
 | --- | --- |
 | `run_log.py` | Shared console and CSV logging. **Every script uses it** (see Conventions). |
 | `flash_cold.py` | Flashes a firmware zip with a cold boot, for when cfclient cannot reach the bootloader. Never warm-boot flash this drone. |
-| `config/` | Lighthouse geometry per room (`config/current` links to the active one), `landing.yaml`: the mission landing values shared by `rl_trigger.py` and training, and `sensors.yaml`: the simulator's sensor priors (until the survey measures them). |
+| `config/` | Lighthouse geometry per room (`config/current` links to the active one), `landing.yaml`: the mission landing values shared by `rl_trigger.py` and training, and `sensors.yaml`: the simulator's sensor models (measured with `noise_survey.py`). |
+| `aideck_gap8_wifi_img_streamer_with_ap.bin` | A built AI-deck GAP8 image streamer (Wi-Fi access-point mode), for camera tests with the AI deck. |
 
 Local-only folders (git-ignored): `logs/` (every flight's CSV), `cache/` (cflib's radio cache),
 and clones of Bitcraze repositories (`crazyflie-firmware/`, `crazyflie-lib-python/`,
-`aideck-gap8-examples/`).
+`aideck-gap8-examples/`, `aideck-esp-firmware/`, `aideck-gap8-bootloader/`).
 
 ## How the learned controller fits together
 
 ```
 sysid_hover.py ──> sysid_analyze.py ──> motor model in the simulator
                                                 │
-                       l2f/sim/train_mission.sh: train in simulation (TD3), evaluate checkpoints
+                       l2f/py/train.py (or l2f/sim/train_mission.sh): train in simulation, test checkpoints
                                                 │
                        l2f/firmware/build_firmware.sh: compile the chosen network into firmware
                                                 │
@@ -76,9 +77,9 @@ sysid_hover.py ──> sysid_analyze.py ──> motor model in the simulator
                        rl_trigger.py --mode mission: fly, log to logs/
 ```
 
-Training and the firmware build run on Linux (the team uses WSL Ubuntu 24.04); flying runs on
-Windows. The steps, the commands, and the results of every experiment are in
-[`l2f/README.md`](l2f/README.md).
+Training and the firmware build run on Linux or macOS; flying runs on Windows or macOS. The
+commands are in [`l2f/README.md`](l2f/README.md), the results of every experiment in
+[`l2f/docs/results.md`](l2f/docs/results.md).
 
 ## Setup
 
@@ -103,7 +104,7 @@ For training, also fetch the two submodules (once, from the repo root):
 git submodule update --init l2f/learning_to_fly/external/rl_tools l2f/learning_to_fly/controller
 ```
 
-The nested submodules and the toolchain are listed in [`l2f/README.md`](l2f/README.md#steps).
+The nested submodules and the toolchain are listed in [`l2f/README.md`](l2f/README.md#setup).
 
 ## Running a script
 
@@ -122,12 +123,13 @@ the radio.
 The policy runs onboard, so the drone must run the learned-controller firmware (flash it with a
 cold boot). `flip.py` and `tricks.py` need the official firmware again afterwards.
 
-- Hold **Enter** to fly. Releasing it lands the drone in mission mode, or cuts the motors in the
-  other modes. **Q** quits (on the floor), **Ctrl+C** is an emergency stop. Power-cycle the drone
-  between flights.
+- Press **Enter** to start and **Enter** again to stop (`--hold`: fly only while Enter is held).
+  A stop lands the drone in mission mode, or cuts the motors in the other modes. **Q** quits (not
+  flying), **Ctrl+C** is an emergency stop. Power-cycle the drone between flights. On macOS, give
+  the terminal the Input Monitoring permission (`--key-test 20` checks the keys without flying).
 - The policy turns to **yaw 0 of the Lighthouse frame**: face the drone along +X before take-off.
-- Start with `python rl_trigger.py --mode takeoff_and_switch`. `python rl_trigger.py --help` lists
-  every mode and option.
+- Start with `python rl_trigger.py --mode takeoff_and_switch`, then `--mode mission` (the policy
+  flies everything from the floor). `python rl_trigger.py --help` lists every mode and option.
 
 ## Lighthouse configuration
 
