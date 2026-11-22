@@ -206,6 +206,11 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
         s.floor_z = 0;
         s.delay_steps = delay_steps;
         s.ground_effect = ge;
+#ifdef L2F_SENSOR_SIM
+        // sample_initial_state started the estimator at the sampled state: start it again
+        // at this resting state (room frame with the floor at world z = 0)
+        rlt::rl::environments::multirotor::mission::sensor_begin(dev, env, s, rng);
+#endif
         T p_prev[3] = {0, 0, 0};
         T comp[3] = {0, 0, 0};  // outer-integrator target correction
         T last_err[3] = {0, 0, 0};
@@ -242,6 +247,12 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
                 s.position[i] -= shift;
                 s.prev[0][i] -= shift;
                 s.prev[1][i] -= shift;
+#ifdef L2F_SENSOR_SIM
+                // as training's frame shift (post_integration): the drone does not move in
+                // the room, and the estimate is target-relative like position
+                s.world_offset[i] += shift;
+                s.est_position[i] -= shift;
+#endif
                 s.target_velocity[i] = v[i];
                 p_prev[i] = p[i];
             }
@@ -275,6 +286,12 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
             if(tilt > 60 || err > 0.6 || (env.mission.omega_crash > 0 && w_max > env.mission.omega_crash)){
                 crashed = true;
             }
+#ifdef L2F_SENSOR_SIM
+            if(s.est_failed){
+                crashed = true;  // a firmware assert halts the drone (training ends such episodes as crashes)
+                break;
+            }
+#endif
             err_sum[phase] += err; err_n[phase]++;
             err_max[phase] = std::max(err_max[phase], err);
             if(phase == 2 || phase == 6){
@@ -329,12 +346,14 @@ int run_mission(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
                              (double)action_to_command(rlt::get(action, 0, 2)), (double)action_to_command(rlt::get(action, 0, 3)));
             }
         }
-        T jit = 0;
-        for(TI m = 0; m < 4; m++){
-            T mean = usum[m] / un;
-            jit += std::sqrt(std::max((T)0, usq[m] / un - mean * mean)) / 4;
+        if(un > 0){  // 0 only if the episode ended before the first hover (an estimator failure)
+            T jit = 0;
+            for(TI m = 0; m < 4; m++){
+                T mean = usum[m] / un;
+                jit += std::sqrt(std::max((T)0, usq[m] / un - mean * mean)) / 4;
+            }
+            jitter_sum += jit; jitter_n++;
         }
-        jitter_sum += jit; jitter_n++;
         max_tilt_all = std::max(max_tilt_all, max_tilt);
         crashes += crashed;
         if(!crashed && (cut_done || rlt::rl::environments::multirotor::mission::on_floor(s))){
