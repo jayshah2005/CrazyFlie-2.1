@@ -103,8 +103,12 @@ From two stock-PID flights (`sysid_hover.py` + `sysid_analyze.py`) and IDSIA
 3. `bash l2f/sim/train_brushless.sh` (~4 min for 1M steps).
 4. `ACTOR=<checkpoint>.h bash l2f/firmware/build_firmware.sh`
 5. Put `cf21bl.bin` into the official `firmware-cf21bl-2026.08.zip` in place of
-   `cf21bl-2026.08.bin`, flash with cfclient **Bootloader → Cold boot → From file**,
-   then power-cycle. Never flash this drone with `cfloader -w` (warm boot).
+   `cf21bl-2026.08.bin` (or pass `OFFICIAL_ZIP=<that zip>` in step 4, which writes
+   `build/firmware-cf21bl-2026.08-l2f.zip`), flash with cfclient **Bootloader → Cold boot →
+   From file** or `flash_cold.py`, then power-cycle. Never flash this drone with `cfloader -w`
+   (warm boot). The build also runs on macOS (Homebrew's `arm-none-eabi-gcc`, 2026-11-22): there
+   it sets the out-of-tree controller option itself, because Bitcraze's `merge_config.sh` needs
+   GNU `sed`, `cp` and `readlink`; on every platform it stops if that option is missing.
 6. Fly: `python rl_trigger.py --mode takeoff_and_switch`.
 
 ## Firmware fixes needed on top of the paper's controller
@@ -491,6 +495,29 @@ test is left out); a collapsed checkpoint crashes ≥ 8 of 15 episodes.
   the survey's `hover` mode measures the real values.
 
 Decision (2026-11-22, plan Q16): keep the full random force; compare again after calibration.
+
+### MOO on the sensor path (2026-11-22, lab computer, 8 seeds)
+
+Same recipe at full force, PyTorch (`py/train.py`, build `build_py_E_nb200_ss`), seeds 0-7, the
+old IH222A placement; medians of the per-seed late-checkpoint medians, crashes without the
+1%-jumps test:
+
+| Training | Circle | Uneven | Crashed | Collapsed seeds |
+| --- | --- | --- | --- | --- |
+| plain TD3 | 5.2 cm | 8.3 cm | 0.4% | 1 of 8 (seed 7: ends episodes early, 100% crashed) |
+| sum, 3 groups | 5.2 cm | 8.5 cm | 0.0% | 0 of 8 |
+| DualProj, 3 groups | 5.6 cm | 10.1 cm | 0.6% | 0 of 8 |
+
+No method is better on circle error or crashes (Mann-Whitney p 0.11-0.95); DualProj is behind
+plain TD3 with uneven motors (p = 0.05). A 3-seed round on the Mac had the sum behind (two seeds
+with 12-15% crashes): seed spread, which the 8 seeds resolve. About one run in ten collapses in
+any method, so flight checkpoints are always picked by a longer test (`policies/README.md`).
+
+Found on the way: the flown filter's range update asserts when the drone rests on the floor with
+an almost level estimate: `kalmanCoreFinalize` leaves R₂₂ = 1.000000119 and `acosf` of it in
+`mm_tof.c` is NaN (`!isnan(HPHR)`, kalman_core.c:249). The simulator ends such an episode as a
+crash, about 1 in 10,000 episodes; the same code runs on the drone, where it would halt the
+estimator on the floor.
 
 Bug fixed on the way (`evaluate_robustness … mission`, sensor path only): the mission test put
 the drone on the floor after the episode start had started the estimator at the sampled state,
