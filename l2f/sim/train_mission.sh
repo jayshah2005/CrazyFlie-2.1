@@ -62,6 +62,9 @@
 #   MOO_NORM=1      (MOO=1) critic outputs learn unweighted parts scaled to O(1)
 #                   (100% of episodes crashed in simulation)
 #   CRITIC_HIDDEN=64  critic hidden-layer width
+#   EVAL_EPISODES=1000  episodes of rl_tools' test every 10k steps, which only writes the
+#                   "Step: ... mean return" lines; the training is the same at any value.
+#                   100 makes sensor-path runs several times faster. Adds _ev<n> to the build
 #   CRASH_PENALTY=0 reward -CRASH_PENALTY on a crash: more than 0.6 m from the
 #                   target, touching the floor tilted > 60 deg, OMEGA_CRASH, or a
 #                   failed landing (0 = paper reward, a crash scores 0). A landing is
@@ -168,6 +171,8 @@ esac
 if [ "${SENSOR_SIM:-0}" = 1 ]; then FLAGS="$FLAGS -DL2F_SENSOR_SIM"; BUILD=${BUILD}_ss; fi
 # CRITIC_HIDDEN=<n>: critic hidden-layer width (default 64)
 if [ -n "${CRITIC_HIDDEN:-}" ]; then FLAGS="$FLAGS -DL2F_CRITIC_HIDDEN=$CRITIC_HIDDEN"; BUILD=${BUILD}_ch$CRITIC_HIDDEN; fi
+# EVAL_EPISODES=<n>: episodes of rl_tools' in-training test (default 1000, upstream)
+if [ -n "${EVAL_EPISODES:-}" ]; then FLAGS="$FLAGS -DL2F_EVAL_EPISODES=$EVAL_EPISODES"; BUILD=${BUILD}_ev$EVAL_EPISODES; fi
 if [ "$MOO" = 1 ]; then
   export L2F_MOO_LOG="$L2F/$BUILD/moo_seed$SEED.csv" L2F_MOO_GRAM_LOG="$L2F/$BUILD/moo_gram_seed$SEED.csv"
   export L2F_MOO_NOISE_LOG="$L2F/$BUILD/moo_noise_seed$SEED.csv"

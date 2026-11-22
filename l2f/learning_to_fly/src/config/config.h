@@ -71,7 +71,15 @@ namespace learning_to_fly{
             static constexpr TI ACTOR_CHECKPOINT_INTERVAL = 100000;
             static constexpr bool DETERMINISTIC_EVALUATION = !BENCHMARK;
             static constexpr TI EVALUATION_INTERVAL = 10000;
+            // L2F_EVAL_EPISODES: episodes of rl_tools' in-training test (every EVALUATION_INTERVAL
+            // steps). It only writes the "Step: ... mean return" log line and runs on its own
+            // environment and random stream (rng_eval), so the training is the same at any value;
+            // on the sensor path the 1000 upstream episodes take most of a run's time.
+#ifdef L2F_EVAL_EPISODES
+            static constexpr TI NUM_EVALUATION_EPISODES = L2F_EVAL_EPISODES;
+#else
             static constexpr TI NUM_EVALUATION_EPISODES = 1000;
+#endif
             static constexpr bool COLLECT_EPISODE_STATS = false;
             static constexpr TI EPISODE_STATS_BUFFER_SIZE = 1000;
             static constexpr TI N_ENVIRONMENTS = 1;
