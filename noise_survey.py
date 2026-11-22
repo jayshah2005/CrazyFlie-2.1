@@ -42,6 +42,7 @@ Usage: python noise_survey.py still --spots takeoff,centre,landing
 import argparse
 import csv
 import glob
+import hashlib
 import json
 import math
 import statistics
@@ -56,9 +57,13 @@ log = run_log.setup(__file__)
 STARTED_AT = datetime.now().astimezone()
 ROOT = Path(__file__).resolve().parent
 NOISE_FILE = ROOT / 'l2f' / 'sim' / 'noise_measured.json'
+LIGHTHOUSE_FILE = ROOT / 'config' / 'current' / 'config.yaml'  # the active room's base stations
 DEFAULT_URI = 'radio://0/80/2M/E7E7E7E7EA'
 PERIOD_MS = 10            # cflib's shortest log period (100 Hz)
 FS = 1000.0 / PERIOD_MS   # samples per second
+LOW_VBAT_FLIGHT = 3.2     # V under load for 0.5 s: hover mode lands (the firmware's low-battery level)
+BROWNOUT_VBAT = 3.0       # V: samples below it are left out (sensors and motors fail, 2026-11-22)
+RANGE_MAX_M = 4.0         # VL53L1X maximum range; failed reads log as 64.35 m
 MA_SAMPLES = 21           # centred moving average over 0.2 s: its first zero is at 5 Hz
 RANGE_MIN_M = 0.04        # VL53L1X: accurate only from 4 cm (datasheet DS12385, 7.3)
 GYRO_SATURATION_DPS = 1990  # at the +-2000 deg/s range (readings can exceed 2000 a little)
@@ -160,6 +165,8 @@ def column(rows, name, tag=None):
     var = next(v for v in VARIABLES if v[2] == name)
     i = COLUMNS.index(name)
     values = [r[i] * var[3] for r in rows if r[i] is not None and (tag is None or r[1] == tag)]
+    if name == 'zrange':
+        values = [v for v in values if 0 < v <= RANGE_MAX_M]
     return unwrap(values) if var[4] == 'orientation' else values
 
 
@@ -178,6 +185,18 @@ def describe(rows, tag, detrend):
 
 # ---- noise_measured.json ----------------------------------------------------
 
+def placement():
+    """The active base-station placement: room folder and a short fingerprint of its
+    config.yaml. Sensor-level results (IMU, range, flow, sweep-angle noise) hold for any
+    placement; estimate-level ones (position noise, Lighthouse jumps) and the replay check
+    belong to the placement they were measured with."""
+    if not LIGHTHOUSE_FILE.exists():
+        return {'room': None, 'sha256': None}
+    return {'room': LIGHTHOUSE_FILE.resolve().parent.name,
+            'sha256': hashlib.sha256(LIGHTHOUSE_FILE.read_bytes()).hexdigest()[:12]}
+
+
+
 def merge(mode, where_to_stats, extra=None):
     """Add this run's measurements to l2f/sim/noise_measured.json and recompute each
     quantity's sigma range per axis (min and max over every measurement so far)."""
@@ -188,7 +207,8 @@ def merge(mode, where_to_stats, extra=None):
         for name, s in stats.items():
             if s['quantity'] in NOISE_QUANTITIES and not math.isnan(s['sigma']):
                 entries.append({'mode': mode, 'where': where, 'quantity': s['quantity'],
-                                'axis': s['axis'], 'sigma': s['sigma'], 'r1': s['r1'], 'time': stamp})
+                                'axis': s['axis'], 'sigma': s['sigma'], 'r1': s['r1'], 'time': stamp,
+                                'placement': placement()['sha256']})
     for quantity in NOISE_QUANTITIES:
         for axis in sorted({e['axis'] for e in entries if e['quantity'] == quantity}):
             sel = [e for e in entries if e['quantity'] == quantity and e['axis'] == axis]
@@ -231,8 +251,12 @@ def save(mode, rows, results):
     path = run_log.csv_path(mode, script=__file__, when=STARTED_AT)
     run_log.write_csv(path, COLUMNS, rows, script=__file__, generated_at=datetime.now().astimezone())
     json_path = path.with_suffix('.json')
+    results = dict(results, lighthouse_placement=placement())
     json_path.write_text(json.dumps(results, indent=1, sort_keys=True) + '\n')
-    log.info('Samples: %s (%d rows); results: %s', path, len(rows), json_path)
+    if LIGHTHOUSE_FILE.exists():  # the geometry these samples were taken with (replay check)
+        path.with_name(path.stem + '_lighthouse.yaml').write_bytes(LIGHTHOUSE_FILE.read_bytes())
+    log.info('Samples: %s (%d rows); results: %s; base stations: %s', path, len(rows), json_path,
+             results['lighthouse_placement'])
 
 
 # ---- drone ----------------------------------------------------------------------
@@ -244,6 +268,7 @@ class Recorder:
         self.latest = {}
         self.rows = []
         self.tag = None
+        self.stop = threading.Event()  # set to end a recording early (low battery)
 
     def first_cb(self, timestamp, data, logconf):
         """Pace the rows: one per sample of the first block."""
@@ -259,7 +284,7 @@ class Recorder:
         """Record `seconds` of samples under `tag`; return how many arrived."""
         before = len(self.rows)
         self.tag = tag
-        time.sleep(seconds)
+        self.stop.wait(seconds)
         self.tag = None
         got = len(self.rows) - before
         log.info('%s: %d samples in %.0f s (%.0f%% of %d expected)', tag, got, seconds,
@@ -403,6 +428,25 @@ def run_hover(args):
                 time.sleep(0.2)
 
         threading.Thread(target=keep_alive, daemon=True).start()
+        low = threading.Event()
+
+        def watch_battery():
+            # land instead of flying into a brown-out: the voltage under load below
+            # LOW_VBAT_FLIGHT for 0.5 s ends the recording and skips the other heights
+            since = None
+            while alive.is_set() and not low.is_set():
+                v = rec.latest.get('pm.vbat')
+                if v is not None and v < LOW_VBAT_FLIGHT:
+                    since = since or time.time()
+                    if time.time() - since > 0.5:
+                        log.warning('Battery %.2f V under load: landing, the other heights are skipped.', v)
+                        low.set()
+                        rec.stop.set()
+                else:
+                    since = None
+                time.sleep(0.05)
+
+        threading.Thread(target=watch_battery, daemon=True).start()
         hlc = cf.high_level_commander
         cf.supervisor.send_arming_request(True)
         time.sleep(1.0)
@@ -410,9 +454,11 @@ def run_hover(args):
             hlc.takeoff(z0 + args.hover_heights[0], 2.5)
             time.sleep(3.0)
             for h in args.hover_heights:
+                if low.is_set():
+                    break
                 hlc.go_to(x0, y0, z0 + h, 0.0, 2.0)
-                time.sleep(3.0)  # settle
-                rec.record(f'{h:g}m', args.seconds)
+                if not low.wait(3.0):  # settle
+                    rec.record(f'{h:g}m', args.seconds)
             hlc.land(z0, 2.5)
             time.sleep(3.0)
             hlc.stop()
@@ -425,11 +471,16 @@ def run_hover(args):
             cf.supervisor.send_arming_request(False)
             for conf in confs:
                 conf.stop()
+    vi = COLUMNS.index('vbat')
+    rows = [r for r in rec.rows if r[vi] is None or r[vi] >= BROWNOUT_VBAT]
+    if len(rows) < len(rec.rows):
+        log.warning('%d samples below %.1f V left out of the statistics.', len(rec.rows) - len(rows), BROWNOUT_VBAT)
     tags = [f'{h:g}m' for h in args.hover_heights]
-    stats = {tag: describe(rec.rows, tag, 'ma') for tag in tags}
+    stats = {tag: describe(rows, tag, 'ma') for tag in tags}
+    stats = {tag: st for tag, st in stats.items() if st}  # heights not flown (battery)
     vibration = []
     for h, tag in zip(args.hover_heights, tags):
-        rpm = [v for c in ('rpm1', 'rpm2', 'rpm3', 'rpm4') for v in column(rec.rows, c, tag) if v < 65535]
+        rpm = [v for c in ('rpm1', 'rpm2', 'rpm3', 'rpm4') for v in column(rows, c, tag) if v < 65535]
         if not rpm or tag not in stats:
             continue
         s = stats[tag]
@@ -565,6 +616,8 @@ def run_logs(args):
                  100 * statistics.median(sizes), 100 * sizes[-1], len(durations),
                  '%.2f' % statistics.median(durations) if durations else '-')
     log.info('Gyro: %d of %d samples at the +-2000 deg/s range', saturated, gyro_samples)
+    # the flight logs' own placement is not recorded in them: these jumps belong to whatever
+    # base-station placement was active when they were flown
     summary = {'files': len(paths), 'minutes': minutes, 'jumps': len(jumps),
                'jumps_per_minute': len(jumps) / minutes if minutes else None,
                'z_share_mean': k_z, 'size_m': sorted(j['size_m'] for j in jumps),
