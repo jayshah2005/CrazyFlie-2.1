@@ -330,7 +330,54 @@ void begin_episode(Runtime& rt, const float p[3], const float v_world[3], const 
   e.flow_phase = (float)d.uniform(0, e.flow_period);
   e.lh_angle_noise = u("lighthouse.angle_noise");
   const size_t n = c.stations.size();
-  e.true_stations = c.stations;
+  // Base-station placement: the room file's stored geometry, or (lighthouse.placement: random)
+  // a new layout every episode, so a policy does not learn one room's Lighthouse setup. Random:
+  // the stations stand around the room centre at a drawn distance, height and azimuth spacing and
+  // aim at a point near the flight area (z up, no roll); the drone stores that layout, and the
+  // true one adds the geometry error, as with a room file. Calibrations stay the room file's.
+  std::vector<cfBaseStation_t> stored = c.stations;
+  // L2F_LH_PLACEMENT=room|random overrides the file (e.g. test a random-layout policy in the room)
+  static const std::string placement = [&c] {
+    if (const char* e = std::getenv("L2F_LH_PLACEMENT")) return std::string(e);
+    return c.strings.count("lighthouse.placement") ? c.strings.at("lighthouse.placement") : std::string("room");
+  }();
+  if (placement != "room" && placement != "random")
+    throw std::runtime_error("lighthouse.placement / L2F_LH_PLACEMENT must be room or random, not " + placement);
+  const bool random_placement = placement == "random";
+  if (random_placement) {
+    const float deg = (float)M_PI / 180;
+    const float sign = d.uniform(0, 1) < 0.5 ? -1.0f : 1.0f;
+    float az = (float)d.uniform(0, 2 * M_PI);
+    const float aim_xy = (float)c.fixed("lighthouse.placement_aim_xy");
+    for (size_t b = 0; b < n; b++) {
+      if (b > 0) az += sign * u("lighthouse.placement_separation") * deg;
+      const float dist = u("lighthouse.placement_distance"), h = u("lighthouse.placement_height");
+      cfBaseStation_t& st = stored[b];
+      st.origin[0] = dist * std::cos(az);
+      st.origin[1] = dist * std::sin(az);
+      st.origin[2] = h;
+      const float aim[3] = {(float)d.uniform(-aim_xy, aim_xy), (float)d.uniform(-aim_xy, aim_xy),
+                            u("lighthouse.placement_aim_height")};
+      float x[3], y[3], z[3];
+      for (int i = 0; i < 3; i++) x[i] = aim[i] - st.origin[i];
+      float nx = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
+      for (int i = 0; i < 3; i++) x[i] /= nx;  // forward: towards the aim point
+      y[0] = -x[1];  // up x forward: horizontal, to the station's left
+      y[1] = x[0];
+      y[2] = 0;
+      float ny = std::sqrt(y[0] * y[0] + y[1] * y[1]);
+      for (int i = 0; i < 3; i++) y[i] /= ny;
+      z[0] = x[1] * y[2] - x[2] * y[1];
+      z[1] = x[2] * y[0] - x[0] * y[2];
+      z[2] = x[0] * y[1] - x[1] * y[0];
+      for (int i = 0; i < 3; i++) {  // columns: the station's axes in the room frame
+        st.rotation[i][0] = x[i];
+        st.rotation[i][1] = y[i];
+        st.rotation[i][2] = z[i];
+      }
+    }
+  }
+  e.true_stations = stored;
   e.lh_period.resize(n);
   e.lh_phase.resize(n);
   e.dropout_rate.resize(n);
@@ -371,6 +418,9 @@ void begin_episode(Runtime& rt, const float p[3], const float v_world[3], const 
     ec.tof_low_std = (float)c.fixed("estimator.range_low_std");
     rt.est = cfEstimatorCreate(&ec);
     for (size_t b = 0; b < n; b++) cfEstimatorSetBaseStation(rt.est, (int)b, &c.stations[b]);
+  }
+  if (random_placement) {  // this episode's layout is what the drone has stored
+    for (size_t b = 0; b < n; b++) cfEstimatorSetBaseStation(rt.est, (int)b, &stored[b]);
   }
   rt.now_ms = 1000;
   rt.t = 0;

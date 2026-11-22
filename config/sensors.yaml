@@ -52,6 +52,14 @@ flow:
 lighthouse:
   # Lighthouse V2 base stations and deck
   system: config/current/config.yaml  # stored geometry and calibration of the active room (cfclient file)
+  # placement: random draws a new layout of the file's stations every episode, so a policy does
+  # not learn one room (room = the file's geometry). Both IH222A layouts (2026-11) lie inside.
+  placement: random
+  placement_distance: [1.5, 3.5]   # m, horizontal distance of each station from the room centre
+  placement_height: [1.4, 2.6]     # m above the floor
+  placement_separation: [60, 180]  # deg, azimuth between neighbouring stations seen from the centre
+  placement_aim_xy: 0.5            # m, each station aims within +-this of the centre
+  placement_aim_height: [0.0, 1.0]  # m, height of the aim point
   rotation_rate: [49.5, 50.5]    # rotations / s per base station
   angle_noise: [0.00002, 0.00004]  # rad per sweep; measured still 0.024-0.033 mrad
                                  # (prior [0.0001, 0.0003]: V2 jitter about 0.7 mm at 2-3 m)

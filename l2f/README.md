@@ -513,6 +513,40 @@ plain TD3 with uneven motors (p = 0.05). A 3-seed round on the Mac had the sum b
 with 12-15% crashes): seed spread, which the 8 seeds resolve. About one run in ten collapses in
 any method, so flight checkpoints are always picked by a longer test (`policies/README.md`).
 
+### First flight and first calibration (2026-11-22)
+
+The TD3 candidate (`policies/2026-11-22_ss_td3_s11_1800k`, trained on the sensor priors) flew
+`takeoff_and_switch` from the Mac: it held its position (spread 1.4-1.8 cm) but shook. Its motor
+commands jumped by 20-50% of full range every 20 ms (motor 2 at 0 or full 20% of the time),
+73% of the oscillation power at 15-25 Hz (the 50 Hz log's limit). The rotor-speed inputs were
+right (`rltr.r*` equal the measured speeds). Two gaps to the simulator explain it:
+
+- The drone's gyro noise is correlated from step to step (hover survey: lag-1 correlation 0.54-0.66
+  on x, 0.24-0.35 on y, 0.23-0.39 on z); the simulator's was white.
+- The policies chatter with more estimate delay than training covered (0-12 ms): in the mission
+  test the TD3 candidate's jitter is 0.10 at 6 ms, 0.12 at 12 ms and 0.20-0.22 at 20 ms (the
+  flight's level); the DualProj candidate (0.058 at 6 ms) crashed 46-49 of 50 episodes at 20 ms.
+
+Calibration 1 (plan Step 5, `config/sensors.yaml`, commit 04ea435): the survey's `still` and hover
+values, ranges widened ~20% (gyro per axis with AR(1) correlation, `sensor_sim.h`
+`imu.gyro_noise_*_x/y/z`; filter gyro and accelerometer noise in hover; range noise; Lighthouse
+angle noise 4-12x below the prior). The filter's gyro noise (0.015-0.06 rad/s) assumes the hover
+noise is vibration, not body motion; the survey cannot tell them apart. Heights, slide and logs
+were not run, so the range below 4 cm, the flow and the drop-outs keep their priors. Training
+then uses `L2F_DELAY_MAX_MS=20`, and flight candidates are picked by 100-episode tests at 6, 12
+and 20 ms of estimate delay.
+
+Calibration 2: room-independent. Training uses only sensor-level survey values (none of the
+room-dependent ones: estimate noise, Lighthouse jumps), and `lighthouse.placement: random` in
+`config/sensors.yaml` draws a new base-station layout every episode (distance 1.5-3.5 m from the
+room centre, height 1.4-2.6 m, 60-180 deg apart, aimed within 0.5 m of the centre at 0-1 m height;
+calibrations from the room file), so a policy is not tied to one room's Lighthouse setup. The
+drone stores the drawn layout; the true one adds the geometry error, as with a room file.
+`L2F_LH_PLACEMENT=room` tests in the room file's layout instead (without the key: room, so older
+recipes reproduce; checked identical). The IH222A-trained TD3 candidate ends 45% of
+`test_sensor_sim` episodes early in random layouts against 20% in IH222A (yaw error 90th
+percentile 9.5 against 4.3 deg): the room dependence this removes.
+
 Found on the way: the flown filter's range update asserts when the drone rests on the floor with
 an almost level estimate: `kalmanCoreFinalize` leaves R₂₂ = 1.000000119 and `acosf` of it in
 `mm_tof.c` is NaN (`!isnan(HPHR)`, kalman_core.c:249). The simulator ends such an episode as a
