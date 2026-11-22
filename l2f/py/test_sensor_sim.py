@@ -40,7 +40,8 @@ from networks import Actor  # noqa: E402
 log = run_log.setup(__file__)
 TASKS = ['free flight', 'take-off', 'landing', 'circle', 'line', 'eight', 'fast circle', 'p2p', 'gust']
 # sensor-error keys set to 0 by --ideal (in every section of config/sensors.yaml)
-IDEAL_ZERO = ['gyro_bias', 'gyro_noise_avg', 'gyro_noise_sample', 'acc_bias', 'acc_noise_avg', 'rest_gap', 'bias',
+IDEAL_ZERO = ['gyro_bias', 'gyro_noise_avg', 'gyro_noise_sample', 'gyro_noise_sample_x', 'gyro_noise_sample_y',
+              'gyro_noise_sample_z', 'acc_bias', 'acc_noise_avg', 'rest_gap', 'bias',
               'noise', 'below_min_bias', 'below_min_noise', 'angle_noise', 'geometry_error_position',
               'geometry_error_rotation', 'dropout_rate']
 

@@ -53,6 +53,7 @@ struct Config {
     return it->second;
   }
   double fixed(const std::string& key) const { return get(key).lo; }
+  bool has(const std::string& key) const { return values.count(key) > 0; }
 
   static std::string strip(const std::string& s) {
     size_t a = s.find_first_not_of(" \t"), b = s.find_last_not_of(" \t\r");
@@ -199,7 +200,18 @@ struct Config {
       std::string lh = cfg.strings.count("lighthouse.system") ? cfg.strings["lighthouse.system"] : "";
       if (const char* e = std::getenv("L2F_LIGHTHOUSE_SYSTEM")) lh = e;
       if (!lh.empty() && lh[0] != '/') {  // relative to the repository root (the folder holding config/)
-        std::string root = file.substr(0, file.rfind("config/"));
+        const size_t at = file.rfind("config/");
+        std::string root;
+        if (at != std::string::npos) {
+          root = file.substr(0, at);
+        } else {  // a sensors file outside config/: the root found as for the default file
+          std::string up;
+          for (int i = 0; i < 6; i++, up += "../")
+            if (std::ifstream(up + lh)) {
+              root = up;
+              break;
+            }
+        }
         lh = root + lh;
       }
       cfg.read_lighthouse(lh);
@@ -212,6 +224,7 @@ struct Config {
 // Per-episode draws of everything given as [lo, hi].
 struct Episode {
   float gyro_bias[3], acc_bias[3], gyro_noise_avg, gyro_noise_sample, acc_noise_avg;
+  float gyro_sigma[3], gyro_r1[3], gyro_ar[3];  // the actor's gyro noise per axis (AR(1) state)
   float range_gap, range_bias, range_noise, range_below_bias, range_below_noise, range_phase;
   float flow_gap, flow_noise, flow_period, flow_gain_out, flow_phase;
   std::vector<cfBaseStation_t> true_stations;  // stored + geometry error
@@ -293,6 +306,16 @@ void begin_episode(Runtime& rt, const float p[3], const float v_world[3], const 
   }
   e.gyro_noise_avg = u("imu.gyro_noise_avg");
   e.gyro_noise_sample = u("imu.gyro_noise_sample");
+  // The actor's gyro noise per axis, correlated from step to step (survey hover 2026-11-22:
+  // lag-1 correlation 0.2-0.7): n_t = r1 n_t-1 + sqrt(1 - r1^2) sigma w_t, std sigma. Without the
+  // per-axis keys: gyro_noise_sample on every axis, white, with the same random draws as before.
+  static const char* sigma_key[3] = {"imu.gyro_noise_sample_x", "imu.gyro_noise_sample_y", "imu.gyro_noise_sample_z"};
+  static const char* r1_key[3] = {"imu.gyro_noise_r1_x", "imu.gyro_noise_r1_y", "imu.gyro_noise_r1_z"};
+  for (int i = 0; i < 3; i++) {
+    e.gyro_sigma[i] = c.has(sigma_key[i]) ? u(sigma_key[i]) : e.gyro_noise_sample;
+    e.gyro_r1[i] = c.has(r1_key[i]) ? u(r1_key[i]) : 0.0f;
+    e.gyro_ar[i] = e.gyro_r1[i] > 0 ? (float)d.normal(e.gyro_sigma[i]) : 0.0f;  // start stationary
+  }
   e.acc_noise_avg = u("imu.acc_noise_avg");
   e.range_gap = u("range.rest_gap");
   e.range_bias = u("range.bias");
@@ -492,8 +515,17 @@ void simulate_step(Runtime& rt, const Truth& x, bool thrust_over_idle, DRAW& d, 
       cfEstimatorSetFlowDisabled(rt.est, off);
     }
   }
-  for (int i = 0; i < 3; i++)
-    gyro_actor[i] = clipf(x.w1[i] + e.gyro_bias[i] + (float)d.normal(e.gyro_noise_sample), clip);
+  for (int i = 0; i < 3; i++) {
+    float n;
+    if (e.gyro_r1[i] > 0) {
+      e.gyro_ar[i] = e.gyro_r1[i] * e.gyro_ar[i] +
+                     std::sqrt(1 - e.gyro_r1[i] * e.gyro_r1[i]) * (float)d.normal(e.gyro_sigma[i]);
+      n = e.gyro_ar[i];
+    } else {
+      n = (float)d.normal(e.gyro_sigma[i]);  // white (the draw as before when the keys are absent)
+    }
+    gyro_actor[i] = clipf(x.w1[i] + e.gyro_bias[i] + n, clip);
+  }
   rt.out = out;
   rt.failed = cfEstimatorFailed(rt.est, nullptr);
   rt.now_ms += TICKS_PER_STEP;
