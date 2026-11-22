@@ -32,6 +32,8 @@ htmlcov/
 crazyflie-lib-python/
 crazyflie-firmware/
 aideck-gap8-examples/
+aideck-esp-firmware/
+aideck-gap8-bootloader/
 
 # Crazyflie radio / TOC cache
 cache/
