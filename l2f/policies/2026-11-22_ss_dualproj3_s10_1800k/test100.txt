@@ -1,0 +1,12 @@
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash  0 circle  18.8 cm jitter 0.3473 | crash  5 circle  22.5 cm jitter 0.3562 | crash  0 circle  18.6 cm jitter 0.3504
+1100000  crash  0 circle   9.5 cm jitter 0.2446 | crash  2 circle  16.3 cm jitter 0.2379 | crash  0 circle   9.8 cm jitter 0.2430
+1200000  crash  0 circle   7.2 cm jitter 0.2458 | crash  1 circle  16.9 cm jitter 0.2279 | crash  0 circle   7.0 cm jitter 0.2455
+1300000  crash  0 circle   8.8 cm jitter 0.2017 | crash  0 circle  15.7 cm jitter 0.1961 | crash  0 circle   8.6 cm jitter 0.2018
+1400000  crash  0 circle   8.5 cm jitter 0.1154 | crash  2 circle  18.8 cm jitter 0.1123 | crash  0 circle   8.8 cm jitter 0.1155
+1500000  crash  0 circle   5.2 cm jitter 0.0799 | crash  0 circle  12.5 cm jitter 0.0796 | crash  0 circle   5.5 cm jitter 0.0791
+1600000  crash  0 circle   4.8 cm jitter 0.0650 | crash  0 circle  11.5 cm jitter 0.0637 | crash  0 circle   5.1 cm jitter 0.0641
+1700000  crash  0 circle   4.1 cm jitter 0.0591 | crash  0 circle   9.5 cm jitter 0.0585 | crash  0 circle   4.0 cm jitter 0.0584
+1800000  crash  0 circle   3.2 cm jitter 0.0576 | crash  0 circle   8.7 cm jitter 0.0556 | crash  0 circle   3.4 cm jitter 0.0564
+1900000  crash  0 circle   8.4 cm jitter 0.0553 | crash  1 circle  12.4 cm jitter 0.0542 | crash  0 circle   8.7 cm jitter 0.0542
+2000000  crash  0 circle   4.3 cm jitter 0.0802 | crash  0 circle   8.2 cm jitter 0.0769 | crash  0 circle   4.5 cm jitter 0.0787
