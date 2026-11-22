@@ -8,9 +8,12 @@ Port of learning-to-fly/scripts/trigger.py for our Lighthouse setup:
   - heights are relative to the take-off point
   - every flight writes a CSV under logs/ via run_log
 
-DEAD-MAN SWITCH: hold ENTER to fly. Release it and packets stop; the
-firmware cuts the motors ~200 ms later while the learned policy is flying
-(the drone drops). Press Q (with Enter released) to quit. Ctrl+C is an
+FLY SWITCH: press ENTER to start, press Enter again to stop (--hold: fly only
+while Enter is held, the old dead-man switch). Stopping ends the packets, and
+the firmware cuts the motors ~200 ms later while the learned policy is flying
+(the drone drops); in --mode mission a stop in the air is an automatic landing.
+With the toggle the drone keeps flying until the next press: keep Ctrl+C ready.
+Press Q (not flying) to quit. Ctrl+C is an
 emergency stop. An emergency-stop watchdog also cuts the motors within 1 s if
 this script dies or the radio drops; power-cycle the drone before the next
 flight (the watchdog stays latched until reboot).
@@ -183,11 +186,37 @@ else:
     key_down = flush_keyboard = None
 
 
-def key_test(seconds):
-    """No radio: log every change of Enter and Q for `seconds` s, polled at the flight's
-    packet rate, to check the dead-man switch before flying."""
+class FlySwitch:
+    """The Enter fly switch, read once per loop: toggle (default) = each press flips start /
+    stop; hold = on while Enter is held (dead-man). The Enter that launched the script is not
+    a press."""
+    def __init__(self, hold):
+        self.hold = hold
+        self.on = False
+        self.was_down = key_down(VK_RETURN)
+
+    def active(self):
+        """True while the flight should run."""
+        down = key_down(VK_RETURN)
+        if self.hold:
+            self.on = down
+        elif down and not self.was_down:  # a new press
+            self.on = not self.on
+        self.was_down = down
+        return self.on
+
+    def how(self):
+        """How to start and stop, for the READY line."""
+        return 'Hold ENTER to fly (release = stop)' if self.hold else 'Press ENTER to start, Enter again to stop'
+
+
+def key_test(seconds, hold=False):
+    """No radio: log every change of Enter and Q and of the fly switch for `seconds` s, polled
+    at the flight's packet rate, to check the switch before flying."""
     while key_down(VK_RETURN):  # the Enter that launched us
         time.sleep(SEND_PERIOD)
+    sw = FlySwitch(hold)
+    log.info('Fly switch: %s.', sw.how())
     log.info('Key test for %.0f s: hold and release Enter a few times, then press Q.', seconds)
     state = {VK_RETURN: False, VK_Q: False}
     since = {}
@@ -195,6 +224,9 @@ def key_test(seconds):
     t0 = time.time()
     while time.time() - t0 < seconds:
         now = time.time() - t0
+        was_on = sw.on
+        if sw.active() != was_on:
+            log.info('%6.2f s  fly switch %s', now, 'ON (flying)' if sw.on else 'OFF (stop)')
         for key in state:
             down = key_down(key)
             if down != state[key]:
@@ -556,14 +588,14 @@ def fly_mission(scf, args, pose, tele):
              '%.2f m/s (%.0f s). No PID: the policy flies from the floor.',
              profile.H, profile.v_up, profile.R, profile.P, profile.laps, profile.v_down,
              profile.duration())
-    log.info('READY. Hold ENTER for the whole mission. Releasing Enter in the air = '
-             'automatic landing at %.2f m/s; Ctrl+C = cut the motors now. Q quits once '
-             'landed.', args.abort_descent_rate)
+    sw = FlySwitch(args.hold)
+    log.info('READY. %s; a stop in the air = automatic landing at %.2f m/s; Ctrl+C = cut '
+             'the motors now. Q quits once landed.', sw.how(), args.abort_descent_rate)
     start = None
     done = False
     last_phase = None
     low_since = None
-    abort_start = None   # Enter released in the air: automatic landing
+    abort_start = None   # stopped (Enter) in the air: automatic landing
     abort_floor = None
     last_cmd = None      # last commanded target offset (m)
     rows_seen = [-1, time.time()]  # telemetry sample count and when it last grew
@@ -579,16 +611,17 @@ def fly_mission(scf, args, pose, tele):
     last_tick = None
     while True:
         now = time.time()
+        flying = sw.active()  # once per loop: a toggle press is an event
         if done or start is None:
             # Q only quits on the floor (before the start or after landing): in the
             # air it would cut the motors. Ctrl+C is the emergency stop.
             if key_down(VK_Q):
                 break
-            if done or not key_down(VK_RETURN):
+            if done or not flying:
                 time.sleep(SEND_PERIOD)
                 continue
             start = now
-            log.info('Enter held: mission started.')
+            log.info('Enter: mission started.')
         height = tele.rows[-1][4] - pose['z'] if tele.rows else 0.0
         tele.flow.update(height)
         # Safety 1: telemetry stopped (drone reset or power loss, or only the radio
@@ -620,16 +653,16 @@ def fly_mission(scf, args, pose, tele):
                                 'LANDING.', vbat, args.land_vbat, height)
             else:
                 low_vbat_since = None
-        if abort_start is None and not key_down(VK_RETURN):
+        if abort_start is None and not flying:
             if last_phase == 'sit' or last_cmd is None or height < args.cut_height:
-                log.warning('Enter released on the floor: motors cut, mission aborted.')
+                log.warning('Stopped (Enter) on the floor: motors cut, mission aborted.')
                 tele.phase = 'aborted'
                 done = True
                 continue
             # Re-activating mid-air would restart the mission from there, so a
             # release in the air lands the drone instead (packets keep flowing).
             abort_start = now
-            log.warning('Enter released %.1f s into the mission at %.2f m: AUTOMATIC '
+            log.warning('Stopped (Enter) %.1f s into the mission at %.2f m: AUTOMATIC '
                         'LANDING (Ctrl+C cuts the motors).', now - start, height)
         if abort_start is not None:
             z = max(-profile.below, last_cmd[2] - args.abort_descent_rate * (now - abort_start))
@@ -698,19 +731,20 @@ def fly(scf, args, pose, tele):
 
     while key_down(VK_RETURN):  # don't start on the Enter that launched us
         time.sleep(0.05)
-    log.info('READY. Hold ENTER to fly (release = stop). Press Q to quit.')
+    sw = FlySwitch(args.hold)
+    log.info('READY. %s. Press Q to quit.', sw.how())
 
     hold_start = None
     learned_start = None
     landed = False
-    while not key_down(VK_Q):
+    while not (key_down(VK_Q) and not sw.on):  # Q quits only while not flying
         now = time.time()
         if landed:
             time.sleep(SEND_PERIOD)
             continue
-        if not key_down(VK_RETURN):
+        if not sw.active():
             if hold_start is not None:
-                log.warning('Enter released after %.1f s: packets stopped.',
+                log.warning('Stopped (Enter) after %.1f s: packets stopped.',
                             now - hold_start)
             hold_start = None
             learned_start = None
@@ -720,7 +754,7 @@ def fly(scf, args, pose, tele):
 
         if hold_start is None:
             hold_start = now
-            log.info('Enter held: %s', 'PID take-off' if uses_pid_takeoff
+            log.info('Enter: %s', 'PID take-off' if uses_pid_takeoff
                      else 'policy take-off')
         elapsed = now - hold_start
         use_pid = args.mode == 'hover_original' or (
@@ -747,7 +781,7 @@ def fly(scf, args, pose, tele):
                 landed = True
                 tele.phase = 'landed'
                 log.info('Landed (%.2f m above the take-off point): motors cut. '
-                         'Release Enter and press Q.', height)
+                         'Press Q.', height)
                 continue
             if descend_for > 0 and tele.phase != 'landing':
                 log.info('Descending at %.2f m/s.', args.descent_rate)
@@ -766,7 +800,7 @@ def main(args):
         log.error('macOS: pip install pyobjc-framework-Quartz (the dead-man switch reads the keys with it).')
         return
     if args.key_test:
-        key_test(args.key_test)
+        key_test(args.key_test, args.hold)
         return
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
@@ -870,6 +904,8 @@ if __name__ == '__main__':
     parser.add_argument('--flow-off-below', type=float, default=0.0,
                         help='plan E4 (Q13): Flow deck off below this height above the take-off point, '
                              'e.g. 0.1 (0 = never, as before)')
+    parser.add_argument('--hold', action='store_true',
+                        help='fly only while Enter is held (dead-man switch) instead of press to start / press to stop')
     parser.add_argument('--key-test', type=float, default=0, metavar='SECONDS',
                         help='no radio: log Enter and Q changes for SECONDS s, to check the dead-man switch')
     main(parser.parse_args())
