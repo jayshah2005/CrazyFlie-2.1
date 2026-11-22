@@ -8,8 +8,9 @@ First full mission with no PID (take-off from the floor, 1.2 m wide circle,
 landing): 2026-11-04, at 0.6 / 0.75 / 1.0 / 1.5 m, landing within 2-4 cm of the
 start (see [Mission](#mission)).
 
-Everything here runs in **WSL Ubuntu 24.04**. Flying runs on Windows from the
-repo root with `rl_trigger.py`.
+Training runs in **WSL Ubuntu 24.04** or on **macOS** (the build settings per
+platform are in `sim/platform.sh`); the firmware build runs in WSL. Flying runs on
+Windows from the repo root with `rl_trigger.py`.
 
 | Path | What |
 | --- | --- |
@@ -18,7 +19,9 @@ repo root with `rl_trigger.py`.
 | `sim/train_mission.sh` | Train the mission policy (recipe of the flown "I1") and compare all checkpoints |
 | `firmware/patch_firmware.py` | Hooks into crazyflie-firmware 2026.08 (learned-controller packet, motor path, PID boot) |
 | `firmware/build_firmware.sh` | Out-of-tree controller build for `cf21bl` (fixes below), output `~/l2f_2026/build/cf21bl.bin`; target velocity and position-error integral for mission policies |
-| `pytorch_training_plan.html` | Plan (not yet implemented) for moving training to PyTorch + TorchJD and simulating the sensors through the firmware's Kalman filter; open it in a browser |
+| `py/` | PyTorch + TorchJD training on the C++ simulator (plan Step 3): simulator module, networks, checkpoint export, TD3, multi-objective TD3, checks ([PyTorch training](#pytorch-training-plan-step-3)) |
+| `estimator/` | The flown Kalman estimator compiled from the firmware tree as a library, for the simulator's sensor path (plan Step 2, [Sensor path](#sensor-path-plan-step-2)) |
+| `pytorch_training_plan.html` | Plan for moving training to PyTorch + TorchJD and simulating the sensors through the firmware's Kalman filter (Steps 0-3 implemented; Steps 4-6 need the survey); open it in a browser |
 
 ## Start here
 
@@ -75,7 +78,7 @@ comment where it is read. The files we changed:
 | `src/config/parameters.h` | Which model, reward, noise and inputs a build uses |
 | `src/config/config.h`, `actor_and_critic.h` | Step limit, replay-buffer cap, critic width and outputs |
 | `src/training.h`, `training.cpp` | Swaps in the MOO training step; `L2F_SEED` |
-| `src/steps/curriculum.h` | Upstream reward-weight curriculum, with the untuned-reward option (`REWARD=uniform`) |
+| `src/steps/curriculum.h` | Our mission ramp (mission episodes, delay and randomization ramped in over `L2F_MISSION_RAMP`), plus the upstream reward-weight curriculum with our untuned-reward option (`REWARD=uniform`) |
 | `src/evaluate_robustness.cpp` | Offline evaluation, including the flight script's mission (`mission` mode) |
 | `src/moo/` | Multi-objective TD3 step and gradient aggregators |
 
@@ -261,6 +264,192 @@ Notes from these flights:
 - A sharp styrofoam poke at 0.9 m (839 deg/s within 20 ms) flipped C; light pokes
   were absorbed. Training has no impulse disturbances.
 
+## Simulator and reward options (plan Step 1)
+
+From `pytorch_training_plan.html`. Every option is off by default: with none set,
+training is bit-identical to before (checked: same evaluation returns over 60k
+steps, same seed, old and new build).
+
+| Option (`train_mission.sh`) | Kind | Effect |
+| --- | --- | --- |
+| `SMOOTHING=zigzag` (`ZIGZAG_WEIGHT=0.25`) | build | replaces the action-rate cost Σ(a_t − a_t−1)² by Σ(a_t − 2a_t−1 + a_t−2)²: zero for a steady ramp, large for chatter. At 50 Hz chatter, 0.25 · 16 = 1 · 4, so chatter costs what it did; a 2 Hz manoeuvre about 60× less. `SMOOTHING=none` drops both |
+| `CRASH_PENALTY=P` | build | reward −P on a crash |
+| `SURVIVAL_BONUS=c` | build | the per-step bonus (paper 2); 0 tests the crash penalty alone. Losing the bonus by crashing costs about c / (1 − γ) = 200 |
+| `GYRO_CLIP=34.9` | runtime | the actor's gyro reading is clipped at the sensor's range (the firmware's ±2000°/s) |
+| `OMEGA_CRASH=34.9` | runtime | rotating faster than this (rad/s, any axis) is a crash |
+| `LANDING_CUT=1` | runtime | land like `rl_trigger.py`: in landing episodes and the mission test, the motors are cut when the target is within `cut_window` of the floor and the *estimated* height is below the cut height, or `floor_timeout` after the target reached the floor; the episode ends as a landing, paid the bonus it gives up (c / (1 − γ)). Values in `config/landing.yaml` |
+| `POS_NOISE=1` | runtime | position noise drawn per episode and per axis, from `noise_measured.json` (`noise_survey.py`) or x, y 3–10 mm until then |
+
+`evaluate_robustness <actor.h5> N landing` flies the training environment's own
+landing episodes and reports how they end (landed, failed landing, crashed, still
+flying), with the cut height and touchdown speed. The mission test reports the motor
+cut too when `L2F_LANDING_CUT=1`. With `MOO=1` the crash penalty or landing payout is
+part 0 and the zig-zag cost part 5, so the parts still add up to the reward.
+
+Run folders end in a tag (build, seed, runtime options, process id), so trainings
+started in the same second no longer share a folder. `sim/compare.sh` runs a file of
+option sets over several seeds and summarises them; `sim/step1_configs.txt` is the
+comparison below.
+
+Results (2026-11-21, macOS/Accelerate, variant E, 3 seeds, medians over checkpoints
+1.2M–2.0M of the `train_mission.sh` mission test; "uneven" = with per-motor mismatch;
+crashed = share of all test episodes):
+
+| Option set | Circle | Uneven | Crashed | Jitter | Checkpoints without a crash |
+| --- | --- | --- | --- | --- | --- |
+| baseline (bonus 2, no penalty, action rate) | 6.3 cm | 12.6 cm | 3.1% | 0.067 | 3/27 |
+| bonus 2 + crash penalty 200 | 7.6 cm | 13.1 cm | 2.1% | 0.065 | 10/27 |
+| **no bonus, crash penalty 200** | **5.3 cm** | **10.0 cm** | **0.8%** | 0.070 | 17/27 |
+| no bonus, crash penalty 400 | 6.3 cm | 9.6 cm | 0.7% | 0.069 | 19/27 |
+| zig-zag 0.25 instead of action rate | 6.2 cm | 13.1 cm | 4.0% | 0.065 | 8/27 |
+| no smoothing term | 6.8 cm | 13.0 cm | 2.9% | 0.073 | 10/27 |
+| gyro clip + rotation crash + per-axis noise (x, y 3–10 mm) | 6.5 cm | 10.7 cm | 1.5% | 0.066 | 16/27 |
+| landing cut (6 cm, `config/landing.yaml`) | 6.9 cm | 14.3 cm | 4.4% | 0.077 | 10/27 |
+
+The baseline matches the WSL runs above (E: 6.1 / 11.4 cm, 2.8%). Per seed, the
+baseline crashed 3.0–3.5% and the no-bonus crash penalty 0.2–1.7% (P 200) and
+0.2–1.0% (P 400), so that difference is larger than the seed spread. In theory a bonus
+of 2 and a crash penalty of 200 give the same incentive (2 / (1 − 0.99) = 200); in
+training, the penalty without the bonus works clearly better. Zig-zag keeps the jitter
+of the action-rate penalty (no smoothing term raises it to 0.073) but crashes slightly
+more; this test has no sharp manoeuvres, where zig-zag should differ. With the cut at
+6 cm, `evaluate_robustness … landing` lands 95–100% of the training landing episodes
+for both the landing-cut and the baseline policies (cut at 6.0–7.0 cm, touchdown
+1.10–1.16 m/s: the free fall from the cut height), so the cut changes little until the
+cut height is lowered.
+
+Target steps (plan Q15, `python3 l2f/py/step_response.py`, 2026-11-22): point-to-point episodes
+(the target jumps 0.2–0.45 m), deterministic actions, no randomization, checkpoints 1.6M, 1.8M and
+2.0M of the 3 seeds, 40 episodes each (360 per row). Half-way: time until the error is half the
+step; settle: until it stays below max(10% of the step, 5 cm); no rise: the error never halved
+within 2 s.
+
+| Policy | Half-way | Overshoot | Settle | No rise | Crashed | Chatter \|Δa\| |
+| --- | --- | --- | --- | --- | --- | --- |
+| baseline (action rate) | 0.68 s | 27% | 1.53 s | 12% | 3 | 0.104 |
+| zig-zag 0.25 | 0.67 s | 30% | 1.27 s | 21% | 6 | 0.107 |
+| no smoothing term | 0.66 s | 25% | 1.43 s | 17% | 7 | 0.111 |
+| no bonus, crash penalty 200 | 0.75 s | 23% | 1.50 s | 5% | 0 | 0.091 |
+
+Zig-zag does not make steps faster (it frees fast purposeful command changes, but the policy
+does not use them) and fails to respond more often; it settles faster. The no-bonus crash
+penalty is the clearest gain here too: fewest failed responses, no crash, least overshoot and
+chatter.
+
+## PyTorch training (plan Step 3)
+
+The training loop in PyTorch, on the unchanged C++ simulator. Build the simulator module with
+the flags of the recipe (`train_mission.sh` prints them; the module is `l2f_sim`):
+
+```
+cmake -S l2f/learning_to_fly -B l2f/learning_to_fly/build_py_E -DCMAKE_BUILD_TYPE=Release <platform flags> \
+  -DCMAKE_CXX_FLAGS="<the recipe's -D flags>" -DL2F_BUILD_PYTHON=ON -DPython_EXECUTABLE=$(which python3)
+cmake --build l2f/learning_to_fly/build_py_E --target l2f_sim evaluate_robustness h5_to_header
+python3 l2f/py/train.py --build l2f/learning_to_fly/build_py_E/src --variant E --seed 0 --evaluate
+python3 l2f/py/train.py ... --moo parts --agg upgrad --total 1     # multi-objective, TorchJD aggregator
+```
+
+| File | What |
+| --- | --- |
+| `py/sim_binding.cpp` | pybind11 module: batched `Sim` (reset, observe, step with the 11 unweighted reward parts, curriculum weights), the C++ runner's rollout as a reference, rl_tools' actor and TD3 updates as references |
+| `py/networks.py` | Actor and critic as in `src/config/actor_and_critic.h`: FAST_TANH with rl_tools' backward pass (1 − y²), PyTorch's default init (= rl_tools' `init_kaiming`), Adam lr 1e-3, ε 1e-8, weight decay p·wd/2 per step on weights |
+| `py/export.py` | Actor checkpoints in rl_tools' `.h5` layout; the firmware header through `src/h5_to_header.cpp` |
+| `py/td3.py`, `py/train.py` | TD3 with the C++ recipe's schedule; the buffer keeps the unweighted parts, so the reward is r = Σᵢ wᵢ(t) uᵢ with the current curriculum weights (rl_tools recalculates the buffer instead) |
+| `py/moo.py` | Multi-objective TD3 with TorchJD (`autojac.backward` + `jac_to_grad`): framing A (8 reward parts, or `--parts 3`: tracking, smoothness, safety), framing B (tasks), `MOO_TOTAL` and `MOO_NORM` as in `src/moo/td3_moo.h`; per-objective gradient log in `logs/train_moo_*.csv` |
+| `py/moo_report.py` | Per training window: the most opposed objective pairs (median cosine, share negative), aggregator weights, gradient norms |
+
+Checks (all pass, 2026-11-22):
+
+| Script | Checks |
+| --- | --- |
+| `py/test_sim.py` | the module reproduces the C++ runner exactly (observations, rewards, terminations), and the parts add up to the reward |
+| `py/test_networks.py` | a C++ checkpoint in PyTorch gives rl_tools' actions (1e-6); export and firmware header are identical |
+| `py/test_td3.py` | rl_tools' and PyTorch's TD3 updates from the same weights, batches and noise stay equal (E: 2.8e-5 of the largest weight after 2000 critic and 500 actor updates); `--control` adds a PyTorch copy on row-shuffled batches as the rounding floor (see A5 below for I1) |
+| `py/test_moo.py` | the 8 part groups add up to the reward; TorchJD's `sum` step equals the plain TD3 gradient (3e-7); `--parts 1` makes exactly TD3's updates |
+
+`test_td3.py` found that the port first used Adam ε = 1e-7 (rl_tools' `DefaultParametersTF`)
+instead of the 1e-8 of `DefaultParameters` that the recipe uses; ε only matters for weights
+with small gradients, but it changed the first update by a third of a step. Beyond ~1000
+rounds the two runs drift apart by themselves: once the actor leaves saturation, Adam turns
+rounding differences into full steps, and a PyTorch copy whose weights differ by 1e-7 drifts
+from the original just as much. So only the statistics of whole runs can be compared (A5).
+
+A5, PyTorch against C++ (`moo_summary.py checkpoints`, late checkpoints 1.2M–2.0M, 2026-11-22):
+
+| Recipe | Trainer | Seeds | Circle | Uneven motors | Crashed | Jitter | Per seed: circle / uneven / crashed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| E | C++ | 6 | 6.5 cm | 13.6 cm | 4.0% | 0.069 | 4.7–8.2 / 11.7–16.0 / 3.0–5.9% |
+| E | PyTorch | 6 | 6.0 cm | 13.1 cm | 3.5% | 0.069 | 4.6–8.9 / 11.1–19.2 / 1.2–5.9% |
+| I1 | C++ | 6 | 7.9 cm | 11.8 cm | 2.8% | 0.055 | 6.2–10.7 / 10.3–12.5 / 0.7–5.7% |
+| I1 | PyTorch | 6 | 9.0 cm | 12.2 cm | 6.3% | 0.058 | 7.1–13.8 / 9.9–18.2 / 0–15.6% |
+
+E matches within the seed spread (per-seed circle error and crash count: Mann-Whitney p = 0.75
+for both). I1 does not differ significantly either (p = 0.26 circle error, 0.47 crashes), but
+PyTorch I1 has 4 collapsed late checkpoints (8 or more of 15 episodes crashed), in 3 of 6 seeds
+(s0 1.6M, s3 1.7M, s4 1.2M and 1.8M); C++ I1 has none, and E has none in either trainer. With
+6 seeds that can still be chance (3/6 against 0/6 seeds: Fisher p ≈ 0.18).
+
+The update rule is not the cause: `test_td3.py --control` on an I1 build (149 inputs) shows the
+same arithmetic difference to rl_tools as on E. Its control is a second PyTorch copy fed every
+batch with the rows shuffled (same loss, other float32 summation order at every update).
+rl_tools sits a flat 2–24x above that floor at every check from 10 to 1000 rounds on both
+builds (a bug would make the multiple grow). On I1 the actor exceeds the 1e-4 tolerance by
+1000 rounds (9.7e-4) only because it is far more chaotic: the shuffled copy alone grows ~160x
+between rounds 500 and 1000 on I1, ~1.2x on E. The training loop is shared with E (exploration
+actions clipped to ±1 before the step, so the 32-action history holds the same values as in
+rl_tools). So PyTorch is cleared for E, the recipe of the sensor path; I1 trained in PyTorch
+should be picked by checkpoint evaluation (as every flown policy is), or get more seeds if the
+tail matters.
+
+## Sensor path (plan Step 2)
+
+`SENSOR_SIM=1` (build flag `L2F_SENSOR_SIM`) makes the actor observe what it observes on the
+drone: the output of the flown Kalman estimator, fed by simulated sensors. The critic keeps the
+true state. Every sensor value is a prior in `config/sensors.yaml` (datasheets and earlier
+measurements, `[lo, hi]` drawn per episode) until the survey measures it (plan Step 5).
+
+| File | What |
+| --- | --- |
+| `estimator/` | `cf_estimator.c` + the firmware's own `kalman_core.c`, `mm_tof.c`, `mm_flow.c`, `mm_sweep_angles.c`, `mm_yaw_error.c`, `kalman_supervisor.c`, `outlierFilterLighthouse.c`, Lighthouse preprocessing, compiled unchanged from `~/crazyflie-firmware-2026.08` (`FW=`); `cf_estimator.c` re-implements only the FreeRTOS-bound loop (`kalmanTask` at 1 kHz, 100 Hz prediction), the measurement queue, the flying flag, the LH2 throttle and the driver rules, per instance |
+| `include/.../simulator/sensor_sim.h` | Sensors per 10 ms step: IMU average for the filter, the gyro sample for the actor, range every 25 ms (15° cone), flow every ~10 ms (inverse of `mm_flow.c` with the true camera height), one Lighthouse V2 rotation per base station (~50 Hz) from the firmware's measurement model with the true geometry (stored + error), drop-outs; 10 estimator ticks |
+| `config/sensors.yaml` | The sensor priors, the Lighthouse system file (`config/current/config.yaml`), the E4 switches (off) |
+
+| Option | Effect |
+| --- | --- |
+| `SENSOR_SIM=1` | build: the sensor path (Gaussian observation noise off; not with `POS_NOISE=1`); `SENSORS=<file>` another sensor file |
+| `FORCE_SCALE=<x>` | runtime: scale of the per-episode random external force (σ m·g/20 per axis; 1 = recipe) |
+
+`estimator/build/replay_survey <noise_survey_*.csv> config/current/config.yaml` replays a survey log
+through the library against the logged estimate (plan E1 check 2; `--selftest`: a synthetic 100 Hz
+log with only sensor 0's angles, as the firmware logs them, reproduces the estimate within 0.6 mm).
+
+Checks: `estimator/build/check_estimator` (ideal sensors through the library: converges, tracks a
+0.5 m circle at 0.8 m/s with 4.3 mm RMS, several filters side by side are independent, the flow
+alone at 5 cm reads 2.1× the speed) and `py/test_sensor_sim.py` (a trained actor flies the
+mission mix; estimate against truth). Findings (2026-11-22):
+
+- With ideal sensors and no random force the estimate is within 1.6 mm (median position),
+  0.10° (tilt) and 0.05° (yaw) of the truth in closed loop: the frames, units and timing are right.
+- The recipe's random external force (5% of the weight per axis) is read by the flown filter as
+  tilt, because its flight model has thrust along body z only: 2-3° median tilt error even with
+  ideal sensors (0.2° without the force). A real drone has much smaller steady sideways forces,
+  so on this path the force makes the estimate worse than on the drone (open question in the plan).
+- The drone keeps at most 50 LH2 samples per second (`lighthouse.lh2maxRate`): with two base
+  stations at ~50 Hz it drops about half of them at random. The simulator does the same.
+- Starting the filter exactly at a level truth hits a firmware rounding edge (`kalmanCoreFinalize`
+  can give R₂₂ = 1 + 1 ulp, `acosf` of it in `mm_tof.c` is NaN). Episodes therefore start with
+  the converged filter's errors (σ 2 mm, 1 cm/s, 0.18°). A firmware assert or a non-finite state
+  ends the episode as a crash, as the assert halts the drone; none in 4500 early-training episodes.
+- An old-path policy (E, seed 1, 1.6M) on this path with the priors: 50% of the hard training-mix
+  episodes end early, against 32.5% on the old path (10% / 5% without the random force); the
+  policy has never seen estimator output. Speed: 14.6 µs per step against 2.6 µs (Python loop);
+  C++ training about 25% slower.
+
+E4 (plan Q13, off by default): `estimator.flow_off_below` / `rl_trigger.py --flow-off-below 0.1`
+switch the Flow deck off below 10 cm, and `L2F_RANGE_MIN_PATCH=1` in `patch_firmware.py` with
+`estimator.range_min_distance: 0.04` raises the range σ below 4 cm, in the simulator and the
+firmware alike.
+
 ## Multi-objective critic (`MOO=1`)
 
 Groundwork for multi-objective training (gradient aggregation such as UPGrad).
@@ -342,6 +531,86 @@ Per-part gradients after 1M steps (3 seeds): survival conflicts with action
 rate, action and position (median cosine -0.35 / -0.28 / -0.22, negative in 63%
 of updates); orientation, velocity, landing speed and angular acceleration point
 the same way (cosine ~+0.9).
+
+### PyTorch MOO on the no-bonus reward (2026-11-22)
+
+`l2f/py/train.py --moo parts --total 1` (TorchJD aggregators), variant E, no survival bonus,
+crash penalty 200 (the best Step 1 reward), 2 seeds, late-checkpoint medians. Round 1: `sum`,
+Aligned-MTL, UPGrad; round 2: DualProj, PCGrad, and plain PyTorch TD3 as the same-trainer
+reference.
+
+| Objectives | Aggregator | Circle | Uneven motors | Crashed | Jitter |
+| --- | --- | --- | --- | --- | --- |
+| – | plain TD3, C++ (3 seeds) | 5.3 cm | 10.0 cm | 0.8% | 0.070 |
+| – | plain TD3, PyTorch | 4.6 cm | 8.8 cm | 0.9% | 0.073 |
+| 8 parts | `sum` | 5.2 cm | 10.2 cm | 0.5% | 0.070 |
+| 8 parts | `aligned_mtl` | 5.6 cm | 11.6 cm | 7.5% | 0.078 |
+| 8 parts | `upgrad` | 33.7 cm | 88.0 cm | 56.5% | 0.195 |
+| 8 parts | `dualproj` | 5.7 cm | 13.7 cm | 3.8% | 0.079 |
+| 8 parts | `pcgrad` | 109.1 cm | 113.9 cm | 81.5% | 0.183 |
+| 3 groups | `aligned_mtl` | 8.6 cm | 12.0 cm | 9.4% | 0.067 |
+| 3 groups | `upgrad` | 6.2 cm | 11.1 cm | 0.9% | 0.071 |
+| 3 groups | `dualproj` | 4.6 cm | 9.2 cm | 0.7% | 0.066 |
+| 3 groups | `osnmf_pga` | 5.5 cm | 11.1 cm | 1.7% | 0.073 |
+| 3 groups | `svd_pga` | 52.0 cm | 61.5 cm | 51.4% | 0.076 |
+
+None beats the sum. DualProj on 3 groups ties it (between plain TD3 and `sum` on every column;
+0.2 points of crashes is about one crash in 400 episodes). `python3 l2f/py/moo_report.py logs/train_moo_*.csv` shows why: with the bonus
+gone, the crash-penalty value ("survival") conflicts strongly with smoothing and action (cosine
+−0.8 to −0.9, negative in ~100% of updates, until ~1.2M steps), and late in training position
+conflicts with survival, orientation, angular acceleration and landing speed (about −0.8). So the
+conflict is real here, unlike with the bonus, but resolving it moves the trade-off away from the
+tuned weights: UPGrad raises the smoothing weight to 8–12× (the policy gets too careful and
+crashes), Aligned-MTL scales the step to the smallest singular value (weights 0.01–0.3, some
+negative). On 3 groups UPGrad's weights return to ~1 late in training, hence its result near the
+sum.
+
+Round 2 shows the mechanism. Per-objective projections amplify a small objective that opposes a
+large one: PCGrad replaces g_i by g_i − (g_i·g_j / |g_j|²) g_j when g_i·g_j < 0, so projecting
+the survival gradient (norm 1.0) off smoothing (norm 0.10, cosine −0.95) adds about
+0.95 · 1.0 / 0.10 ≈ 9.5 smoothing gradients. The logged PCGrad weights show it: smoothing 2.8x
+early, 6.6–8.3x from 0.8M, the rest 1–3x (aggregation check 4e-7, so this is PCGrad itself, not
+the wiring). UPGrad on 8 parts does the same; on 3 groups smoothing is merged with action, angular
+acceleration and the rate term, so no group is that small. DualProj projects only the sum onto
+the dual cone (the smallest change to the sum that hurts no objective): on 8 parts (seed 0) its
+weights stay at 1 in all but one window (smoothing 2.2x at 0.4–0.8M), which is why it lands near
+the sum.
+
+PGA on 3 groups (round 3; the C++ rounds had tried it on 8 parts only, with the bonus). PGA
+averages the oriented principal directions of the gradients with equal weight,
+w = (1/t) Σ_j v_j / √λ_j for the Gramian's eigenpairs (λ_j, v_j): a whitening, so the step norm
+is always 1/√3 and the largest gradient gets the smallest weight. Here the largest is safety,
+the group that holds the crash penalty. SVD-PGA seed 0 never learns to fly (100% crashed;
+training return falls from −283 to −682 over the run; safety weight 0.33–0.83 while its
+gradient is the largest). Seed 1 flies (5.0 cm / 13.7 cm / 2.7%), but late in training its
+weights turn negative (safety −0.98, tracking −0.26 at 1.6–2.0M), which climbs those costs.
+Aggregation check ≤ 1.7e-6, no non-finite values, so this is SVD-PGA itself. OS-NMF-PGA keeps
+the factor H nonnegative and stays usable (seeds 4.5 cm / 0.5% and 6.0 cm / 3.0%), but behind
+the sum and DualProj.
+
+Untuned weights (`build_py_E_uniform`: `-DL2F_REWARD_UNIFORM`, every cost weight 1, no weight
+curriculum, same no-bonus / crash-penalty-200 reward; `train.py` skips its weight curriculum
+when the module reports `weight_curriculum = False`). Plain TD3, UPGrad and DualProj on 3
+groups and Aligned-MTL on 8 parts, 2 seeds each: every run crashes in 100% of the evaluation
+episodes (circle 97–120 cm), so the test cannot rank the aggregators. Two reasons, both from
+the reward, not the trainer:
+
+* Crashing is the optimum. With a good flying policy (the PyTorch TD3 reference above) the
+  angular-acceleration part costs −1819 per step at weight 1, against −0.36 at the tuned
+  2e-4; one step costs −1819 in total instead of −1.08. Over the ~100-step horizon of γ = 0.99
+  that is about −182,000 against a one-time −200 for a crash. Without a survival bonus every
+  cost part ends with the episode, so each of them prefers a crash; only the crash penalty does
+  not, and here it is 1000x too small.
+* The actor stops learning. The critics must fit values of the order of −10⁵; from ~0.4M
+  steps the logged actor gradient is exactly 0 for every objective (FAST_TANH units clipped
+  beyond ±3 pass no gradient), against 0.2–4 in the tuned runs. With all-zero gradients every
+  aggregator returns the sum, so UPGrad and DualProj trained identical networks.
+
+So half of what the hand-picked weights do is unit conversion (2e-4 turns rad²/s⁴ into the
+scale of the other terms) and setting the total cost below the crash penalty, which no gradient
+aggregator can do. A fair untuned test would first scale every part to the same typical size
+and set the total cost per step to the tuned one (two chosen numbers instead of seven); it is
+not run.
 
 ### Task objectives and conflict diagnostics
 
