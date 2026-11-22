@@ -61,6 +61,11 @@
 #   MOO_NORM=1      (MOO=1) critic outputs learn unweighted parts scaled to O(1)
 #                   (did not fly: 100% crashed)
 #   CRITIC_HIDDEN=64  critic hidden-layer width
+#   CRASH_PENALTY=0 reward -CRASH_PENALTY on a crash: more than 0.6 m from the
+#                   target, or touching the floor tilted > 60 deg (0 = paper reward,
+#                   a crash scores 0). Landings never terminate, so they are not
+#                   penalized; landing quality stays the landing-speed cost.
+#                   Adds _crash<p> to the build
 #   REWARD=tuned    tuned: the hand-tuned weights and weight curriculum (all flown
 #                   policies); uniform: every cost weight 1, no weight curriculum
 #                   (untuned-reward experiment, adds _uniform to the build)
@@ -121,6 +126,8 @@ case "${REWARD:-tuned}" in
   uniform) FLAGS="$FLAGS -DL2F_REWARD_UNIFORM"; BUILD=${BUILD}_uniform ;;
   *) echo "unknown REWARD=$REWARD (tuned, uniform)" >&2; exit 1 ;;
 esac
+# CRASH_PENALTY=<p>: reward -p on a crash (termination); landings never terminate
+if [ -n "${CRASH_PENALTY:-}" ]; then FLAGS="$FLAGS -DL2F_CRASH_PENALTY=$CRASH_PENALTY"; BUILD=${BUILD}_crash$CRASH_PENALTY; fi
 # CRITIC_HIDDEN=<n>: critic hidden-layer width (default 64)
 if [ -n "${CRITIC_HIDDEN:-}" ]; then FLAGS="$FLAGS -DL2F_CRITIC_HIDDEN=$CRITIC_HIDDEN"; BUILD=${BUILD}_ch$CRITIC_HIDDEN; fi
 if [ "$MOO" = 1 ]; then

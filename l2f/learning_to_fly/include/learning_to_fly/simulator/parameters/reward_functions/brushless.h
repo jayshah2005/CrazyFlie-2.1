@@ -20,6 +20,18 @@
 #ifndef L2F_ANG_VEL_WEIGHT
 #define L2F_ANG_VEL_WEIGHT 0
 #endif
+// Crash penalty: the reward of the step on which the episode terminates is
+// -L2F_CRASH_PENALTY instead of 0. Termination means a crash: more than 0.6 m
+// from the target on any axis, or touching the floor tilted more than 60 deg.
+// A landing never terminates (the drone rests on the floor upright until the
+// episode ends), so it never gets this penalty; how well it lands is the
+// separate landing-speed cost below. Without a penalty, a crash scores 0, which
+// beats the negative rewards of flying far (> ~32 cm) off target at the final
+// position weight. 0 = the paper's reward. With L2F_MOO the penalty is in part 0
+// (survival), so the parts still add up to the reward.
+#ifndef L2F_CRASH_PENALTY
+#define L2F_CRASH_PENALTY 0
+#endif
 // Penalty on (downward speed)^2 within 10 cm of the floor: gentle touchdowns
 // (mission training); 0 = off.
 #ifndef L2F_LANDING_SPEED_WEIGHT
@@ -32,7 +44,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             false, // non-negative
             0.5, // scale
             2, // constant
-            0, // termination penalty
+            (T)(-(L2F_CRASH_PENALTY)), // termination penalty (crash)
             5, // position
             5, // orientation
             0.01, // linear_velocity
@@ -49,7 +61,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             false, // non-negative
             0.5, // scale
             2, // constant
-            0, // termination penalty
+            (T)(-(L2F_CRASH_PENALTY)), // termination penalty (crash)
             40, // position
             5, // orientation
             1.00, // linear_velocity
@@ -69,7 +81,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             false, // non-negative
             0.5, // scale
             2, // constant
-            0, // termination penalty
+            (T)(-(L2F_CRASH_PENALTY)), // termination penalty (crash)
             1, // position
             1, // orientation
             1, // linear_velocity
