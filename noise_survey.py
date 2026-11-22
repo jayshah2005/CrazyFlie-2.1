@@ -457,8 +457,18 @@ def run_hover(args):
                 if low.is_set():
                     break
                 hlc.go_to(x0, y0, z0 + h, 0.0, 2.0)
-                if not low.wait(3.0):  # settle
-                    rec.record(f'{h:g}m', args.seconds)
+                if low.wait(3.0):  # settle
+                    break
+                # record only at the commanded height: a drone that did not take off (the
+                # supervisor locks the motors after a crash or brown-out until a restart)
+                # recorded floor data as hovers on 2026-11-22
+                z = rec.latest.get('stateEstimate.z')
+                if z is None or abs(z - (z0 + h)) > max(0.1, 0.25 * h):
+                    log.error('Not at %.2f m after settling (%s m above the start): no recording, landing. '
+                              'If it never took off, restart the drone (motors locked after a crash).',
+                              h, 'unknown' if z is None else f'{z - z0:.2f}')
+                    break
+                rec.record(f'{h:g}m', args.seconds)
             hlc.land(z0, 2.5)
             time.sleep(3.0)
             hlc.stop()
