@@ -164,7 +164,8 @@ def first_number(text, prefix):
 def evaluate(run, evaluator, episodes, extra_env):
     """train_mission.sh's checkpoint table: clean / randomized / 1% jumps per checkpoint."""
     def ev(ck, dr, glitch):
-        env = dict(BASE_ENV, **EVAL_ENV, **extra_env, L2F_EVAL_DR=str(dr), L2F_GLITCH_P=str(glitch))
+        # later entries win, so --env can override EVAL_ENV (e.g. L2F_EVAL_DELAY_MS)
+        env = {**BASE_ENV, **EVAL_ENV, **extra_env, 'L2F_EVAL_DR': str(dr), 'L2F_GLITCH_P': str(glitch)}
         out = subprocess.run([str(evaluator), str(ck), str(episodes), 'mission'], env=env,
                              capture_output=True, text=True).stdout
         circle = ''
