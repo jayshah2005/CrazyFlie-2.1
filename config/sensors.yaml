@@ -17,9 +17,11 @@ imu:
   gyro_noise_sample: [0.05, 0.09]  # rad/s, std of the single filtered sample the actor reads, one
                                  # value for every axis, white; only used without the _x/_y/_z keys below
   # the actor's gyro sample per axis, measured in hover: std and lag-1 correlation (AR(1) noise)
-  gyro_noise_sample_x: [0.034, 0.060]  # rad/s (measured 0.042-0.050)
-  gyro_noise_sample_y: [0.053, 0.095]  # rad/s (measured 0.066-0.079)
-  gyro_noise_sample_z: [0.014, 0.024]  # rad/s (measured 0.017-0.020)
+  # upper ends raised to 0.08-0.10 (2026-11-22): the policies trained below the old path's 0.069
+  # white gyro noise shook on the drone, the old-path E policy (0.069) flew smoothly
+  gyro_noise_sample_x: [0.034, 0.080]  # rad/s (measured 0.042-0.050)
+  gyro_noise_sample_y: [0.053, 0.100]  # rad/s (measured 0.066-0.079)
+  gyro_noise_sample_z: [0.014, 0.070]  # rad/s (measured 0.017-0.020)
   gyro_noise_r1_x: [0.45, 0.70]   # (measured 0.54-0.66)
   gyro_noise_r1_y: [0.15, 0.45]   # (measured 0.24-0.35)
   gyro_noise_r1_z: [0.15, 0.45]   # (measured 0.23-0.39)
