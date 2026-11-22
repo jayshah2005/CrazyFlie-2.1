@@ -14,8 +14,11 @@ firmware cuts the motors ~200 ms later while the learned policy is flying
 emergency stop. An emergency-stop watchdog also cuts the motors within 1 s if
 this script dies or the radio drops; power-cycle the drone before the next
 flight (the watchdog stays latched until reboot).
-The key is read with GetAsyncKeyState, so it is Windows-only and sees Enter
-even when this console is not focused.
+The keys are read as held-down state, which sees Enter even when this console
+is not focused: GetAsyncKeyState on Windows, CGEventSourceKeyState on macOS
+(pip install pyobjc-framework-Quartz; give the terminal app the Input Monitoring
+permission, or every key reads as released and the drone does not fly). Test
+the switch without flying: python rl_trigger.py --key-test 20
 
 Targets the Crazyflie 2.1 Brushless firmware build (arming required, policy
 trained on the identified brushless model).
@@ -38,9 +41,7 @@ Modes:
 Run `python rl_trigger.py --mode takeoff_and_switch` FIRST.
 """
 import argparse
-import ctypes
 import math
-import msvcrt
 import struct
 import sys
 import threading
@@ -65,8 +66,8 @@ STARTED_AT = datetime.now().astimezone()
 LOG_FILE = run_log.csv_path('flight', script=__file__, when=STARTED_AT)
 
 SEND_PERIOD = 0.02        # s, 50 Hz packets while Enter is held (firmware timeout: 200 ms).
-VK_RETURN = 0x0D
-VK_Q = 0x51
+VK_RETURN = 'return'      # key names for key_down()
+VK_Q = 'q'
 LEARNED_PACKET = struct.pack('<B', 1)  # metaLearnedController; payload MUST be empty.
 
 # stabilizer.controller value of the out-of-tree (learned) controller in the
@@ -144,9 +145,73 @@ class FlowSwitch:
             self.off = False
 
 
-def key_down(vk):
-    """True while the key with Windows virtual-key code `vk` is held down (any window focused)."""
-    return bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+# Keys held down anywhere in the session (any window focused), per platform.
+if sys.platform == 'win32':
+    import ctypes
+    import msvcrt
+    _KEYCODES = {'return': (0x0D,), 'q': (0x51,)}  # virtual-key codes (VK_RETURN covers both Enters)
+
+    def key_down(key):
+        """True while `key` ('return' or 'q') is held down (GetAsyncKeyState)."""
+        return any(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000 for vk in _KEYCODES[key])
+
+    def flush_keyboard():
+        """Drop the key presses queued in the console."""
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+elif sys.platform == 'darwin':
+    import termios
+    try:
+        import Quartz  # pip install pyobjc-framework-Quartz
+    except ImportError:
+        Quartz = None
+    _KEYCODES = {'return': (0x24, 0x4C), 'q': (0x0C,)}  # kVK_Return, kVK_ANSI_KeypadEnter, kVK_ANSI_Q
+
+    def key_down(key):
+        """True while `key` ('return' or 'q') is held down (CGEventSourceKeyState). Without the
+        Input Monitoring permission every key reads as released: the drone does not fly."""
+        state = Quartz.kCGEventSourceStateCombinedSessionState
+        return any(Quartz.CGEventSourceKeyState(state, code) for code in _KEYCODES[key])
+
+    def flush_keyboard():
+        """Drop the key presses queued in the terminal."""
+        try:
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except (termios.error, ValueError):
+            pass
+else:
+    key_down = flush_keyboard = None
+
+
+def key_test(seconds):
+    """No radio: log every change of Enter and Q for `seconds` s, polled at the flight's
+    packet rate, to check the dead-man switch before flying."""
+    while key_down(VK_RETURN):  # the Enter that launched us
+        time.sleep(SEND_PERIOD)
+    log.info('Key test for %.0f s: hold and release Enter a few times, then press Q.', seconds)
+    state = {VK_RETURN: False, VK_Q: False}
+    since = {}
+    changes = 0
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        now = time.time() - t0
+        for key in state:
+            down = key_down(key)
+            if down != state[key]:
+                state[key] = down
+                changes += 1
+                if down:
+                    since[key] = now
+                    log.info('%6.2f s  %s DOWN', now, key)
+                else:
+                    log.info('%6.2f s  %s up (held %.2f s)', now, key, now - since.get(key, now))
+        time.sleep(SEND_PERIOD)
+    flush_keyboard()
+    if changes == 0:
+        log.error('No key change seen. On macOS give the terminal app the Input Monitoring '
+                  'permission (System Settings > Privacy & Security), restart it, and try again.')
+    else:
+        log.info('%d key changes seen: the dead-man switch reads the keys.', changes)
 
 
 class Telemetry:
@@ -694,8 +759,14 @@ def fly(scf, args, pose, tele):
 
 def main(args):
     """Connect, run the pre-flight checks, configure, fly, then save and summarise the log."""
-    if sys.platform != 'win32':
-        log.error('The Enter dead-man switch uses the Windows key API.')
+    if key_down is None:
+        log.error('The Enter dead-man switch needs Windows or macOS.')
+        return
+    if sys.platform == 'darwin' and Quartz is None:
+        log.error('macOS: pip install pyobjc-framework-Quartz (the dead-man switch reads the keys with it).')
+        return
+    if args.key_test:
+        key_test(args.key_test)
         return
     cflib.crtp.init_drivers()
     log.info('Connecting to %s ...', URI)
@@ -740,8 +811,7 @@ def main(args):
             tele.summarize()
             # Enter is read from the keyboard directly, so the presses also queued
             # up in the console; drop them so they don't reach the shell.
-            while msvcrt.kbhit():
-                msvcrt.getwch()
+            flush_keyboard()
 
 
 if __name__ == '__main__':
@@ -800,4 +870,6 @@ if __name__ == '__main__':
     parser.add_argument('--flow-off-below', type=float, default=0.0,
                         help='plan E4 (Q13): Flow deck off below this height above the take-off point, '
                              'e.g. 0.1 (0 = never, as before)')
+    parser.add_argument('--key-test', type=float, default=0, metavar='SECONDS',
+                        help='no radio: log Enter and Q changes for SECONDS s, to check the dead-man switch')
     main(parser.parse_args())
