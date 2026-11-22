@@ -12,6 +12,9 @@
 # checks the total input count, which some wrong combinations also pass.
 #   DEFCONFIG=cf21bl_defconfig | cf2_defconfig
 #   L2F=../learning_to_fly  FW=~/crazyflie-firmware-2026.08  DST=~/l2f_2026
+#   OFFICIAL_ZIP=<firmware-cf21bl-2026.08.zip>  also write build/firmware-cf21bl-2026.08-l2f.zip:
+#                          the official release zip with this build's cf21bl.bin in place of
+#                          its cf21bl-2026.08.bin (flash it with a cold boot: flash_cold.py)
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 L2F=${L2F:-$HERE/../learning_to_fly}
@@ -55,7 +58,8 @@ EXTRA_CFLAGS += -I$(PWD) -I$(PWD)/external/rl_tools/include -DRL_TOOLS_CONTROLLE
 include $(CRAZYFLIE_BASE)/tools/make/oot.mk
 EOF
 # policy input layout (history length, measured rotor speeds), for the adapter
-sed -i "s|-DRL_TOOLS_CONTROLLER\$|-DRL_TOOLS_CONTROLLER $POLICY_FLAGS|" "$DST/Makefile"
+# (-i.bak: accepted by GNU sed and by macOS's BSD sed)
+sed -i.bak "s|-DRL_TOOLS_CONTROLLER\$|-DRL_TOOLS_CONTROLLER $POLICY_FLAGS|" "$DST/Makefile" && rm -f "$DST/Makefile.bak"
 grep -q -- "-DL2F_HISTORY=$HISTORY" "$DST/Makefile"
 
 cat > "$DST/Kbuild" <<'EOF'
@@ -465,5 +469,31 @@ EOF
 cd "$DST"
 rm -rf build
 make "$DEFCONFIG" >/dev/null
+if [ "$(uname -s)" = Darwin ]; then
+  # 'make' merges ./config into .config with Bitcraze's merge_config.sh, which needs GNU
+  # sed, cp and readlink: on macOS it fails and the firmware builds without the
+  # out-of-tree controller. Set the option here instead ('make' runs oldconfig on it).
+  python3 - build/.config <<'EOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+t = p.read_text().replace('# CONFIG_CONTROLLER_OOT is not set\n', 'CONFIG_CONTROLLER_OOT=y\n')
+assert 'CONFIG_CONTROLLER_OOT=y\n' in t, 'CONFIG_CONTROLLER_OOT not found in .config'
+p.write_text(t)
+EOF
+  rm -f config
+fi
 make -j6 2>&1 | grep -E " error|Error |Flash|RAM|CCM" | head -40
+grep -q '^CONFIG_CONTROLLER_OOT=y' build/.config || { echo "the out-of-tree controller is not configured (build/.config)" >&2; exit 1; }
 ls -la build/*.bin
+if [ -n "${OFFICIAL_ZIP:-}" ]; then
+  python3 - "$OFFICIAL_ZIP" build/cf21bl.bin build/firmware-cf21bl-2026.08-l2f.zip <<'EOF'
+import sys, zipfile
+official, image, out = sys.argv[1:4]
+name = 'cf21bl-2026.08.bin'  # the STM32 image the manifest names
+with zipfile.ZipFile(official) as zin, zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zout:
+    assert name in zin.namelist(), f'{name} not in {official}'
+    for item in zin.infolist():
+        zout.writestr(item, open(image, 'rb').read() if item.filename == name else zin.read(item))
+print(f'flashable zip: {out} (this build in place of {name}); flash with a cold boot')
+EOF
+fi
