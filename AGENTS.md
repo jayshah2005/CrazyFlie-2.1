@@ -32,3 +32,11 @@ metric, a schedule), give the formula and explain it:
 - Say in words what the formula does and why it has that shape.
 - Use the real values from the code (weights, limits, rates) and name the file they come from.
 - Where it helps, work one example with numbers.
+
+## Plain-English rewrites (`asd-ste100`)
+
+To rewrite text that an agent or a tool must read without ambiguity (tool descriptions,
+error messages, agent instructions), use the ASD-STE100 skill.
+
+- Canonical: [`.agents/skills/asd-ste100/SKILL.md`](.agents/skills/asd-ste100/SKILL.md)
+- Cursor and Claude Code: `.cursor/skills/asd-ste100`, `.claude/skills/asd-ste100` → same skill
