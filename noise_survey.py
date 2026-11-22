@@ -12,13 +12,16 @@ Modes (python noise_survey.py <mode> --help for the options):
   still    drone untouched on the floor, motors off, at several spots (you move it
            when asked). Per spot: noise of every quantity, and the height offset
            from the first spot (put the first spot where the drone takes off).
-  heights  drone resting on spacers of known height (default 0, 1, 2, 3, 5, 10 cm).
+  heights  drone raised by spacers of known height (default 0, 1, 2, 3, 5, 10 cm): two equal
+           supports under its arms with a gap under the middle, so the range sensor sees the
+           floor (a spacer under the sensor measures the spacer, 2026-11-22).
            Range sensor and estimated height against the true height, including
            below the range sensor's 4 cm minimum (VL53L1X datasheet 7.3).
   hover    stock-PID hovers at several heights. Noise in flight = the value minus
            its centred moving average (5 Hz); gyro and accelerometer noise against
            the motor RPM (the vibration model).
-  slide    drone on a spacer, pushed by hand along a straight track of known
+  slide    drone on a sled with an opening under its middle (the flow camera must see
+           the floor), pushed by hand along a straight track of known
            length, flow on and off: estimated distance against the true distance.
   logs     no drone: reads rl_trigger flight logs for Lighthouse jumps and gyro
            saturation.
@@ -364,7 +367,8 @@ def run_heights(args):
     with connect(args) as scf:
         confs = start_logging(scf, rec)
         for h in args.heights:
-            ask(f'Put the drone on the {h:g} cm spacer (0 = on the floor), motors off.')
+            ask(f'Raise the drone {h:g} cm (0 = on the floor), motors off: two equal supports under its arms '
+                'with a gap under the middle, so the range sensor sees the FLOOR, not the support.')
             reset_estimator(scf)
             time.sleep(1.0)
             rec.record(f'{h:g}cm', args.seconds)
@@ -519,7 +523,8 @@ def run_slide(args):
                 cf.param.set_value('motion.disable', str(disable))
                 time.sleep(0.3)
                 tag = f'{h:g}cm_flow_{"off" if disable else "on"}'
-                ask(f'{tag}: put the drone on the {h:g} cm spacer at the start of the {args.track:g} m track. '
+                ask(f'{tag}: the drone {h:g} cm up on a sled with an opening under its middle (the flow camera '
+                    f'must see the FLOOR, not the sled), at the start of the {args.track:g} m track. '
                     'Press Enter, push it steadily to the end, then press Enter again.')
                 rec.tag = tag
                 start = time.time()
