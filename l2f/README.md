@@ -279,6 +279,7 @@ steps, same seed, old and new build).
 | `OMEGA_CRASH=34.9` | runtime | rotating faster than this (rad/s, any axis) is a crash |
 | `LANDING_CUT=1` | runtime | land like `rl_trigger.py`: in landing episodes and the mission test, the motors are cut when the target is within `cut_window` of the floor and the *estimated* height is below the cut height, or `floor_timeout` after the target reached the floor; the episode ends as a landing, paid the bonus it gives up (c / (1 − γ)). Values in `config/landing.yaml` |
 | `POS_NOISE=1` | runtime | position noise drawn per episode and per axis, from `noise_measured.json` (`noise_survey.py`) or x, y 3–10 mm until then |
+| `EVAL_EPISODES=100` | build | episodes of rl_tools' test every 10k steps (default 1000, upstream). It only writes the `Step: … mean return` lines and uses its own environment and random stream, so the weights are the same at any value (checked bit for bit at 100k steps; only the checkpoint's embedded test example differs). On the sensor path the 1000 episodes take most of a run's time |
 
 `evaluate_robustness <actor.h5> N landing` flies the training environment's own
 landing episodes and reports how they end (landed, failed landing, crashed, still
