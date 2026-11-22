@@ -540,6 +540,10 @@ namespace rl_tools::rl::environments{
             // between the motor model and each motor's telemetry (rpm_quality.py).
             T motor_gain_dr = env_or("L2F_MOTOR_GAIN", 0.0);
             T motor_offset_dr = env_or("L2F_MOTOR_OFFSET", 0.0);
+            // One gain for all four motors on top (L2F_MOTOR_GAIN_ALL, with domain randomization):
+            // the firmware's voltage-compensated command-to-speed map was 18-23% off with a fresh
+            // battery on 2026-11-22 (2% at 3.4-3.6 V). 0 = off (no random draws, as before).
+            T motor_gain_all_dr = env_or("L2F_MOTOR_GAIN_ALL", 0.0);
             // Measured rotor speeds (L2F_RPM_OBS): Gaussian noise (normalized units,
             // 1 = 12000 rpm) and the chance per step that the previous value repeats.
             // Measured: ~100 rpm noise, ~14% repeats at 100 Hz (rpm_quality.py).

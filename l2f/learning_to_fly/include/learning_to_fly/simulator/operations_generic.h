@@ -512,6 +512,12 @@ namespace rl_tools{
                     state.motor_offset[i] = U(-k * m.motor_offset_dr, k * m.motor_offset_dr);
                 }
             }
+            if(m.domain_randomization && m.motor_gain_all_dr > 0){
+                const T all = 1 + U(-k * m.motor_gain_all_dr, k * m.motor_gain_all_dr);
+                for(TI i = 0; i < 4; i++){
+                    state.motor_gain[i] *= all;
+                }
+            }
             state.delay_steps = U(0, k * m.delay_max_steps);
             state.ground_effect = U(0, k * m.ge_k_max);
             // per-axis position noise (no random numbers drawn when off, so older
