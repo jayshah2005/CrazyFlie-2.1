@@ -60,14 +60,14 @@ def make_agent(args, cfg, info, weights=None):
         # ungrouped: every reward part that is weighted now or by the weight curriculum later
         objectives = [n for n, w in zip(info['part_names'], weights) if w != 0 or n in cfg.weight_caps]
     return MooTD3(cfg, *dims, agg=args.agg, parts=args.parts, tasks=args.tasks if args.moo == 'tasks' else 0,
-                  total=args.total, norm=args.norm, objectives=objectives)
+                  total=args.total, norm=args.norm, objectives=objectives, grouping=args.grouping)
 
 
 def run_tag(args):
     """Run-folder tag: variant, MOO options, seed."""
     tag = f'py_{args.variant}'
     if args.moo == 'parts':
-        tag += f'_moo{args.parts}_{args.agg}' + (f'_tot{args.total:g}' if args.total is not None else '') + \
+        tag += f'_moo{args.parts}{"r" if args.grouping == "regroup" else ""}_{args.agg}' + (f'_tot{args.total:g}' if args.total is not None else '') + \
             ('_norm' if args.norm else '')
     elif args.moo == 'tasks':
         tag += f'_tasks{args.tasks}_{args.agg}'
@@ -90,6 +90,7 @@ def train(args, extra_env):
     import l2f_sim
     info = l2f_sim.info()
     cfg = TD3Config(steps=args.steps, mission_ramp=int(env['L2F_MISSION_RAMP']))
+    waypoint_ramp = int(float(env.get('L2F_WAYPOINT_RAMP', 0)))
     torch.manual_seed(args.seed)
     torch.set_num_threads(1)  # 64-unit networks: threads cost more than they save
     rng = np.random.default_rng(args.seed)
@@ -116,6 +117,8 @@ def train(args, extra_env):
         # curriculum and checkpoint before the step, as in training.h
         if t % 10_000 == 0:
             sim.set_progress(min(1.0, t / cfg.mission_ramp) if cfg.mission_ramp > 0 else 1.0)
+            if waypoint_ramp > 0:  # B: the waypoint jumps grow on their own (slower) schedule
+                sim.set_waypoint_progress(min(1.0, t / waypoint_ramp))
         if weight_curriculum and t != 0 and t % 100_000 == 0 and t != cfg.steps - 1:
             w = sim.weights()
             sim.set_weights({k: min(cap, float(w[weight_index[k]]) * f) for k, (f, cap) in cfg.weight_caps.items()})
@@ -195,10 +198,12 @@ def main():
     parser.add_argument('--evaluate-run', type=Path, help='only score the checkpoints of this run folder')
     parser.add_argument('--moo', choices=['parts', 'tasks'], help='multi-objective TD3 (moo.py): framing A or B')
     parser.add_argument('--agg', default='sum', choices=AGGREGATORS, help='TorchJD aggregator (--moo)')
-    parser.add_argument('--parts', type=int, default=8, choices=[0, 1, 3, 4, 8], help='--moo parts: 8 objectives, 3 groups '
+    parser.add_argument('--parts', type=int, default=8, choices=[0, 1, 3, 4, 5, 8], help='--moo parts: 8 objectives, 3 groups '
                         '(tracking, smoothness, safety), 4 groups (time, precision, efficiency, safety), 0 (ungrouped: one '
                         'objective per weighted reward part) or 1 (all merged: the MOO code path on the scalar '
                         'reward, must match TD3)')
+    parser.add_argument('--grouping', default='default', choices=['default', 'regroup'],
+                        help='--moo parts: regroup = crash, progress, effort, limits (--parts 4) + energy (--parts 5)')
     parser.add_argument('--tasks', type=int, default=5, choices=[5, 9], help='--moo tasks: episode types')
     parser.add_argument('--total', type=float, help='--moo parts: critic loss on the total error too')
     parser.add_argument('--norm', action='store_true', help='--moo parts: outputs scaled to O(1)')

@@ -27,7 +27,8 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         // time-to-target study (all 0 = off; set at runtime by the Python binding, L2F_W_*):
         T time = 0;        // weight on 1 per step while a static target is not reached (Mission::arrive_*)
         T power = 0;       // weight on rotor power above hover, max(0, sum (rpm / rpm_max)^3 minus its hover value)
-        T speed_limit = 0; // weight on (speed - Mission::speed_cap)^2 above the cap
+        T speed_limit = 0; // weight on (speed - allowed speed)^2 above it (Mission::speed_cap, brake_acc)
+        T energy = 0;      // weight on sum (rpm / rpm_max)^3 (hover included) while a static target is not reached
         struct Components{
             T orientation_cost;
             T position_cost;
@@ -41,7 +42,8 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             T landing_cost; // (downward speed)^2 near the floor
             T time_cost = 0;   // 1 while a static target is not reached
             T power_cost = 0;  // max(0, sum (rpm / rpm_max)^3 - its hover value)
-            T speed_cost = 0;  // (speed - speed_cap)^2 above the cap
+            T speed_cost = 0;  // (speed - allowed speed)^2 above it
+            T energy_cost = 0; // sum (rpm / rpm_max)^3 while a static target is not reached (energy per leg)
             bool terminated;
             bool landed;    // terminated by a landing (motor cut), not a crash
             T weighted_cost;
@@ -120,8 +122,20 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         // only thrust above hover costs: a negative cost would pay the policy for idling (falling),
         // which outweighed the crash penalty and made every run of the first study drop (2026-11-23)
         components.power_cost = power > 4 * hover * hover * hover ? power - 4 * hover * hover * hover : (T)0;
+        // energy per leg: all rotor power (hover included) until the drone has arrived, so a slow
+        // leg pays hover power for longer and a fast one pays for accelerating and braking
+        components.energy_cost = static_target && !arrived ? power : (T)0;
         const T speed = math::sqrt(device.math, v2);
-        components.speed_cost = speed > m.speed_cap ? (speed - m.speed_cap) * (speed - m.speed_cap) : (T)0;
+        T allowed = m.speed_cap;
+        if(m.brake_acc > 0 && static_target){
+            // the speed that can still stop at the target with brake_acc
+            T d2 = 0;
+            for(TI i = 0; i < 3; i++){ d2 += state.position[i] * state.position[i]; }
+            T stop = math::sqrt(device.math, 2 * m.brake_acc * math::sqrt(device.math, d2));
+            stop = stop > m.brake_min_speed ? stop : m.brake_min_speed;
+            allowed = stop < m.speed_cap ? stop : m.speed_cap;
+        }
+        components.speed_cost = speed > allowed ? (speed - allowed) * (speed - allowed) : (T)0;
     }
     template<typename DEVICE, typename SPEC, typename ACTION_SPEC, typename T, typename RNG>
     RL_TOOLS_FUNCTION_PLACEMENT typename rl::environments::multirotor::parameters::reward_functions::Squared<T>::Components reward_components(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const rl::environments::multirotor::parameters::reward_functions::Squared<T>& params, const typename rl::environments::Multirotor<SPEC>::State& state, const Matrix<ACTION_SPEC>& action,  const typename rl::environments::Multirotor<SPEC>::State& next_state, RNG& rng){
@@ -153,7 +167,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         components.action_rate_cost = action_rate_cost(state, action);
         // time-to-target study: computed only when one of its options is on, in a function
         // of its own, so recipes without it keep exactly the same arithmetic (2026-11-22)
-        if(params.time != 0 || params.power != 0 || params.speed_limit != 0 || env.mission.pos_cap > 0){
+        if(params.time != 0 || params.power != 0 || params.speed_limit != 0 || params.energy != 0 || env.mission.pos_cap > 0){
             time_to_target_terms(device, env, state, components);
         }
         // gentle touchdown: penalize sinking fast close to the floor (mission episodes only)
@@ -166,6 +180,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         if(params.time != 0) components.weighted_cost += params.time * components.time_cost;
         if(params.power != 0) components.weighted_cost += params.power * components.power_cost;
         if(params.speed_limit != 0) components.weighted_cost += params.speed_limit * components.speed_cost;
+        if(params.energy != 0) components.weighted_cost += params.energy * components.energy_cost;
         // zig-zag (only added when weighted, so recipes without it reproduce exactly)
         components.zigzag_cost = zigzag_cost(state, action);
         if(params.zigzag != 0){

@@ -40,11 +40,11 @@ using RNG = decltype(rlt::random::default_engine(typename DEVICE::SPEC::RANDOM()
 constexpr TI OBS_DIM = ENVIRONMENT::OBSERVATION_DIM;
 constexpr TI OBS_DIM_PRIVILEGED = ENVIRONMENT::OBSERVATION_DIM_PRIVILEGED;
 constexpr TI ACTION_DIM = ENVIRONMENT::ACTION_DIM;
-constexpr TI N_PARTS = 14;
+constexpr TI N_PARTS = 15;
 const std::vector<std::string> PART_NAMES = {
     "survival", "position", "orientation", "linear_velocity", "angular_velocity", "linear_acceleration",
     "angular_acceleration", "action", "action_rate", "zigzag", "landing_speed",
-    "time", "power", "speed_limit"};
+    "time", "power", "speed_limit", "energy"};
 
 // Unweighted reward parts of one transition (the reward is sum_k w_k u_k with w from weights_of).
 template <typename P, typename C>
@@ -68,12 +68,13 @@ void parts_of(const P& p, const C& c, T* u){
     u[11] = -p.scale * c.time_cost;
     u[12] = -p.scale * c.power_cost;
     u[13] = -p.scale * c.speed_cost;
+    u[14] = -p.scale * c.energy_cost;
 }
 template <typename P>
 void weights_of(const P& p, T* w){
     T v[N_PARTS] = {1, p.position, p.orientation, p.linear_velocity, p.angular_velocity, p.linear_acceleration,
                     p.angular_acceleration, p.action, p.action_rate, p.zigzag, p.landing_speed,
-                    p.time, p.power, p.speed_limit};
+                    p.time, p.power, p.speed_limit, p.energy};
     for(TI k = 0; k < N_PARTS; k++) w[k] = v[k];
 }
 
@@ -87,11 +88,13 @@ public:
         // weights of the time-to-target terms (0 = off), runtime options like the L2F_* ones
         auto env_or = [](const char* name){ const char* v = std::getenv(name); return v ? (T)std::atof(v) : (T)0; };
         const T w_time = env_or("L2F_W_TIME"), w_power = env_or("L2F_W_POWER"), w_speed = env_or("L2F_W_SPEED");
+        const T w_energy = env_or("L2F_W_ENERGY");
         for(auto& env: envs){
             env.parameters = PENV::parameters;
             env.parameters.mdp.reward.time = w_time;
             env.parameters.mdp.reward.power = w_power;
             env.parameters.mdp.reward.speed_limit = w_speed;
+            env.parameters.mdp.reward.energy = w_energy;
             rlt::malloc(dev, env);
         }
         rlt::malloc(dev, obs);
@@ -158,6 +161,10 @@ public:
     void set_progress(T p){
         for(auto& env: envs) env.mission.progress = p;
     }
+    // Waypoint jump curriculum (L2F_WAYPOINT_RAMP in train.py); -1 = follow set_progress.
+    void set_waypoint_progress(T p){
+        for(auto& env: envs) env.mission.waypoint_progress = p;
+    }
     // Current part weights w_k (the same in every environment).
     py::array_t<T> weights() const{
         py::array_t<T> w({(py::ssize_t)N_PARTS});
@@ -177,6 +184,7 @@ public:
                 else if(key == "time") r.time = v;
                 else if(key == "power") r.power = v;
                 else if(key == "speed_limit") r.speed_limit = v;
+                else if(key == "energy") r.energy = v;
                 else throw std::runtime_error("set_weights: unknown key " + key);
             }
         }
@@ -493,6 +501,7 @@ PYBIND11_MODULE(l2f_sim, m){
         .def("observe", &Sim::observe)
         .def("step", &Sim::step, py::arg("actions"))
         .def("set_progress", &Sim::set_progress, py::arg("progress"))
+        .def("set_waypoint_progress", &Sim::set_waypoint_progress, py::arg("progress"))
         .def("weights", &Sim::weights)
         .def("set_weights", &Sim::set_weights, py::arg("weights"))
         .def("states", &Sim::states_now)

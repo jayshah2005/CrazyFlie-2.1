@@ -32,17 +32,25 @@ OBJECTIVES = ['survival', 'position', 'orientation', 'linear_velocity', 'action'
               'angular_acceleration', 'landing_speed']
 GROUP_OF = {'survival': 0, 'position': 1, 'orientation': 2, 'linear_velocity': 3, 'action': 4,
             'action_rate': 5, 'zigzag': 5, 'angular_acceleration': 6, 'landing_speed': 7,
-            'time': 1, 'power': 4, 'speed_limit': 7}
+            'time': 1, 'power': 4, 'speed_limit': 7, 'energy': 4}
 # parts=3: the groups tracking, smoothness, safety; untested before 2026-11-22
 GROUPS3 = ['tracking', 'smoothness', 'safety']
 GROUP3_OF = {'position': 0, 'linear_velocity': 0, 'action': 1, 'action_rate': 1, 'zigzag': 1,
              'angular_acceleration': 1, 'survival': 2, 'orientation': 2, 'landing_speed': 2,
-             'time': 0, 'power': 1, 'speed_limit': 2}
+             'time': 0, 'power': 1, 'speed_limit': 2, 'energy': 1}
 # parts=4 (time-to-target study, 2026-11-22): time, precision, efficiency, safety
 GROUPS4 = ['time', 'precision', 'efficiency', 'safety']
 GROUP4_OF = {'time': 0, 'position': 1, 'linear_velocity': 1, 'action': 2, 'action_rate': 2, 'zigzag': 2,
              'angular_acceleration': 2, 'power': 2, 'survival': 3, 'orientation': 3, 'landing_speed': 3,
-             'speed_limit': 3}
+             'speed_limit': 3, 'energy': 2}
+# regrouped by measured conflict (2026-11-23, ungrouped run: survival fights the dense costs,
+# time agrees with position): --grouping regroup with parts=4 (crash, progress, effort, limits)
+# or parts=5 (+ energy per leg as its own objective)
+REGROUPS = {4: ['crash', 'progress', 'effort', 'limits'], 5: ['crash', 'progress', 'effort', 'limits', 'energy']}
+REGROUP_OF = {4: {'survival': 0, 'position': 1, 'linear_velocity': 1, 'time': 1, 'energy': 1,
+                  'action': 2, 'action_rate': 2, 'zigzag': 2, 'angular_acceleration': 2, 'power': 2,
+                  'orientation': 3, 'speed_limit': 3, 'landing_speed': 3}}
+REGROUP_OF[5] = {**REGROUP_OF[4], 'energy': 4}
 TASK_NAMES = ['free_flight', 'takeoff', 'landing', 'circle', 'line', 'eight', 'fast_circle', 'p2p', 'gust', 'waypoint']
 AGGREGATORS = ['sum', 'mean', 'upgrad', 'aligned_mtl', 'dualproj', 'pcgrad', 'mgda', 'svd_pga', 'osnmf_pga', 'task_share']
 
@@ -61,7 +69,7 @@ def make_aggregator(name, m):
     return makers[name]()
 
 
-def group_parts(part_names, weights, k, objectives=None):
+def group_parts(part_names, weights, k, objectives=None, grouping='default'):
     """(U, W): unweighted grouping U (n_parts x k) and group weights W (k) with W_j U_ij = w_i
     for every part i in group j: a group with
     one weighted part takes that part's weight; one with several (rate and zig-zag both on)
@@ -81,7 +89,7 @@ def group_parts(part_names, weights, k, objectives=None):
         return U.astype(np.float32), W.astype(np.float32)
     if k == 1:
         return w[:, None].astype(np.float32), np.ones(1, np.float32)
-    group_of = {3: GROUP3_OF, 4: GROUP4_OF}.get(k, GROUP_OF)
+    group_of = REGROUP_OF[k] if grouping == 'regroup' else {3: GROUP3_OF, 4: GROUP4_OF}.get(k, GROUP_OF)
     U = np.zeros((len(part_names), k))
     W = np.zeros(k)
     for j in range(k):
@@ -102,8 +110,11 @@ class MooTD3(TD3):
     """TD3 whose actor step is a TorchJD aggregation of per-objective gradients."""
 
     def __init__(self, cfg, obs_dim, obs_dim_p, act_dim, agg='sum', parts=8, tasks=0, total=None, norm=False,
-                 log_every=50, objectives=None):
+                 log_every=50, objectives=None, grouping='default'):
         self.tasks = tasks
+        if grouping == 'regroup' and parts not in REGROUP_OF:
+            raise ValueError('--grouping regroup needs parts 4 or 5')
+        self.grouping = grouping
         # parts=0: ungrouped, one objective per reward part in `objectives` (added 2026-11-23)
         self.objectives = list(objectives) if parts == 0 and not tasks else None
         if parts == 0 and not tasks and not self.objectives:
@@ -123,11 +134,11 @@ class MooTD3(TD3):
         self.log_every, self.updates, self.rows = log_every, 0, []
         self.share_rng = np.random.default_rng(54321)
         self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else \
-            (self.objectives or {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k])
+            (self.objectives or (REGROUPS[k] if grouping == 'regroup' else {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k]))
 
     def reward_matrix(self, part_names, weights):
         """R for the critic outputs (see td3.py); also sets the value factors f."""
-        U, W = group_parts(part_names, weights, self.k, self.objectives)
+        U, W = group_parts(part_names, weights, self.k, self.objectives, self.grouping)
         self.group_weights = W
         if self.norm:
             self.factors = torch.from_numpy(W * self.scale)

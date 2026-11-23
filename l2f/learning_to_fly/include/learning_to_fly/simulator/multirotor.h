@@ -527,6 +527,16 @@ namespace rl_tools::rl::environments{
             // speed_crash > 0: faster than this ends the episode like a crash
             T speed_cap = env_or("L2F_SPEED_CAP", 1.5);
             T speed_crash = env_or("L2F_SPEED_CRASH", 0);
+            // brake_acc > 0: for a static target the allowed speed is the one that can still stop
+            // at the target, max(brake_min_speed, sqrt(2 brake_acc distance)), at most speed_cap
+            // (a fixed cap let the policies dash into the speed crash; 2026-11-23)
+            T brake_acc = env_or("L2F_BRAKE_ACC", 0), brake_min_speed = env_or("L2F_BRAKE_MIN_SPEED", 0.3);
+            // the firmware's input clips (rl_tools_controller.c: rlt.pdlp 0.5 m, rlt.vdlp 2 m/s per
+            // axis; its integral adds up the clipped error); 0 = off
+            T obs_pos_clip = env_or("L2F_OBS_POS_CLIP", 0), obs_vel_clip = env_or("L2F_OBS_VEL_CLIP", 0);
+            // waypoint jump curriculum: >= 0 replaces progress for the jump size (set per step by
+            // train.py from L2F_WAYPOINT_RAMP); -1 = use progress
+            T waypoint_progress = -1;
             // Sim-to-real options (2026-11-22 flights), all off by default:
             // linear air drag U(0, drag_max) N s/m per episode
             T drag_max = env_or("L2F_DRAG_MAX", 0);

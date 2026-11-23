@@ -745,7 +745,8 @@ namespace rl_tools{
                 near_hover();
                 state.task = 9;
                 state.floor_z = -U(0.6, 1.0);
-                T dist = U(m.waypoint_min, m.waypoint_min + k * (m.waypoint_max - m.waypoint_min));
+                const T kw = m.waypoint_progress >= 0 ? m.waypoint_progress : k;
+                T dist = U(m.waypoint_min, m.waypoint_min + kw * (m.waypoint_max - m.waypoint_min));
                 T heading = U(0, 2 * math::PI<T>), climb = U(-0.25, 0.25);
                 T n = math::sqrt(device.math, 1 + climb * climb);
                 state.traj_type = 6;
@@ -1029,7 +1030,14 @@ namespace rl_tools{
                     // this episode's per-axis std if set (Mission::pos_noise_min/max), else the fixed one
                     T sigma = state.pos_noise_sigma[i] > 0 ? state.pos_noise_sigma[i] : (T)env.parameters.mdp.observation_noise.position;
                     T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM{}, (T)0, sigma, rng);
-                    set(observation, 0, i, state.position[i] + noise);
+                    const T lim = env.mission.obs_pos_clip;
+                    if(lim > 0){
+                        T p = state.position[i] + noise;
+                        set(observation, 0, i, p > lim ? lim : (p < -lim ? -lim : p));
+                    }
+                    else{
+                        set(observation, 0, i, state.position[i] + noise);
+                    }
                 }
             }
             auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
@@ -1096,7 +1104,14 @@ namespace rl_tools{
                 }
                 else{
                     T noise = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM{}, (T)0, env.parameters.mdp.observation_noise.linear_velocity, rng);
-                    set(observation, 0, i, v + noise);
+                    const T lim = env.mission.obs_vel_clip;
+                    if(lim > 0){
+                        T u = v + noise;
+                        set(observation, 0, i, u > lim ? lim : (u < -lim ? -lim : u));
+                    }
+                    else{
+                        set(observation, 0, i, v + noise);
+                    }
                 }
             }
             auto next_observation = view(device, observation, matrix::ViewSpec<1, OBS_SPEC::COLS - OBSERVATION::CURRENT_DIM>{}, 0, OBSERVATION::CURRENT_DIM);
@@ -1426,7 +1441,9 @@ namespace rl_tools{
 #ifdef L2F_SENSOR_SIM
                 T v = leak * state.pos_integral[i] + state.est_position[i] * dt;  // the drone integrates its estimate
 #else
-                T v = leak * state.pos_integral[i] + state.position[i] * dt;
+                const T lim = env.mission.obs_pos_clip;
+                T v = lim > 0 ? leak * state.pos_integral[i] + (state.position[i] > lim ? lim : (state.position[i] < -lim ? -lim : state.position[i])) * dt
+                              : leak * state.pos_integral[i] + state.position[i] * dt;
 #endif
                 next_state.pos_integral[i] = v > (T)L2F_POS_INTEGRAL_MAX ? (T)L2F_POS_INTEGRAL_MAX : (v < -(T)L2F_POS_INTEGRAL_MAX ? -(T)L2F_POS_INTEGRAL_MAX : v);
             }
