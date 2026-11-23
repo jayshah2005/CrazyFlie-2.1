@@ -92,6 +92,11 @@ void set_parameters(ENVIRONMENT& env){
     env.parameters.mdp.reward.speed_limit = env_or("L2F_W_SPEED");
     env.parameters.mdp.reward.energy = env_or("L2F_W_ENERGY");
     env.parameters.mdp.reward.progress = env_or("L2F_PROGRESS_K");
+    // L2F_CRASH_PENALTY_OVERRIDE=P: crash penalty P instead of the build's -DL2F_CRASH_PENALTY
+    // (unset = the build's), so penalty studies can share one build
+    if(const char* v = std::getenv("L2F_CRASH_PENALTY_OVERRIDE")){
+        env.parameters.mdp.reward.termination_penalty = -(T)std::atof(v);
+    }
 }
 
 class Sim{
