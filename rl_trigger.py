@@ -406,13 +406,29 @@ def send_learned(cf, offset=None, velocity=None):
     cf.send_packet(pk)
 
 
+def parse_waypoints(text):
+    """'x,y[,z];x,y[,z];...' (m, relative to the take-off point; z relative to --height)."""
+    points = []
+    for item in text.split(';'):
+        values = [float(v) for v in item.split(',') if v.strip()]
+        if len(values) not in (2, 3):
+            raise ValueError(f'waypoint {item!r}: give x,y or x,y,z')
+        points.append(tuple(values) if len(values) == 3 else (values[0], values[1], 0.0))
+    return points
+
+
 class MissionProfile:
     """Target trajectory for --mode mission, relative to the take-off point.
 
     Mirrors MissionProfile in learning_to_fly/src/evaluate_robustness.cpp: sit,
     climb, hover, move to the circle start, circle, back to the centre, hover,
-    descend to `below` m under the floor, sit."""
-    PHASES = ['sit', 'takeoff', 'hover', 'move', 'circle', 'back', 'hover2', 'landing', 'ground']
+    descend to `below` m under the floor, sit.
+
+    With --waypoints, move / circle / back are replaced by jumps of the target: to each
+    waypoint in turn (held --dwell s each, the policy chooses how fast to fly there),
+    then back to the centre (phases 'waypoint' and 'back'). For policies trained with
+    waypoint episodes (L2F_P_WAYPOINT, 2026-11-23)."""
+    PHASES = ['sit', 'takeoff', 'hover', 'move', 'circle', 'waypoint', 'back', 'hover2', 'landing', 'ground']
 
     def __init__(self, args):
         self.H, self.R, self.P, self.laps = args.height, args.radius, args.period, args.laps
@@ -420,10 +436,18 @@ class MissionProfile:
         # sit only briefly: on the floor the policy rocks and slides the drone
         self.t_idle, self.t_hover1, self.t_move, self.t_back, self.t_hover2 = 0.3, 2.0, 2.0, 2.0, 1.0
         self.t_ground, self.below = 1.5, LANDING['below']
+        self.waypoints = parse_waypoints(args.waypoints) if args.waypoints else []
+        self.dwell = args.dwell
+
+    def middle(self):
+        """Duration of the part between the first hover and the second."""
+        if self.waypoints:
+            return (len(self.waypoints) + 1) * self.dwell
+        return self.t_move + self.laps * self.P + self.t_back
 
     def duration(self):
-        return (self.t_idle + self.H / self.v_up + self.t_hover1 + self.t_move + self.laps * self.P
-                + self.t_back + self.t_hover2 + (self.H + self.below) / self.v_down + self.t_ground)
+        return (self.t_idle + self.H / self.v_up + self.t_hover1 + self.middle()
+                + self.t_hover2 + (self.H + self.below) / self.v_down + self.t_ground)
 
     def at(self, t):
         """(phase name, target offset (x, y, z), target velocity (x, y, z)) at time t."""
@@ -438,6 +462,21 @@ class MissionProfile:
         if t < self.t_hover1:
             return 'hover', (0.0, 0.0, H), (0.0, 0.0, 0.0)
         t -= self.t_hover1
+        if self.waypoints:
+            if t < self.middle():
+                i = int(t // self.dwell)
+                if i < len(self.waypoints):
+                    x, y, z = self.waypoints[i]
+                    return 'waypoint', (x, y, H + z), (0.0, 0.0, 0.0)
+                return 'back', (0.0, 0.0, H), (0.0, 0.0, 0.0)
+            t -= self.middle()
+            if t < self.t_hover2:
+                return 'hover2', (0.0, 0.0, H), (0.0, 0.0, 0.0)
+            t -= self.t_hover2
+            t_down = (H + self.below) / self.v_down
+            if t < t_down:
+                return 'landing', (0.0, 0.0, H - self.v_down * t), (0.0, 0.0, -self.v_down)
+            return 'ground', (0.0, 0.0, -self.below), (0.0, 0.0, 0.0)
         if t < self.t_move:
             return 'move', (R * t / self.t_move, 0.0, H), (R / self.t_move, 0.0, 0.0)
         t -= self.t_move
@@ -467,6 +506,9 @@ def configure(cf, args):
     if args.mode in ('takeoff_and_switch', 'land', 'hover_original', 'mission'):
         set_param(cf, 'rlt.wn', MODE_POSITION)
         set_param(cf, 'rlt.target_z', 0)       # target starts at the activation point
+        # the controller clips the position error to +-rlt.pdlp per axis (firmware default 0.5 m);
+        # waypoint training sees jumps up to 1.5 m unclipped, so widen it for --waypoints
+        set_param(cf, 'rlt.pdlp', 2.0 if getattr(args, 'waypoints', '') else 0.5)
         set_param(cf, 'rlt.motor_warmup', 0)
     elif args.mode == 'hover_learned':
         set_param(cf, 'rlt.wn', MODE_POSITION)
@@ -584,10 +626,17 @@ def fly_mission(scf, args, pose, tele):
     profile = MissionProfile(args)
     while key_down(VK_RETURN):  # don't start on the Enter that launched us
         time.sleep(0.05)
-    log.info('Mission: climb to %.2f m at %.2f m/s, circle r=%.2f m in %.1f s x%g, land at '
-             '%.2f m/s (%.0f s). No PID: the policy flies from the floor.',
-             profile.H, profile.v_up, profile.R, profile.P, profile.laps, profile.v_down,
-             profile.duration())
+    if profile.waypoints:
+        log.info('Mission: climb to %.2f m at %.2f m/s, waypoints %s (%.1f s each, the policy picks '
+                 'the speed), back to the centre, land at %.2f m/s (%.0f s). No PID: the policy flies '
+                 'from the floor.', profile.H, profile.v_up,
+                 ' -> '.join(f'({x:+.2f}, {y:+.2f}, {z:+.2f})' for x, y, z in profile.waypoints),
+                 profile.dwell, profile.v_down, profile.duration())
+    else:
+        log.info('Mission: climb to %.2f m at %.2f m/s, circle r=%.2f m in %.1f s x%g, land at '
+                 '%.2f m/s (%.0f s). No PID: the policy flies from the floor.',
+                 profile.H, profile.v_up, profile.R, profile.P, profile.laps, profile.v_down,
+                 profile.duration())
     sw = FlySwitch(args.hold)
     log.info('READY. %s; a stop in the air = automatic landing at %.2f m/s; Ctrl+C = cut '
              'the motors now. Q quits once landed.', sw.how(), args.abort_descent_rate)
@@ -859,6 +908,12 @@ if __name__ == '__main__':
                         help='mission: s per circle (default 8)')
     parser.add_argument('--laps', type=float, default=1.0,
                         help='mission: number of circles (default 1)')
+    parser.add_argument('--waypoints', default='',
+                        help='mission: fly to these points instead of the circle, "x,y[,z];x,y[,z];..." '
+                             '(m from the take-off point, z relative to --height); only for policies '
+                             'trained with waypoint episodes')
+    parser.add_argument('--dwell', type=float, default=2.5,
+                        help='mission --waypoints: seconds per waypoint (default 2.5)')
     parser.add_argument('--climb-rate', type=float, default=0.25,
                         help='mission: take-off climb speed in m/s (default 0.25)')
     parser.add_argument('--ki', type=float, default=0.0,
