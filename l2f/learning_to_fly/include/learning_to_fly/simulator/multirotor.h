@@ -508,7 +508,10 @@ namespace rl_tools::rl::environments{
             T dr_scale = env_or("L2F_DR_SCALE", 1);  // 1 = the paper's ranges
             // L2F_DR_MASS: absolute mass range (e.g. 0.2 = +-20%), overrides 0.1 * dr_scale
             T dr_mass = std::getenv("L2F_DR_MASS") ? env_or("L2F_DR_MASS", 0) : 0.1 * dr_scale;
-            T dr_inertia = 0.2 * dr_scale, dr_motor_tau = 0.2 * dr_scale;
+            T dr_inertia = 0.2 * dr_scale;
+            // L2F_DR_MOTOR_TAU: absolute motor time-constant range (e.g. 0.25 = +-25%), overrides
+            // 0.2 * dr_scale. Identified 2026-11-22: 0.045 s at 3.66 V, 0.057 s at 3.84 V (model 0.060)
+            T dr_motor_tau = std::getenv("L2F_DR_MOTOR_TAU") ? env_or("L2F_DR_MOTOR_TAU", 0) : 0.2 * dr_scale;
             T dr_thrust = 0.2 * dr_scale, dr_torque = 0.2 * dr_scale, dr_cog = 0.01 * dr_scale;
             // Curriculum: training ramps this from 0 to 1 over L2F_MISSION_RAMP steps
             // (src/steps/curriculum.h); episode-type probabilities and randomization
@@ -544,6 +547,10 @@ namespace rl_tools::rl::environments{
             // the firmware's voltage-compensated command-to-speed map was 18-23% off with a fresh
             // battery on 2026-11-22 (2% at 3.4-3.6 V). 0 = off (no random draws, as before).
             T motor_gain_all_dr = env_or("L2F_MOTOR_GAIN_ALL", 0.0);
+            // ESC idle (L2F_MOTOR_IDLE_RPM): an armed motor never turns slower than this, whatever the
+            // command (the firmware clips the command at 0 and the ESC holds idle; its arming check
+            // expects 1000-3500 rpm). 0 = off: the simulated motor can spin down to 0.
+            T motor_idle_rpm = env_or("L2F_MOTOR_IDLE_RPM", 0.0);
             // Measured rotor speeds (L2F_RPM_OBS): Gaussian noise (normalized units,
             // 1 = 12000 rpm) and the chance per step that the previous value repeats.
             // Measured: ~100 rpm noise, ~14% repeats at 100 Hz (rpm_quality.py).

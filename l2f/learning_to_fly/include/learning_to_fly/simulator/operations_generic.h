@@ -1535,6 +1535,11 @@ namespace rl_tools{
             T v = action_scaled[action_i] * state.motor_gain[action_i] + state.motor_offset[action_i];
             action_scaled[action_i] = math::clamp(device.math, v, env.parameters.dynamics.action_limit.min, env.parameters.dynamics.action_limit.max);
         }
+        if(env.mission.motor_idle_rpm > 0){  // ESC idle (Mission::motor_idle_rpm)
+            for(TI action_i = 0; action_i < ACTION_DIM; action_i++){
+                action_scaled[action_i] = math::max(device.math, action_scaled[action_i], env.mission.motor_idle_rpm);
+            }
+        }
         if(env.mission.enabled && state.ground_effect > 0 && state.floor_z > -50){
             // Ground effect: more thrust close to the floor (constant over the step).
             const auto& m = env.mission;
