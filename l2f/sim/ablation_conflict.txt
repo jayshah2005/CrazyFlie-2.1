@@ -1,0 +1,19 @@
+# Step 4: do the objectives conflict on the best waypoint recipe (ablation_time's huber_wp05_time05)?
+# MOO sum on the 4 groups (time, precision, efficiency, safety) with the total critic loss
+# (--total 1, as the team's MOO runs): the actor step is the gradient of the summed value, as in
+# TD3; the critic learns one value per group. The point is the gradient log (logs/train_moo_*.csv:
+# per-group norms and pairwise cosines); the tests check it trains like the TD3 arm.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_conflict.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+
+arm  time05_moo4sum  --moo parts --parts 4 --agg sum --total 1 L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5

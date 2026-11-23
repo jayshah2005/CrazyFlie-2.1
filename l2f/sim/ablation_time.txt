@@ -1,0 +1,27 @@
+# Ablation D2: the time cost on waypoint training. Base: crash 400, Huber 0.2, waypoints
+# 0.3-0.5 m (20% of episodes, second leg 0.5-1x the jump) = ablation_waypoint's huber_wp05.
+# Gate (reward_check.py, 8 policies): without Huber the waypoint reward fails even with no time
+# cost (free flight 5-11%, waypoints up to 19%); with Huber, L2F_W_TIME 0.5 adds at most about one
+# point (free flight 2.2-5.0%, waypoints 0.4-4.6%); 2 fails. Time cost 0.25 per step (0.5 x scale
+# 0.5) is small far from the target but about the position cost 10 cm out, and "arrived" means
+# within 5 cm and below 0.2 m/s: it mainly pays for closing the last 10 cm (the trained policies
+# settle 9-11 cm off after a jump).
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_time.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+# (crash400 and huber_wp05 are bit-identical to ablation_waypoint's arms, seeds 70-73)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+
+arm  crash400           L2F_CRASH_PENALTY_OVERRIDE=400
+arm  huber_wp05         L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5
+arm  huber_wp05_time02  L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.2
+arm  huber_wp05_time05  L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+# waypoint tests with 3.5 s legs (test only), so slow policies can settle
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
