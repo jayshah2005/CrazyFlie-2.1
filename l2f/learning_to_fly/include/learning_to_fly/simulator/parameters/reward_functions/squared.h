@@ -26,7 +26,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         T landing_payout = 0; // reward of the step on which a landing ends the episode (Mission::landing_cut)
         // time-to-target study (all 0 = off; set at runtime by the Python binding, L2F_W_*):
         T time = 0;        // weight on 1 per step while a static target is not reached (Mission::arrive_*)
-        T power = 0;       // weight on rotor power, sum (rpm / rpm_max)^3 minus its hover value
+        T power = 0;       // weight on rotor power above hover, max(0, sum (rpm / rpm_max)^3 minus its hover value)
         T speed_limit = 0; // weight on (speed - Mission::speed_cap)^2 above the cap
         struct Components{
             T orientation_cost;
@@ -40,7 +40,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             T zigzag_cost;  // |a_t - 2 a_{t-1} + a_{t-2}|^2
             T landing_cost; // (downward speed)^2 near the floor
             T time_cost = 0;   // 1 while a static target is not reached
-            T power_cost = 0;  // sum (rpm / rpm_max)^3 - its hover value
+            T power_cost = 0;  // max(0, sum (rpm / rpm_max)^3 - its hover value)
             T speed_cost = 0;  // (speed - speed_cap)^2 above the cap
             bool terminated;
             bool landed;    // terminated by a landing (motor cut), not a crash
@@ -101,7 +101,10 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         if(m.pos_cap > 0 && static_target){
             const T cap2 = m.pos_cap * m.pos_cap;
             if(components.position_cost > cap2){
-                components.position_cost = cap2;
+                // Huber: linear beyond the cap, so a far target still pulls (a flat cap left the
+                // policies hovering ~30 cm off) without the large quadratic cost of a 1.5 m jump
+                const T d = math::sqrt(device.math, components.position_cost);
+                components.position_cost = cap2 + 2 * m.pos_cap * (d - m.pos_cap);
                 components.linear_vel_cost = 0;  // far from it: no speed penalty
             }
         }
@@ -114,7 +117,9 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             const T rho = state.rpm[i] / dyn.action_limit.max;
             power += rho * rho * rho;
         }
-        components.power_cost = power - 4 * hover * hover * hover;
+        // only thrust above hover costs: a negative cost would pay the policy for idling (falling),
+        // which outweighed the crash penalty and made every run of the first study drop (2026-11-23)
+        components.power_cost = power > 4 * hover * hover * hover ? power - 4 * hover * hover * hover : (T)0;
         const T speed = math::sqrt(device.math, v2);
         components.speed_cost = speed > m.speed_cap ? (speed - m.speed_cap) * (speed - m.speed_cap) : (T)0;
     }

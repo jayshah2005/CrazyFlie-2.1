@@ -519,9 +519,9 @@ namespace rl_tools::rl::environments{
             // Arrival at a static target (reward part "time"): within arrive_pos m and slower
             // than arrive_speed m/s
             T arrive_pos = env_or("L2F_ARRIVE_POS", 0.05), arrive_speed = env_or("L2F_ARRIVE_SPEED", 0.2);
-            // L2F_POS_CAP > 0: for a static target, the position cost is capped at pos_cap^2
-            // and the velocity cost applies only within pos_cap of it (far away the time
-            // objective drives, near it precision); 0 = off (the plain squared costs)
+            // L2F_POS_CAP > 0: for a static target, the position cost is quadratic within pos_cap and
+            // linear beyond it (Huber), and the velocity cost applies only within pos_cap of it (far away
+            // the time objective and the linear pull drive, near it precision); 0 = off (plain squared)
             T pos_cap = env_or("L2F_POS_CAP", 0);
             // speed_cap: reward part "speed_limit" = (speed - speed_cap)^2 above it (safety);
             // speed_crash > 0: faster than this ends the episode like a crash
