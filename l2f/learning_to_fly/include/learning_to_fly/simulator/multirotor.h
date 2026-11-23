@@ -516,6 +516,10 @@ namespace rl_tools::rl::environments{
             // the same line; the time objective counts the steps until arrival
             T p_waypoint = env_or("L2F_P_WAYPOINT", 0);
             T waypoint_min = env_or("L2F_WAYPOINT_MIN", 0.3), waypoint_max = env_or("L2F_WAYPOINT_MAX", 1.5);
+            // the second leg goes to s x the jump, s ~ U(s_min, s_max): its length is |1 - s| x the
+            // jump (default [-1, 0.5]: 0.5-2x the first leg; [0, 0.5]: 0.5-1x, so no leg is
+            // longer than the jump, which bounds the episode's cost; time_to_target_study.md 5.3)
+            T waypoint_s_min = env_or("L2F_WAYPOINT_S_MIN", -1), waypoint_s_max = env_or("L2F_WAYPOINT_S_MAX", 0.5);
             // Arrival at a static target (reward part "time"): within arrive_pos m and slower
             // than arrive_speed m/s
             T arrive_pos = env_or("L2F_ARRIVE_POS", 0.05), arrive_speed = env_or("L2F_ARRIVE_SPEED", 0.2);

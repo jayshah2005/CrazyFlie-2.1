@@ -755,7 +755,7 @@ namespace rl_tools{
                 state.traj[2] = dist * climb / n;
                 state.traj[3] = U(0.3, 1.0);
                 state.traj[4] = state.traj[3] + U(1.5, 2.5);
-                state.traj[5] = U(-1, 0.5);
+                state.traj[5] = U(m.waypoint_s_min, m.waypoint_s_max);  // default [-1, 0.5]
             }
             // else: the original free-flight start, static target, no floor
 #ifdef L2F_TASK_REGIME
