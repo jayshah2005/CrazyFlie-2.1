@@ -1,0 +1,913 @@
+"""
+Fly the learned "Learning to Fly in Seconds" policy (Eschmann et al., RA-L 2024)
+on a Crazyflie running the learning_to_fly firmware (rlt.* parameters).
+
+Port of learning-to-fly/scripts/trigger.py for our Lighthouse setup:
+  - pre-flight checks: L2F firmware present, battery, estimator converged,
+    yaw close to 0 (the policy always turns to yaw 0 in the LIGHTHOUSE frame)
+  - heights are relative to the take-off point
+  - every flight writes a CSV under logs/ via run_log
+
+FLY SWITCH: press ENTER to start, press Enter again to stop (--hold: fly only
+while Enter is held, the old dead-man switch). Stopping ends the packets, and
+the firmware cuts the motors ~200 ms later while the learned policy is flying
+(the drone drops); in --mode mission a stop in the air is an automatic landing.
+With the toggle the drone keeps flying until the next press: keep Ctrl+C ready.
+Press Q (not flying) to quit. Ctrl+C is an
+emergency stop. An emergency-stop watchdog also cuts the motors within 1 s if
+this script dies or the radio drops; power-cycle the drone before the next
+flight (the watchdog stays latched until reboot).
+The keys are read as held-down state, which sees Enter even when this console
+is not focused: GetAsyncKeyState on Windows, CGEventSourceKeyState on macOS
+(pip install pyobjc-framework-Quartz; give the terminal app the Input Monitoring
+permission, or every key reads as released and the drone does not fly). Test
+the switch without flying: python rl_trigger.py --key-test 20
+
+Targets the Crazyflie 2.1 Brushless firmware build (arming required, policy
+trained on the identified brushless model).
+
+Modes:
+  takeoff_and_switch  stock PID takes off, policy takes over after --switch-after s
+  land                as takeoff_and_switch, then after --hover-time s the policy's
+                      target descends at --descent-rate; motors cut below
+                      --cut-height (needs firmware with target-offset packets)
+  hover_learned       policy does the take-off itself (ground effect: try 2nd)
+  figure_eight        PID take-off, then policy tracks a figure eight
+  hover_original      stock PID only (baseline for comparison)
+  mission             no PID at all: the policy takes off from the floor, flies one
+                      circle and lands, following a moving target (position and
+                      velocity, needs the mission firmware and a mission-trained
+                      policy). Releasing Enter in the air starts an automatic
+                      landing (the policy descends at --abort-descent-rate);
+                      Ctrl+C is the immediate motor cut. Q only quits on the floor.
+
+Run `python rl_trigger.py --mode takeoff_and_switch` FIRST.
+"""
+import argparse
+import math
+import struct
+import sys
+import threading
+import time
+from datetime import datetime
+from pathlib import Path
+
+import cflib.crtp
+from cflib.crazyflie import Crazyflie
+from cflib.crazyflie.commander import META_COMMAND_CHANNEL
+from cflib.crazyflie.log import LogConfig
+from cflib.crazyflie.syncCrazyflie import SyncCrazyflie
+from cflib.crtp.crtpstack import CRTPPacket, CRTPPort
+from cflib.utils import uri_helper
+from cflib.utils.reset_estimator import reset_estimator
+
+import run_log
+
+URI = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E7EA')
+log = run_log.setup(__file__)
+STARTED_AT = datetime.now().astimezone()
+LOG_FILE = run_log.csv_path('flight', script=__file__, when=STARTED_AT)
+
+SEND_PERIOD = 0.02        # s, 50 Hz packets while Enter is held (firmware timeout: 200 ms).
+VK_RETURN = 'return'      # key names for key_down()
+VK_Q = 'q'
+LEARNED_PACKET = struct.pack('<B', 1)  # metaLearnedController; payload MUST be empty.
+
+# stabilizer.controller value of the out-of-tree (learned) controller in the
+# 2026.08-based firmware (ControllerType enum). The drone boots on PID.
+CONTROLLER_OOT = 6
+
+# rlt.wn values (learning_to_fly_controller/rl_tools_controller.c, enum Mode).
+MODE_POSITION = 1
+MODE_FIGURE_EIGHT = 4
+
+# m1..m4: motor commands the policy computes (rltm); out1..out4: ratios actually
+# sent to the ESCs (motor.m*); rpm1..rpm4: measured motor RPM (mechanical, see
+# rpm_quality.py; 65535 = invalid read); rin1..rin4: the measured speeds as a
+# measured-RPM policy sees them (rltr.r*, -1..1; firmware built with RPM_OBS=1).
+EXTRA = ['stateEstimate.roll', 'stateEstimate.pitch', 'gyro.x', 'gyro.y', 'gyro.z',
+         'motor.m1', 'motor.m2', 'motor.m3', 'motor.m4',
+         'motor.m1_rpm', 'motor.m2_rpm', 'motor.m3_rpm', 'motor.m4_rpm']
+COLUMNS = ['drone_ms', 'phase', 'x', 'y', 'z', 'yaw_deg', 'vbat',
+           'policy_active', 'err_x', 'err_y', 'err_z', 'm1', 'm2', 'm3', 'm4',
+           'roll_deg', 'pitch_deg', 'gyro_x', 'gyro_y', 'gyro_z',
+           'out1', 'out2', 'out3', 'out4', 'rpm1', 'rpm2', 'rpm3', 'rpm4',
+           'comp_x', 'comp_y', 'comp_z',  # mission: target correction (err_* is w.r.t. the corrected target)
+           'lh_status', 'lh_receive', 'lh_active',  # Lighthouse: 2 = estimating; base-station bit masks
+           'rin1', 'rin2', 'rin3', 'rin4']
+
+
+LH_VARS = ['lighthouse.status', 'lighthouse.bsReceive', 'lighthouse.bsActive']
+RPM_IN_VARS = ['rltr.r1', 'rltr.r2', 'rltr.r3', 'rltr.r4']  # absent on older firmware
+GYRO_VARS = ['gyro.x', 'gyro.y', 'gyro.z']
+# A gyro sample counts as saturated at or above this rate on any axis (deg/s): just
+# under the BMI088's +-2000 deg/s range, since readings can exceed 2000 slightly after
+# the firmware removes the bias.
+GYRO_SATURATION_DPS = 1990
+GYRO_PERIOD_MS = 10
+LANDING_FILE = Path(__file__).resolve().parent / 'config' / 'landing.yaml'
+
+
+def load_landing(path=LANDING_FILE):
+    """Landing values shared with training ("key: value" lines of config/landing.yaml)."""
+    values = {}
+    for line in path.read_text().splitlines():
+        line = line.split('#', 1)[0].strip()
+        if ':' in line:
+            key, value = (part.strip() for part in line.split(':', 1))
+            values[key] = float(value)
+    return values
+
+
+LANDING = load_landing()
+
+
+class FlowSwitch:
+    """Plan E4 (Q13): the Flow deck off below `below` m above the take-off point
+    (motion.disable = 1), on again above it; the simulator's sensor path does the same
+    (config/sensors.yaml estimator.flow_off_below). The PMW3901 works from 80 mm, and below
+    0.1 m the firmware's flow model uses 0.1 m for the height. below = 0: never (as before)."""
+
+    def __init__(self, cf, below):
+        self.cf, self.below, self.off = cf, below, False
+
+    def update(self, height):
+        """Switch on the latest height estimate (no hysteresis, as in the simulator)."""
+        if self.below <= 0:
+            return
+        off = height < self.below
+        if off != self.off:
+            self.cf.param.set_value('motion.disable', '1' if off else '0')
+            self.off = off
+            log.info('Flow deck %s (height %.3f m).', 'off' if off else 'on', height)
+
+    def restore(self):
+        """Leave the flow on after the flight."""
+        if self.off:
+            self.cf.param.set_value('motion.disable', '0')
+            self.off = False
+
+
+# Keys held down anywhere in the session (any window focused), per platform.
+if sys.platform == 'win32':
+    import ctypes
+    import msvcrt
+    _KEYCODES = {'return': (0x0D,), 'q': (0x51,)}  # virtual-key codes (VK_RETURN covers both Enters)
+
+    def key_down(key):
+        """True while `key` ('return' or 'q') is held down (GetAsyncKeyState)."""
+        return any(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000 for vk in _KEYCODES[key])
+
+    def flush_keyboard():
+        """Drop the key presses queued in the console."""
+        while msvcrt.kbhit():
+            msvcrt.getwch()
+elif sys.platform == 'darwin':
+    import termios
+    try:
+        import Quartz  # pip install pyobjc-framework-Quartz
+    except ImportError:
+        Quartz = None
+    _KEYCODES = {'return': (0x24, 0x4C), 'q': (0x0C,)}  # kVK_Return, kVK_ANSI_KeypadEnter, kVK_ANSI_Q
+
+    def key_down(key):
+        """True while `key` ('return' or 'q') is held down (CGEventSourceKeyState). Without the
+        Input Monitoring permission every key reads as released: the drone does not fly."""
+        state = Quartz.kCGEventSourceStateCombinedSessionState
+        return any(Quartz.CGEventSourceKeyState(state, code) for code in _KEYCODES[key])
+
+    def flush_keyboard():
+        """Drop the key presses queued in the terminal."""
+        try:
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except (termios.error, ValueError):
+            pass
+else:
+    key_down = flush_keyboard = None
+
+
+class FlySwitch:
+    """The Enter fly switch, read once per loop: toggle (default) = each press flips start /
+    stop; hold = on while Enter is held (dead-man). The Enter that launched the script is not
+    a press."""
+    def __init__(self, hold):
+        self.hold = hold
+        self.on = False
+        self.was_down = key_down(VK_RETURN)
+
+    def active(self):
+        """True while the flight should run."""
+        down = key_down(VK_RETURN)
+        if self.hold:
+            self.on = down
+        elif down and not self.was_down:  # a new press
+            self.on = not self.on
+        self.was_down = down
+        return self.on
+
+    def how(self):
+        """How to start and stop, for the READY line."""
+        return 'Hold ENTER to fly (release = stop)' if self.hold else 'Press ENTER to start, Enter again to stop'
+
+
+def key_test(seconds, hold=False):
+    """No radio: log every change of Enter and Q and of the fly switch for `seconds` s, polled
+    at the flight's packet rate, to check the switch before flying."""
+    while key_down(VK_RETURN):  # the Enter that launched us
+        time.sleep(SEND_PERIOD)
+    sw = FlySwitch(hold)
+    log.info('Fly switch: %s.', sw.how())
+    log.info('Key test for %.0f s: hold and release Enter a few times, then press Q.', seconds)
+    state = {VK_RETURN: False, VK_Q: False}
+    since = {}
+    changes = 0
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        now = time.time() - t0
+        was_on = sw.on
+        if sw.active() != was_on:
+            log.info('%6.2f s  fly switch %s', now, 'ON (flying)' if sw.on else 'OFF (stop)')
+        for key in state:
+            down = key_down(key)
+            if down != state[key]:
+                state[key] = down
+                changes += 1
+                if down:
+                    since[key] = now
+                    log.info('%6.2f s  %s DOWN', now, key)
+                else:
+                    log.info('%6.2f s  %s up (held %.2f s)', now, key, now - since.get(key, now))
+        time.sleep(SEND_PERIOD)
+    flush_keyboard()
+    if changes == 0:
+        log.error('No key change seen. On macOS give the terminal app the Input Monitoring '
+                  'permission (System Settings > Privacy & Security), restart it, and try again.')
+    else:
+        log.info('%d key changes seen: the dead-man switch reads the keys.', changes)
+
+
+class Telemetry:
+    """Collects the flight log: state rows at 20 ms plus the newest values of the other log blocks."""
+    def __init__(self):
+        self.rows = []
+        self.phase = 'idle'
+        self.latest = {}  # newest values from the other log blocks
+        self.comp = (0.0, 0.0, 0.0)  # mission target correction currently applied
+        # gyro saturation (every 10 ms sample, not only the 20 ms CSV rows)
+        self.gyro_samples = 0
+        self.gyro_saturated = 0
+        self.gyro_run = 0
+        self.gyro_longest_run = 0
+        self.gyro_peak = [0.0, 0.0, 0.0]
+
+    def a_cb(self, timestamp, data, logconf):
+        """Append one CSV row: the state block plus the latest policy / motor values."""
+        b = self.latest
+        self.rows.append([
+            timestamp, self.phase,
+            data['stateEstimate.x'], data['stateEstimate.y'], data['stateEstimate.z'],
+            data['stateEstimate.yaw'], data['pm.vbat'], data['rltrp.sm'],
+            b.get('rltte.x'), b.get('rltte.y'), b.get('rltte.z'),
+            b.get('rltm.m1'), b.get('rltm.m2'), b.get('rltm.m3'), b.get('rltm.m4'),
+        ] + [b.get(name) for name in EXTRA] + list(self.comp)
+            + [b.get(name) for name in LH_VARS]
+            + [b.get(name) for name in RPM_IN_VARS])
+
+    def other_cb(self, timestamp, data, logconf):
+        """Remember the newest values of a secondary log block."""
+        self.latest.update(data)
+
+    def gyro_cb(self, timestamp, data, logconf):
+        """Remember the newest gyro values and count samples at the gyro's range."""
+        self.latest.update(data)
+        rates = [abs(data[name]) for name in GYRO_VARS]
+        self.gyro_samples += 1
+        self.gyro_peak = [max(p, r) for p, r in zip(self.gyro_peak, rates)]
+        if max(rates) >= GYRO_SATURATION_DPS:
+            self.gyro_saturated += 1
+            self.gyro_run += 1
+            self.gyro_longest_run = max(self.gyro_longest_run, self.gyro_run)
+        else:
+            self.gyro_run = 0
+
+    def save(self, path):
+        written = run_log.write_csv(path, COLUMNS, self.rows, script=__file__,
+                                    generated_at=datetime.now().astimezone())
+        log.info('Flight log written to %s (%s samples)', written, len(self.rows))
+
+    def summarize(self):
+        """Log gyro saturation, tracking error and how long the policy had control."""
+        if self.gyro_samples:
+            log.info('Gyro: peak |x| %.0f, |y| %.0f, |z| %.0f deg/s; %d of %d samples at the '
+                     '+-2000 deg/s range (longest run %d ms)', *self.gyro_peak,
+                     self.gyro_saturated, self.gyro_samples, self.gyro_longest_run * GYRO_PERIOD_MS)
+            if self.gyro_saturated:
+                log.warning('The gyro saturated: the estimate integrated a clipped rate, so its '
+                            'attitude may have been wrong for a while after that.')
+        active = [r for r in self.rows if r[7] == 1 and r[8] is not None]
+        if not active:
+            log.info('The learned policy never had control of the motors.')
+            return
+        exy = [math.hypot(r[8], r[9]) for r in active]
+        ez = [abs(r[10]) for r in active]
+        log.info('Policy in control for %.1f s', len(active) * SEND_PERIOD)
+        log.info('Position error under policy: xy mean %.3f m / max %.3f m, '
+                 'z mean %.3f m / max %.3f m',
+                 sum(exy) / len(exy), max(exy), sum(ez) / len(ez), max(ez))
+        log.info('Battery: %.2f V -> %.2f V', self.rows[0][6], self.rows[-1][6])
+
+
+def start_telemetry(scf, tele):
+    """Start the state, policy and motor log blocks that feed `tele`."""
+    a = LogConfig(name='L2FState', period_in_ms=20)
+    for name in ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
+                 'stateEstimate.yaw', 'pm.vbat'):
+        a.add_variable(name, 'float')
+    a.add_variable('rltrp.sm', 'uint8_t')
+    b = LogConfig(name='L2FPolicy', period_in_ms=20)
+    for name in ('rltte.x', 'rltte.y', 'rltte.z'):
+        b.add_variable(name, 'float')
+    for name in ('rltm.m1', 'rltm.m2', 'rltm.m3', 'rltm.m4'):
+        b.add_variable(name, 'uint16_t')
+    b.add_variable('supervisor.info', 'uint16_t')  # arming check (wait_armed)
+    c = LogConfig(name='L2FAttitude', period_in_ms=20)
+    for name in EXTRA[:2]:
+        c.add_variable(name, 'float')
+    g = LogConfig(name='L2FGyro', period_in_ms=GYRO_PERIOD_MS)  # every sample counts for saturation
+    for name in GYRO_VARS:
+        g.add_variable(name, 'float')
+    d = LogConfig(name='L2FMotors', period_in_ms=20)
+    for name in EXTRA[5:]:
+        d.add_variable(name, 'uint16_t')
+    e = LogConfig(name='L2FLighthouse', period_in_ms=20)
+    toc = scf.cf.log.toc
+    if toc.get_element_by_complete_name('lighthouse.status') is not None:
+        e.add_variable('lighthouse.status', 'uint8_t')
+        e.add_variable('lighthouse.bsReceive', 'uint16_t')
+        e.add_variable('lighthouse.bsActive', 'uint16_t')
+    f = LogConfig(name='L2FRpmInput', period_in_ms=20)
+    if toc.get_element_by_complete_name('rltr.r1') is not None:
+        for name in RPM_IN_VARS:
+            f.add_variable(name, 'float')
+    confs = [(a, tele.a_cb), (b, tele.other_cb), (c, tele.other_cb), (g, tele.gyro_cb), (d, tele.other_cb)]
+    for extra in (e, f):
+        if extra.variables:
+            confs.append((extra, tele.other_cb))
+    for conf, cb in confs:
+        scf.cf.log.add_config(conf)
+        conf.data_received_cb.add_callback(cb)
+        conf.start()
+    return [conf for conf, _ in confs]
+
+
+def read_pose(scf, duration=0.5):
+    """Average x, y, z, yaw and battery over `duration` seconds."""
+    samples = []
+    lg = LogConfig(name='Pose', period_in_ms=20)
+    for name in ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
+                 'stateEstimate.yaw', 'pm.vbat'):
+        lg.add_variable(name, 'float')
+    lg.data_received_cb.add_callback(lambda t, d, c: samples.append(d))
+    scf.cf.log.add_config(lg)
+    lg.start()
+    time.sleep(duration)
+    lg.stop()
+    if not samples:
+        return None
+    keys = samples[0].keys()
+    return {k.split('.')[1]: sum(s[k] for s in samples) / len(samples) for k in keys}
+
+
+def set_param(cf, name, value, timeout=2.0):
+    """Set a parameter and wait until the drone reports the new value."""
+    end = time.time() + timeout
+    while time.time() < end:
+        cf.param.set_value(name, str(value))
+        time.sleep(0.1)
+        if abs(float(cf.param.get_value(name)) - float(value)) < 1e-4:
+            log.info('  %s = %s', name, value)
+            return
+    raise RuntimeError(f'Could not set {name} to {value}')
+
+
+def send_learned(cf, offset=None, velocity=None):
+    """Keep the policy flying; `offset` (x, y, z m) moves its target away from
+    the activation point (needs firmware with target-offset support) and
+    `velocity` (m/s) is the target's velocity (needs the mission firmware)."""
+    pk = CRTPPacket()
+    pk.port = CRTPPort.COMMANDER_GENERIC
+    pk.channel = META_COMMAND_CHANNEL
+    if offset is None:
+        pk.data = LEARNED_PACKET
+    elif velocity is None:
+        pk.data = struct.pack('<Bfff', 1, *offset)
+    else:
+        pk.data = struct.pack('<Bffffff', 1, *offset, *velocity)
+    cf.send_packet(pk)
+
+
+class MissionProfile:
+    """Target trajectory for --mode mission, relative to the take-off point.
+
+    Mirrors MissionProfile in learning_to_fly/src/evaluate_robustness.cpp: sit,
+    climb, hover, move to the circle start, circle, back to the centre, hover,
+    descend to `below` m under the floor, sit."""
+    PHASES = ['sit', 'takeoff', 'hover', 'move', 'circle', 'back', 'hover2', 'landing', 'ground']
+
+    def __init__(self, args):
+        self.H, self.R, self.P, self.laps = args.height, args.radius, args.period, args.laps
+        self.v_up, self.v_down = args.climb_rate, args.descent_rate
+        # sit only briefly: on the floor the policy rocks and slides the drone
+        self.t_idle, self.t_hover1, self.t_move, self.t_back, self.t_hover2 = 0.3, 2.0, 2.0, 2.0, 1.0
+        self.t_ground, self.below = 1.5, LANDING['below']
+
+    def duration(self):
+        return (self.t_idle + self.H / self.v_up + self.t_hover1 + self.t_move + self.laps * self.P
+                + self.t_back + self.t_hover2 + (self.H + self.below) / self.v_down + self.t_ground)
+
+    def at(self, t):
+        """(phase name, target offset (x, y, z), target velocity (x, y, z)) at time t."""
+        H, R = self.H, self.R
+        if t < self.t_idle:
+            return 'sit', (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
+        t -= self.t_idle
+        t_up = H / self.v_up
+        if t < t_up:
+            return 'takeoff', (0.0, 0.0, self.v_up * t), (0.0, 0.0, self.v_up)
+        t -= t_up
+        if t < self.t_hover1:
+            return 'hover', (0.0, 0.0, H), (0.0, 0.0, 0.0)
+        t -= self.t_hover1
+        if t < self.t_move:
+            return 'move', (R * t / self.t_move, 0.0, H), (R / self.t_move, 0.0, 0.0)
+        t -= self.t_move
+        if t < self.laps * self.P:
+            w = 2 * math.pi / self.P
+            a = w * t
+            return ('circle', (R * math.cos(a), R * math.sin(a), H),
+                    (-R * w * math.sin(a), R * w * math.cos(a), 0.0))
+        t -= self.laps * self.P
+        if t < self.t_back:
+            return 'back', (R * (1 - t / self.t_back), 0.0, H), (-R / self.t_back, 0.0, 0.0)
+        t -= self.t_back
+        if t < self.t_hover2:
+            return 'hover2', (0.0, 0.0, H), (0.0, 0.0, 0.0)
+        t -= self.t_hover2
+        t_down = (H + self.below) / self.v_down
+        if t < t_down:
+            return 'landing', (0.0, 0.0, H - self.v_down * t), (0.0, 0.0, -self.v_down)
+        return 'ground', (0.0, 0.0, -self.below), (0.0, 0.0, 0.0)
+
+
+def configure(cf, args):
+    """Select the learned controller and set the rlt.* parameters for the chosen mode."""
+    log.info('Setting controller parameters:')
+    set_param(cf, 'stabilizer.controller', CONTROLLER_OOT)  # learned controller (PID inside until triggered)
+    set_param(cf, 'rlt.trigger', 0)  # policy runs while learned packets arrive
+    if args.mode in ('takeoff_and_switch', 'land', 'hover_original', 'mission'):
+        set_param(cf, 'rlt.wn', MODE_POSITION)
+        set_param(cf, 'rlt.target_z', 0)       # target starts at the activation point
+        set_param(cf, 'rlt.motor_warmup', 0)
+    elif args.mode == 'hover_learned':
+        set_param(cf, 'rlt.wn', MODE_POSITION)
+        set_param(cf, 'rlt.target_z', args.height)  # above the activation point
+        set_param(cf, 'rlt.motor_warmup', 1)
+    elif args.mode == 'figure_eight':
+        set_param(cf, 'rlt.wn', MODE_FIGURE_EIGHT)
+        set_param(cf, 'rlt.target_z_fe', 0)
+        set_param(cf, 'rlt.fei', args.fe_interval)
+        set_param(cf, 'rlt.fes', args.fe_scale)
+        set_param(cf, 'rlt.motor_warmup', 0)
+
+
+def preflight(scf, args):
+    """Check firmware, estimator, battery, yaw and the emergency-stop lock. Returns the start pose, or None to abort.
+
+    Arming is checked later, by wait_armed().
+    """
+    cf = scf.cf
+    if cf.param.toc.get_element_by_complete_name('rlt.wn') is None:
+        log.error('No rlt.* parameters: this drone is not running the '
+                  'learning_to_fly firmware. Flash it first.')
+        return None
+
+    log.info('Waiting for the position estimate to converge ...')
+    reset_estimator(scf)
+    pose = read_pose(scf)
+    if pose is None:
+        log.error('No telemetry received.')
+        return None
+    log.info('Start pose: x=%.2f y=%.2f z=%.2f yaw=%.1f deg, battery %.2f V',
+             pose['x'], pose['y'], pose['z'], pose['yaw'], pose['vbat'])
+
+    if pose['vbat'] < args.min_vbat:
+        log.error('Battery %.2f V is below %.2f V. Charge it: the policy does '
+                  'not model battery sag.', pose['vbat'], args.min_vbat)
+        return None
+    if abs(pose['yaw']) > args.max_yaw_deg:
+        log.error('Yaw is %.1f deg. The policy turns to yaw 0 of the Lighthouse '
+                  'frame: rotate the drone to face +X (within %.0f deg) and retry.',
+                  pose['yaw'], args.max_yaw_deg)
+        return None
+    if supervisor_locked(scf):
+        log.error('The drone is locked (emergency stop from the previous run). '
+                  'Power-cycle it and retry.')
+        return None
+    return pose
+
+
+SUPERVISOR_CAN_FLY_BIT = 1 << 3  # supervisor.info bit layout in crazyflie-firmware
+SUPERVISOR_LOCKED_BIT = 1 << 6
+ARMING_RPM_RANGE = (1000, 3500)  # CONFIG_MOTORS_ARMING_RPM_MIN/MAX of the cf21bl build
+
+
+def watch_console(cf):
+    """Log the drone's console text (firmware DEBUG_PRINT) line by line, e.g. the
+    reason for a firmware assert/halt or a failed arming check."""
+    buf = []
+
+    def on_text(text):
+        """Forward complete console lines from the drone to the log as "[drone] ..."."""
+        buf.append(text)
+        joined = ''.join(buf)
+        *lines, rest = joined.split('\n')
+        buf[:] = [rest]
+        for line in lines:
+            if line.strip():
+                log.info('[drone] %s', line.rstrip())
+
+    cf.console.receivedChar.add_callback(on_text)
+
+
+def wait_armed(tele, timeout=4.0):
+    """Wait until the supervisor reports "can fly": armed, and every motor passed
+    the firmware's idle-RPM arming check (spin-up timeout 2 s). On failure, name
+    the motors outside the allowed idle range and return False."""
+    end = time.time() + timeout
+    spinning = []  # RPM samples while the motors were commanded to idle
+    while time.time() < end:
+        info = tele.latest.get('supervisor.info')
+        if info is not None and info & SUPERVISOR_CAN_FLY_BIT:
+            return True
+        rpm = [tele.latest.get(f'motor.m{i}_rpm') for i in range(1, 5)]
+        if tele.latest.get('motor.m1', 0) and all(r is not None and r < 40000 for r in rpm):
+            spinning.append(rpm)
+        time.sleep(0.05)
+    # typical idle RPM per motor over the last second the motors were commanded on
+    recent = spinning[-20:]
+    rpm = [sorted(s[i] for s in recent)[len(recent) // 2] for i in range(4)] if recent else None
+    bad = [f'M{i + 1} ({r} rpm)' for i, r in enumerate(rpm or [])
+           if not ARMING_RPM_RANGE[0] <= r <= ARMING_RPM_RANGE[1]]
+    log.error('Not armed: the firmware rejected arming. Idle RPM while armed %s (allowed '
+              '%d-%d); outside: %s. Check that motor/propeller (spins freely, prop seated, '
+              'no debris, wires), power-cycle, run motor_check.py.', rpm, *ARMING_RPM_RANGE,
+              ', '.join(bad) or 'none')
+    return False
+
+
+def supervisor_locked(scf):
+    """True if the supervisor latched an emergency stop (only a reboot clears it)."""
+    info = []
+    lg = LogConfig(name='Supervisor', period_in_ms=100)
+    lg.add_variable('supervisor.info', 'uint16_t')
+    lg.data_received_cb.add_callback(lambda t, d, c: info.append(d['supervisor.info']))
+    scf.cf.log.add_config(lg)
+    lg.start()
+    time.sleep(0.3)
+    lg.stop()
+    return bool(info and info[-1] & SUPERVISOR_LOCKED_BIT)
+
+
+def fly_mission(scf, args, pose, tele):
+    """--mode mission: the policy flies everything, following MissionProfile."""
+    cf = scf.cf
+    profile = MissionProfile(args)
+    while key_down(VK_RETURN):  # don't start on the Enter that launched us
+        time.sleep(0.05)
+    log.info('Mission: climb to %.2f m at %.2f m/s, circle r=%.2f m in %.1f s x%g, land at '
+             '%.2f m/s (%.0f s). No PID: the policy flies from the floor.',
+             profile.H, profile.v_up, profile.R, profile.P, profile.laps, profile.v_down,
+             profile.duration())
+    sw = FlySwitch(args.hold)
+    log.info('READY. %s; a stop in the air = automatic landing at %.2f m/s; Ctrl+C = cut '
+             'the motors now. Q quits once landed.', sw.how(), args.abort_descent_rate)
+    start = None
+    done = False
+    last_phase = None
+    low_since = None
+    abort_start = None   # stopped (Enter) in the air: automatic landing
+    abort_floor = None
+    last_cmd = None      # last commanded target offset (m)
+    rows_seen = [-1, time.time()]  # telemetry sample count and when it last grew
+    blind = False                  # telemetry lost: the automatic landing runs on the clock
+    low_vbat_since = None
+    # Outer integrator (--ki): the policy has no integral action and holds a
+    # steady offset (~10 cm in simulation), so shift the commanded target to
+    # cancel it. Runs while airborne (hover .. hover2); the height part fades
+    # out near the floor so the landing target is unchanged.
+    comp = list(args.comp_init)  # start from the last flight's correction
+    if any(comp):
+        log.info('Target correction starts at (%.2f, %.2f, %.2f) m (--comp-init).', *comp)
+    last_tick = None
+    while True:
+        now = time.time()
+        flying = sw.active()  # once per loop: a toggle press is an event
+        if done or start is None:
+            # Q only quits on the floor (before the start or after landing): in the
+            # air it would cut the motors. Ctrl+C is the emergency stop.
+            if key_down(VK_Q):
+                break
+            if done or not flying:
+                time.sleep(SEND_PERIOD)
+                continue
+            start = now
+            log.info('Enter: mission started.')
+        height = tele.rows[-1][4] - pose['z'] if tele.rows else 0.0
+        tele.flow.update(height)
+        # Safety 1: telemetry stopped (drone reset or power loss, or only the radio
+        # downlink dropped). Do NOT stop sending: if our packets still get through,
+        # stopping would cut the motors in the air (2026-11-04 1 m flight). Land
+        # instead, timed by the clock since there is no height any more.
+        if len(tele.rows) != rows_seen[0]:
+            rows_seen[0], rows_seen[1] = len(tele.rows), now
+        elif now - rows_seen[1] > 0.5 and not blind:
+            blind = True
+            if last_cmd is None or height < args.cut_height:
+                log.error('No telemetry for %.1f s on the floor: stopping.', now - rows_seen[1])
+                tele.phase = 'telemetry_lost'
+                done = True
+                continue
+            log.error('No telemetry for %.1f s at %.2f m: the drone stopped answering '
+                      '(power/battery or radio). Landing blind at %.2f m/s; Ctrl+C cuts the motors.',
+                      now - rows_seen[1], height, args.abort_descent_rate)
+            if abort_start is None:
+                abort_start = now
+        # Safety 2: battery sagging under load: land before it browns out.
+        vbat = tele.rows[-1][6] if tele.rows else None
+        if abort_start is None and vbat is not None and height > args.cut_height:
+            if vbat < args.land_vbat:
+                low_vbat_since = low_vbat_since or now
+                if now - low_vbat_since > 0.5:
+                    abort_start = now
+                    log.warning('Battery %.2f V under load (< %.2f V) at %.2f m: AUTOMATIC '
+                                'LANDING.', vbat, args.land_vbat, height)
+            else:
+                low_vbat_since = None
+        if abort_start is None and not flying:
+            if last_phase == 'sit' or last_cmd is None or height < args.cut_height:
+                log.warning('Stopped (Enter) on the floor: motors cut, mission aborted.')
+                tele.phase = 'aborted'
+                done = True
+                continue
+            # Re-activating mid-air would restart the mission from there, so a
+            # release in the air lands the drone instead (packets keep flowing).
+            abort_start = now
+            log.warning('Stopped (Enter) %.1f s into the mission at %.2f m: AUTOMATIC '
+                        'LANDING (Ctrl+C cuts the motors).', now - start, height)
+        if abort_start is not None:
+            z = max(-profile.below, last_cmd[2] - args.abort_descent_rate * (now - abort_start))
+            vz = -args.abort_descent_rate if z > -profile.below else 0.0
+            if z <= -profile.below and abort_floor is None:
+                abort_floor = now
+            tele.phase = 'autoland'
+            if (z < 0.1 and height < args.cut_height) or \
+                    (abort_floor is not None and now - abort_floor > args.floor_timeout):
+                done = True
+                tele.phase = 'landed'
+                if blind:
+                    log.info('Blind landing finished (no telemetry, height unknown): motors cut. Press Q.')
+                else:
+                    log.info('Landed (%.2f m above the take-off point): motors cut. Press Q.', height)
+                continue
+            send_learned(cf, (last_cmd[0], last_cmd[1], z), (0.0, 0.0, vz))
+            time.sleep(SEND_PERIOD)
+            continue
+        phase, offset, velocity = profile.at(now - start)
+        if phase != last_phase:
+            log.info('Phase: %s', phase)
+            last_phase = phase
+        tele.phase = phase
+        # Cut as soon as the drone is within --cut-height of the floor on the way
+        # down: letting the policy settle on the floor made it bounce (2026-11-04
+        # 0.6 m flight).
+        if phase == 'ground':
+            low_since = low_since or now
+        if (phase == 'ground' or (phase == 'landing' and offset[2] < LANDING['cut_window'])) and height < args.cut_height \
+                or (low_since is not None and now - low_since > args.floor_timeout):
+            done = True
+            tele.phase = 'landed'
+            log.info('Landed (%.2f m above the take-off point): motors cut. '
+                     'Release Enter and press Q.', height)
+            continue
+        dt = now - last_tick if last_tick is not None else 0.0
+        last_tick = now
+        # The height correction fades out near the floor. Before the first hover
+        # (sit, take-off) the horizontal one fades in with height too, so the
+        # target does not pull the drone sideways while it is on the floor.
+        zs = min(1.0, max(0.0, offset[2] / profile.H))
+        xs = zs if phase in ('sit', 'takeoff') else 1.0
+        applied = (comp[0] * xs, comp[1] * xs, comp[2] * zs)
+        err = [tele.latest.get(f'rltte.{a}') for a in 'xyz']  # commanded target - position
+        if args.ki > 0 and phase in ('hover', 'move', 'circle', 'back', 'hover2') and None not in err:
+            for i, k in enumerate((args.ki, args.ki, args.ki_z)):
+                e = err[i] - applied[i]  # reference - position
+                comp[i] = min(0.3, max(-0.3, comp[i] + k * e * dt))
+            applied = (comp[0] * xs, comp[1] * xs, comp[2] * zs)
+        tele.comp = applied
+        last_cmd = tuple(o + c for o, c in zip(offset, applied))
+        send_learned(cf, last_cmd, velocity)
+        time.sleep(SEND_PERIOD)
+    log.info('Q pressed: quitting. Final target correction (%.3f, %.3f, %.3f) m.', *comp)
+
+
+def fly(scf, args, pose, tele):
+    """Fly one flight in the chosen mode; mission mode is handed to fly_mission."""
+    if args.mode == 'mission':
+        fly_mission(scf, args, pose, tele)
+        return
+    cf = scf.cf
+    hover_z = pose['z'] + args.height
+    uses_pid_takeoff = args.mode != 'hover_learned'
+
+    while key_down(VK_RETURN):  # don't start on the Enter that launched us
+        time.sleep(0.05)
+    sw = FlySwitch(args.hold)
+    log.info('READY. %s. Press Q to quit.', sw.how())
+
+    hold_start = None
+    learned_start = None
+    landed = False
+    while not (key_down(VK_Q) and not sw.on):  # Q quits only while not flying
+        now = time.time()
+        if landed:
+            time.sleep(SEND_PERIOD)
+            continue
+        if not sw.active():
+            if hold_start is not None:
+                log.warning('Stopped (Enter) after %.1f s: packets stopped.',
+                            now - hold_start)
+            hold_start = None
+            learned_start = None
+            tele.phase = 'idle'
+            time.sleep(SEND_PERIOD)
+            continue
+
+        if hold_start is None:
+            hold_start = now
+            log.info('Enter: %s', 'PID take-off' if uses_pid_takeoff
+                     else 'policy take-off')
+        elapsed = now - hold_start
+        use_pid = args.mode == 'hover_original' or (
+            uses_pid_takeoff and elapsed < args.switch_after)
+
+        if use_pid:
+            tele.phase = 'pid'
+            cf.commander.send_hover_setpoint(0, 0, 0, hover_z)
+        elif args.mode != 'land':
+            if tele.phase != 'learned':
+                log.info('Learned policy now in control.')
+            tele.phase = 'learned'
+            send_learned(cf)
+        else:
+            if learned_start is None:
+                learned_start = now
+                log.info('Learned policy now in control; landing in %.0f s.', args.hover_time)
+            descend_for = now - learned_start - args.hover_time
+            dz = -min(args.height, max(0.0, descend_for * args.descent_rate))
+            height = tele.rows[-1][4] - pose['z'] if tele.rows else args.height
+            tele.flow.update(height)
+            at_floor_for = descend_for - args.height / args.descent_rate
+            if height < args.cut_height or at_floor_for > args.floor_timeout:
+                landed = True
+                tele.phase = 'landed'
+                log.info('Landed (%.2f m above the take-off point): motors cut. '
+                         'Press Q.', height)
+                continue
+            if descend_for > 0 and tele.phase != 'landing':
+                log.info('Descending at %.2f m/s.', args.descent_rate)
+            tele.phase = 'landing' if descend_for > 0 else 'learned'
+            send_learned(cf, (0.0, 0.0, dz))
+        time.sleep(SEND_PERIOD)
+    log.info('Q pressed: quitting.')
+
+
+def main(args):
+    """Connect, run the pre-flight checks, configure, fly, then save and summarise the log."""
+    if key_down is None:
+        log.error('The Enter dead-man switch needs Windows or macOS.')
+        return
+    if sys.platform == 'darwin' and Quartz is None:
+        log.error('macOS: pip install pyobjc-framework-Quartz (the dead-man switch reads the keys with it).')
+        return
+    if args.key_test:
+        key_test(args.key_test, args.hold)
+        return
+    cflib.crtp.init_drivers()
+    log.info('Connecting to %s ...', URI)
+    with SyncCrazyflie(URI, cf=Crazyflie(rw_cache='./cache')) as scf:
+        pose = preflight(scf, args)
+        if pose is None:
+            return
+        configure(scf.cf, args)
+
+        cf = scf.cf
+        tele = Telemetry()
+        tele.flow = FlowSwitch(cf, args.flow_off_below)
+        confs = start_telemetry(scf, tele)
+        watch_console(cf)
+
+        # Emergency-stop watchdog: the firmware cuts the motors if these
+        # keep-alives stop for 1 s (script crash, frozen laptop, lost radio).
+        alive = threading.Event()
+        alive.set()
+
+        def keep_alive():
+            while alive.is_set():
+                cf.supervisor.send_emergency_stop_watchdog()
+                time.sleep(0.2)
+
+        threading.Thread(target=keep_alive, daemon=True).start()
+        cf.supervisor.send_arming_request(True)  # the brushless firmware requires arming
+        try:
+            if wait_armed(tele):
+                fly(scf, args, pose, tele)
+        except KeyboardInterrupt:
+            log.warning('Ctrl+C: EMERGENCY STOP, cutting motors.')
+            cf.supervisor.send_emergency_stop()
+        finally:
+            alive.clear()
+            cf.commander.send_stop_setpoint()
+            tele.flow.restore()
+            cf.supervisor.send_arming_request(False)
+            for conf in confs:
+                conf.stop()
+            tele.save(LOG_FILE)
+            tele.summarize()
+            # Enter is read from the keyboard directly, so the presses also queued
+            # up in the console; drop them so they don't reach the shell.
+            flush_keyboard()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    parser.add_argument('--mode', default='takeoff_and_switch',
+                        choices=['takeoff_and_switch', 'land', 'hover_learned',
+                                 'figure_eight', 'hover_original', 'mission'])
+    parser.add_argument('--radius', type=float, default=0.3,
+                        help='mission: circle radius in m (default 0.3)')
+    parser.add_argument('--period', type=float, default=8.0,
+                        help='mission: s per circle (default 8)')
+    parser.add_argument('--laps', type=float, default=1.0,
+                        help='mission: number of circles (default 1)')
+    parser.add_argument('--climb-rate', type=float, default=0.25,
+                        help='mission: take-off climb speed in m/s (default 0.25)')
+    parser.add_argument('--ki', type=float, default=0.0,
+                        help='mission: outer integrator gain in 1/s that shifts the target to '
+                             'cancel a steady offset (default 0 = off). Only for policies without '
+                             'the position-error integral input: variant E has one, and stacking '
+                             'both made circles grow each lap (2026-11-22: 15 cm, 50 cm, 1 m)')
+    parser.add_argument('--land-vbat', type=float, default=3.45,
+                        help='mission: land automatically if the battery stays below this '
+                             'voltage under load for 0.5 s (default 3.45 V; brownout ~3.4 V)')
+    parser.add_argument('--abort-descent-rate', type=float, default=0.3,
+                        help='mission: descent speed of the automatic landing after Enter '
+                             'is released in the air (m/s, default 0.3)')
+    parser.add_argument('--ki-z', type=float, default=0.0,
+                        help='mission: outer integrator gain for height (default 0: B2 '
+                             'holds height well and the height correction chased the wobble)')
+    parser.add_argument('--comp-init', type=float, nargs=3, default=(0.0, 0.0, 0.0),
+                        metavar=('X', 'Y', 'Z'),
+                        help='mission: starting target correction in m (the "Final target '
+                             'correction" of the last flight; the 2026-11-04 B2 flight '
+                             'settled at 0.20 0.07 0)')
+    parser.add_argument('--hover-time', type=float, default=5.0,
+                        help='land: s of learned hover before descending')
+    parser.add_argument('--descent-rate', type=float, default=LANDING['descent_rate'],
+                        help='land, mission: target descent speed in m/s '
+                             '(default from config/landing.yaml: %(default)s)')
+    parser.add_argument('--cut-height', type=float, default=LANDING['cut_height'],
+                        help='land, mission: cut motors below this height above take-off in m '
+                             '(default from config/landing.yaml: %(default)s)')
+    parser.add_argument('--floor-timeout', type=float, default=LANDING['floor_timeout'],
+                        help='land, mission: cut motors this long after the target reached the '
+                             'floor (default from config/landing.yaml: %(default)s)')
+    parser.add_argument('--height', type=float, default=0.3,
+                        help='m above the take-off point (default 0.3)')
+    parser.add_argument('--switch-after', type=float, default=3.0,
+                        help='s of PID flight before the policy takes over')
+    parser.add_argument('--fe-scale', type=float, default=0.3,
+                        help='figure-eight scale; 1.0 = 2 m x 1 m (default 0.3)')
+    parser.add_argument('--fe-interval', type=float, default=5.5,
+                        help='s per figure-eight loop (paper: 15 / 5.5 / 3.5)')
+    parser.add_argument('--max-yaw-deg', type=float, default=15.0,
+                        help='refuse to fly if |yaw| is larger than this')
+    parser.add_argument('--min-vbat', type=float, default=3.8,
+                        help='refuse to fly below this battery voltage')
+    parser.add_argument('--flow-off-below', type=float, default=0.0,
+                        help='plan E4 (Q13): Flow deck off below this height above the take-off point, '
+                             'e.g. 0.1 (0 = never, as before)')
+    parser.add_argument('--hold', action='store_true',
+                        help='fly only while Enter is held (dead-man switch) instead of press to start / press to stop')
+    parser.add_argument('--key-test', type=float, default=0, metavar='SECONDS',
+                        help='no radio: log Enter and Q changes for SECONDS s, to check the dead-man switch')
+    main(parser.parse_args())

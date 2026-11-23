@@ -20,4 +20,4 @@ log = run_log.setup(__file__)
 - CSVs via `run_log.csv_path(...)` + `run_log.write_csv(...)` (script + timestamp metadata)
 - Extend `run_log.py` if you need new logging features — do not invent a parallel module
 
-Reference: `flip.py`, `script.py`.
+Reference: `flip.py`, `tricks.py`.

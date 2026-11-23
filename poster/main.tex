@@ -1,0 +1,443 @@
+% ============================================================
+%  SELF-CONTAINED SINGLE-FILE POSTER
+% ============================================================
+\RequirePackage{filecontents}
+
+\begin{filecontents*}[overwrite]{beamerthemeParisSaclay.sty}
+\ProvidesPackage{beamerthemeParisSaclay}
+
+\RequirePackage{fontawesome5}
+
+\mode<presentation>
+
+\definecolor{jaune}{RGB}{243 185 0}
+\definecolor{saclaydk}{RGB}{27,67,32}
+\definecolor{saclayl}{RGB}{243,185,0}
+\definecolor{prunel}{RGB}{184, 172, 215}
+\definecolor{vertl}{RGB}{213,223,61}
+\definecolor{vert}{RGB}{140,198,62}
+\definecolor{rouge}{RGB}{198, 11, 70}
+\definecolor{mandarine}{RGB}{243, 115, 32}
+\definecolor{bleu}{RGB}{80, 144, 205}
+
+\setbeamercolor{headline}{fg=mandarine,bg=saclaydk}
+\setbeamercolor{footline}{fg=mandarine, bg=saclaydk}
+\setbeamerfont{footline}{size=\large,series=\sf}
+\setbeamercolor{separation line}{bg=saclaydk}
+\setbeamercolor{title in headline}{fg=white}
+\setbeamercolor{author in headline}{fg=white}
+\setbeamercolor{institute in headline}{fg=white}
+\setbeamercolor{framesubtitle}{fg=mandarine, bg=gray}
+\setbeamercolor{author in head/foot}{fg=white, bg=black}
+\setbeamercolor{title in head/foot}{fg=white, bg=saclaydk}
+
+\setbeamercolor*{block body}{bg=saclaydk!20,fg=black}
+\setbeamercolor*{block title}{fg=white,bg=saclaydk}
+\setbeamerfont*{block title}{size=\large,series=\bf}
+\setbeamercolor*{block text}{fg=saclaydk,bg=vertl}
+\setbeamercolor*{example body}{bg=gray,fg=black}
+\setbeamercolor*{example text}{fg=saclaydk,bg=vertl}
+\setbeamercolor*{example title}{bg=vert,fg=white}
+
+\setbeamercolor{alerted body}{bg=mandarine,fg=vert}
+\setbeamercolor{alerted title}{fg=white,bg=rouge}
+\setbeamercolor{alerted text}{fg=white,bg=rouge}
+
+\setbeamercolor{structure}{fg=bleu}
+
+\setbeamertemplate{itemize items}[triangle]
+\setbeamertemplate{navigation symbols}{}
+
+\setbeamertemplate{block begin}{
+  \vskip.75ex
+  \begin{beamercolorbox}[ht=3.5ex,dp=0.5ex,center,leftskip=-1em,colsep*=.75ex]{block title}%
+    \usebeamerfont*{block title}%
+    {\phantom{Gg}\insertblocktitle}%
+  \end{beamercolorbox}%
+  {\ifbeamercolorempty[bg]{block body}{}{\nointerlineskip\vskip-0.5pt}}%
+  \usebeamerfont{block body}%
+  \begin{beamercolorbox}[leftskip=1em,colsep*=.75ex,sep=0.5ex,vmode]{block body}%
+    \ifbeamercolorempty[bg]{block body}{\vskip-.25ex}{\vskip-.75ex}\vbox{}%
+  \end{beamercolorbox}
+  }
+  \setbeamertemplate{block end}{}
+
+\setbeamertemplate{headline}{
+  \leavevmode
+
+  \begin{beamercolorbox}[wd=\paperwidth]{headline}
+    \begin{tikzpicture}
+      \def\headerheight{9cm}
+      \clip (0,0) rectangle (\paperwidth,\headerheight);
+      \node[anchor=north west, inner sep=0pt] (bgimg) at (0,\headerheight) {\includegraphics[width=\paperwidth]{images/banner.png}};
+      \fill[black, opacity=0.3] (0,0) rectangle (\paperwidth,\headerheight);
+      % ---- Institutional logos: own top strip so they never overlap the title ----
+      \def\logoheight{2cm}
+      \node[anchor=north west, inner sep=0pt] (ccovilogo) at (1.2cm,\headerheight-0.9cm)
+        {\includegraphics[height=\logoheight]{images/brock_university_logo.jpg}};
+      % ---- Title centred in the area below the logo strip ----
+      \node at (\paperwidth/2,0.42*\headerheight) {
+        \begin{minipage}{0.86\paperwidth}
+          \centering
+          \usebeamercolor{title in headline}{\color{fg}\textbf{\Large{\inserttitle}}\\[0.5ex]}
+          \usebeamercolor{author in headline}{\color{fg}\normalsize{\insertauthor}\\[0.5ex]}
+          \usebeamercolor{institute in headline}{\color{fg}\normalsize{\insertinstitute}\\[0.5ex]}
+        \end{minipage}
+      };
+    \end{tikzpicture}
+  \end{beamercolorbox}
+
+  \begin{beamercolorbox}[wd=\paperwidth]{lower separation line head}
+    \rule{0pt}{3pt}
+  \end{beamercolorbox}
+}
+
+\setbeamertemplate{footline}{
+ \setbeamercolor{coloredboxstuff}{fg=white,bg=saclaydk}
+  \leavevmode%
+  \begin{beamercolorbox}[ht=4ex,leftskip=1em,rightskip=1em]{coloredboxstuff}%
+  \end{beamercolorbox}
+}
+
+%\beamertemplategridbackground[1cm]
+
+\mode<all>
+
+\setbeamertemplate{itemize items}[triangle]
+\setbeamertemplate{itemize item}{\raisebox{0ex}{\small$\bullet$}\hskip0.3em}
+\setbeamertemplate{itemize subitem}{\raisebox{0.12ex}{$\triangleright$}\hskip0.1em}
+
+\setbeamerfont{itemize/enumerate body}{size=\normalsize}
+\setbeamerfont{itemize/enumerate subbody}{size=\normalsize}
+\setbeamerfont{itemize/enumerate subsubbody}{size=\normalsize}
+
+\linespread{1.1}
+\end{filecontents*}
+
+\begin{filecontents*}[overwrite]{beamerposter.sty}
+\def\beamerposter@name{beamerposter}
+\def\beamerposter@version{1.12}
+\def\beamerposter@date{2010/11/18}
+\def\beamerposter@msg{latex-beamer poster extension}
+\def\beamerposter@releaseinfo{\beamerposter@date \space v.\beamerposter@version \space \beamerposter@msg}
+\def\beamerposter@Error#1#2{\PackageError{\beamerposter@name}{#1}{#2}}
+\def\beamerposter@Warning#1{\PackageWarning{\beamerposter@name}{#1}}
+\def\beamerposter@Info#1{\PackageInfo{\beamerposter@name}{#1}}
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{\beamerposter@name}[\beamerposter@releaseinfo]
+\RequirePackage{xkeyval}[2006/11/18]
+\RequirePackage{type1cm}
+\RequirePackage{fp}
+
+\newif\if@beamerposter@portrait
+\newif\if@beamerposter@customsize
+\newif\if@beamerposter@extern
+\newif\if@beamerposter@debug
+
+\DeclareOptionX{size}[a0]{
+  \XKV@cc*+[\val\nr]{#1}{a0b,a0,a1,a2,a3,a4,custom}{%
+    \ifcase\nr\relax
+    \edef\paperwidthValue{119}\edef\paperheightValue{88}\edef\textwidthValue{116}\edef\textheightValue{88}\edef\fontscale{1.0}
+    \or
+    \edef\paperwidthValue{118.82}\edef\paperheightValue{83.96}\edef\textwidthValue{117.82}\edef\textheightValue{82.96}\edef\fontscale{1.0}
+    \or
+    \edef\paperwidthValue{83.96}\edef\paperheightValue{59.4}\edef\textwidthValue{82.96}\edef\textheightValue{58.4}\edef\fontscale{0.70710678}
+    \or
+    \edef\paperwidthValue{59.4}\edef\paperheightValue{41.98}\edef\textwidthValue{58.4}\edef\textheightValue{40.98}\edef\fontscale{0.5}
+    \or
+    \edef\paperwidthValue{41.98}\edef\paperheightValue{29.7}\edef\textwidthValue{40.98}\edef\textheightValue{28.7}\edef\fontscale{0.35355339}
+    \or
+    \edef\paperwidthValue{29.7}\edef\paperheightValue{21.0}\edef\textwidthValue{28.7}\edef\textheightValue{20.0}\edef\fontscale{0.25}
+    \or
+    \@beamerposter@customsizetrue
+    \fi
+  }{%
+    \beamerposter@Warning{the input \val\ was incorrect and was ignored.}
+  }%
+}
+\DeclareOptionX{orientation}[portrait]{
+  \XKV@cc*+[\val\nr]{#1}{portrait,landscape}{%
+    \ifcase\nr\relax
+    \@beamerposter@portraittrue
+    \or
+    \@beamerposter@portraitfalse
+    \fi
+  }{%
+    \beamerposter@Warning{the input \val\ was incorrect and was ignored.}
+  }%
+}
+\DeclareOptionX{scale}[1.0]{\edef\myfontscale{#1}}
+\DeclareOptionX{width}{\edef\customwidth{#1}}
+\DeclareOptionX{height}{\edef\customheight{#1}}
+\DeclareOptionX{debug}{\@beamerposter@debugtrue}
+\DeclareOptionX{grid}{\beamertemplategridbackground[1cm]}
+\DeclareOptionX{printer}{\edef\printerToUse{#1}\@beamerposter@externtrue}
+\DeclareOptionX*{\beamerposter@Warning{Unknown option ignored: \CurrentOption}}
+\ExecuteOptionsX{size=a0,scale=1.0}
+\ProcessOptionsX\relax
+
+\if@beamerposter@debug
+  \FPdebugtrue
+\fi
+
+\FPupn{\myfontscale}{myfontscale fontscale * 2 round}
+
+\if@beamerposter@portrait
+  \newdimen\tmp
+  \setlength{\tmp}{\paperwidthValue cm}
+  \setlength{\paperwidth}{\paperheightValue cm}
+  \setlength{\paperheight}{\tmp}
+  \setlength{\tmp}{\textwidthValue cm}
+  \setlength{\textwidth}{\textheightValue cm}
+  \setlength{\textheight}{\tmp}
+\else
+  \setlength{\paperwidth}{\paperwidthValue cm}
+  \setlength{\paperheight}{\paperheightValue cm}
+  \setlength{\textwidth}{\textwidthValue cm}
+  \setlength{\textheight}{\textheightValue cm}
+\fi
+
+\if@beamerposter@customsize
+  \setlength{\paperwidth}{\customwidth cm}
+  \setlength{\paperheight}{\customheight cm}
+  \FPupn{\resulttextwidth}{1 customwidth  -}
+  \FPupn{\resulttextheight}{1 customheight -}
+  \setlength{\textwidth}{\resulttextwidth cm}
+  \setlength{\textheight}{\resulttextheight cm}
+\fi
+
+\setlength{\headheight}{0 cm}
+\setlength{\headsep}{0 cm}
+\setlength{\topmargin}{-12.7 mm}
+\setlength{\oddsidemargin}{-25.4 mm}
+
+\geometry{
+  paperwidth=\the\paperwidth,
+  paperheight=\the\paperheight,
+  hmargin=0cm,%
+  vmargin=0cm,%
+  head=0cm,
+  headsep=0pt,%
+  foot=0cm
+}
+
+\if@beamerposter@extern
+  \InputIfFileExists{\printerToUse}{\typeout{load \printerToUse}}{\beamerposter@Error{\printerToUse\space not found!}{Please use another printer definition file}}
+  \ifx\printermaxwidthValue\@empty%
+    \relax%
+  \else%
+    \FPsub{\resultmaxwidth}{\printermaxwidthValue}{\paperwidthValue}
+    \FPifneg{\resultmaxwidth}
+    \beamerposter@Error{resultmaxwidth issue}{Try to reduce your poster dimension.}
+    \else
+      \relax
+    \fi
+  \fi
+
+\edef\fontSizeX{12}\edef\fontSizeY{14}
+\FPupn{\resulttinyX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resulttinyY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\tiny}{\fontsize{\resulttinyX}{\resulttinyY}\selectfont}
+
+\edef\fontSizeX{14.4}\edef\fontSizeY{18}
+\FPupn{\resultscriptsizeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultscriptsizeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\scriptsize}{\fontsize{\resultscriptsizeX}{\resultscriptsizeY}\selectfont}
+
+\edef\fontSizeX{17.28}\edef\fontSizeY{22}
+\FPupn{\resultfootnotesizeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultfootnotesizeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\footnotesize}{\fontsize{\resultfootnotesizeX}{\resultfootnotesizeY}\selectfont}
+
+\edef\fontSizeX{20.74}\edef\fontSizeY{25}
+\FPupn{\resultsmallX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultsmallY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\small}{\fontsize{\resultsmallX}{\resultsmallY}\selectfont}
+
+\edef\fontSizeX{24.88}\edef\fontSizeY{34}
+\FPupn{\resultnormalsizeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultnormalsizeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\normalsize}{\fontsize{\resultnormalsizeX}{\resultnormalsizeY}\selectfont}
+
+\edef\fontSizeX{29.86}\edef\fontSizeY{37}
+\FPupn{\resultlargeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultlargeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\large}{\fontsize{\resultlargeX}{\resultlargeY}\selectfont}
+
+\edef\fontSizeX{35.83}\edef\fontSizeY{45}
+\FPupn{\resultLargeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultLargeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\Large}{\fontsize{\resultLargeX}{\resultLargeY}\selectfont}
+
+\edef\fontSizeX{43}\edef\fontSizeY{54}
+\FPupn{\resultLARGEX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultLARGEY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\LARGE}{\fontsize{\resultLARGEX}{\resultLARGEY}\selectfont}
+
+\edef\fontSizeX{51.6}\edef\fontSizeY{64}
+\FPupn{\resulthugeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resulthugeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\huge}{\fontsize{\resulthugeX}{\resulthugeY}\selectfont}
+
+\edef\fontSizeX{61.92}\edef\fontSizeY{77}
+\FPupn{\resultHugeX}{myfontscale fontSizeX * 2 round}
+\FPupn{\resultHugeY}{myfontscale fontSizeY * 2 round}
+\renewcommand*{\Huge}{\fontsize{\resultHugeX}{\resultHugeY}\selectfont}
+
+\renewcommand*{\normalfont}{\normalsize}
+
+\edef\labelWidthValue{1}
+\edef\labelSepValue{1}
+\edef\indentionLevelValuei{4}
+\edef\indentionLevelValueii{2.2}
+\edef\indentionLevelValueiii{1.87}
+\FPupn{\labelWidthValue}{labelWidthValue myfontscale * 2 round}
+\FPupn{\labelSepValue}{labelSepValue myfontscale * 2 round}
+\FPupn{\indentionLevelValuei}{indentionLevelValuei myfontscale * 2 round}
+\FPupn{\indentionLevelValueii}{indentionLevelValueii myfontscale * 2 round}
+\FPupn{\indentionLevelValueiii}{indentionLevelValueiii myfontscale * 2 round}
+\setlength{\leftmargini}{\indentionLevelValuei em}%
+\setlength{\leftmarginii}{\indentionLevelValueii em}%
+\setlength{\leftmarginiii}{\indentionLevelValueiii em}%
+\setlength{\labelwidth}{\labelWidthValue em}%
+\setlength{\labelsep}{\labelSepValue em}%
+
+\edef\bibIconScaleValue{2}
+\FPupn{\bibIconScaleValue}{bibIconScaleValue myfontscale * 2 round}
+\defbeamertemplate{bibliography item}{beamerposterarticle}
+{\lower5pt\hbox{\scalebox{\bibIconScaleValue}{\pgfuseimage{beamericonarticle}}}}
+
+\end{filecontents*}
+
+\documentclass[final]{beamer}
+  \mode<presentation> { \usetheme{ParisSaclay}  }
+  \setbeamersize{text margin left=1cm, text margin right=1cm}
+  \usepackage[english]{babel}
+  \usepackage[utf8]{inputenc}
+  \usepackage{amsmath,amsthm, amssymb, latexsym}
+  \usepackage{subcaption}
+  \usepackage{booktabs}
+  \usepackage{array}
+
+  \boldmath
+  \usepackage[orientation=portrait,size=a1,scale=1.4]{beamerposter}
+  \usepackage{graphicx}
+  \usepackage{tikz}
+  \usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,shapes}
+  \usepackage{pgfplots}
+  \pgfplotsset{compat=1.18}
+
+  \setlength{\abovecaptionskip}{4pt}
+  \setlength{\belowcaptionskip}{0pt}
+  \setlength{\floatsep}{4pt}
+  \setlength{\textfloatsep}{4pt}
+
+  % ---- Framed placeholder for figures not made yet ----
+  % usage: \figplaceholder{<height>}{<label>}
+  \newcommand{\figplaceholder}[2]{%
+    \par\smallskip
+    {\centering\fbox{\parbox[c][#1][c]{\dimexpr0.95\linewidth-2\fboxsep-2\fboxrule\relax}{%
+        \centering\textit{[Figure placeholder: #2]}}}\par}%
+    \smallskip
+  }
+
+  \title{\Huge Towards Learned Drone Control: Teaching a Nano-Drone to Fly with Reinforcement Learning}
+  \author{Jay Shah, Khush Patel, Darsh Kurmi, Raiyan Rafiu, Yingtu Li, Brennan Pisaric, Justin Pentesco, Yifeng Li}
+  \institute[]{Biomedical Data Science Lab, Brock University, 1812 Sir Isaac Brock Way, St. Catharines, ON}
+
+\begin{document}
+
+\begin{frame}[t, fragile]
+\begin{columns}[t]
+
+    % ======================= LEFT COLUMN =======================
+    \begin{column}{.48\textwidth}
+
+    \begin{block}{1. Introduction}
+        PID controllers are hand-tuned per drone and must be re-tuned whenever the drone changes.
+        We instead train a neural network with reinforcement learning (trial and error with rewards) entirely in simulation,
+        and fly it on a real Crazyflie 2.1 Brushless with \textbf{no PID in the loop}.
+    \end{block}
+
+    \begin{block}{2. The Platform}
+        \textbf{Crazyflie 2.1 Brushless} (41\,g). Two Lighthouse base stations give absolute position; the Flow deck adds speed and height.
+
+        \vspace{0.15cm}
+        \centering
+        \includegraphics[width=0.8\linewidth]{images/LH_CF21b_diagram.png}\\[2pt]
+        {\small Drone and Lighthouse setup}
+    \end{block}
+
+    \begin{block}{3. How It Flies}
+        The network runs \textbf{on the drone's own chip} and drives the motors directly, with no PID controller.
+
+        \vspace{0.15cm}
+        \centering
+        \includegraphics[width=\linewidth]{images/fig_loop_poster.pdf}
+    \end{block}
+
+    \begin{block}{4. What the Network Sees}
+        Every 10\,ms the network gets \textbf{149 numbers}: what the drone measures now, plus a memory of its own recent commands.
+
+        \vspace{0.15cm}
+        \centering
+        \includegraphics[width=\linewidth]{images/fig_inputs_poster.pdf}
+    \end{block}
+
+    \begin{block}{Acknowledgements}
+        \small
+        Our sincere thanks to Dr.\ Yifeng Li for providing the drones, and to Prof.\ Justin Pentesco, the Department of Earth Sciences, and Prof.\ Paul Zelisko from VPMI for letting us use their space to experiment with the drone. Without them, this would not have been possible.
+    \end{block}
+
+    \end{column}
+
+    % ======================= RIGHT COLUMN ======================
+    \begin{column}{.48\textwidth}
+
+    \begin{block}{5. Training in Simulation}
+        \textbf{TD3} learns by trial and error in a simulator of \textbf{our measured drone}, scoring each step for staying on target and flying smoothly. Random delays, weights and position jumps make it robust. \textbf{Never trained on real flights.}
+
+        \vspace{0.15cm}
+        \centering
+        \includegraphics[width=0.92\linewidth]{images/fig_training_poster.pdf}
+    \end{block}
+
+    \begin{block}{6. The Mission}
+        Take off $\rightarrow$ climb $\rightarrow$ hover $\rightarrow$ circle $\rightarrow$ return $\rightarrow$ \textbf{land on its own}.
+        Flown at 0.6, 0.75, 1.0 and 1.5\,m.
+
+        \vspace{0.15cm}
+        \centering
+        \includegraphics[width=0.88\linewidth]{images/fig_mission_poster.pdf}
+    \end{block}
+
+    \begin{block}{7. Real-Flight Results}
+        On the same drone, our hover matches a published RL controller [3]; circle error is in the range of RL controllers on the older Crazyflie [2]. It lands within \textbf{2--4\,cm} of the start.
+
+        \vspace{0.15cm}
+        \centering
+        \includegraphics[width=0.85\linewidth]{images/fig_compare_poster.pdf}
+    \end{block}
+
+    \begin{block}{8. Future Work}
+        Test the controller on more tasks, and build towards a system that uses \textbf{multi-objective optimization}.
+    \end{block}
+
+    \begin{block}{References}
+        \setbeamerfont{itemize/enumerate body}{size=\tiny}
+        \begin{enumerate}
+            \item Fujimoto, S., van Hoof, H., Meger, D. (2018). Addressing Function Approximation Error in Actor-Critic Methods (TD3). \textit{ICML}.
+            \item Eschmann, J., Albani, D., Loianno, G. (2024). Learning to Fly in Seconds. \textit{IEEE RA-L}.
+            \item Gräfe, A., Scherer, J., Hönig, W., Trimpe, S. (2026). How to Model Your Crazyflie Brushless. \textit{ICRA}.
+            \item Taffanel, A., et al. (2021). Lighthouse Positioning System: Dataset, Accuracy, and Precision for UAV Research. \textit{ICRA Workshop on Robot Swarms}.
+        \end{enumerate}
+    \end{block}
+
+    \end{column}
+
+\end{columns}
+
+\end{frame}
+
+\end{document}

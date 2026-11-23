@@ -1,0 +1,39 @@
+== d6 ms estimate delay
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash 45 circle  45.7 cm jitter 0.4415 | crash 89 circle 118.1 cm jitter 0.3528 | crash 69 circle  58.7 cm jitter 0.4310
+1100000  crash 32 circle  21.2 cm jitter 0.4419 | crash 51 circle  53.6 cm jitter 0.3856 | crash 53 circle  35.1 cm jitter 0.4371
+1200000  crash 17 circle  15.7 cm jitter 0.4476 | crash 43 circle  46.4 cm jitter 0.3892 | crash 42 circle  35.7 cm jitter 0.4374
+1300000  crash  0 circle   3.7 cm jitter 0.3822 | crash 26 circle  34.0 cm jitter 0.3575 | crash  0 circle   6.0 cm jitter 0.3958
+1400000  crash  0 circle   3.6 cm jitter 0.2291 | crash  1 circle   7.7 cm jitter 0.2367 | crash  0 circle   5.5 cm jitter 0.2581
+1500000  crash  0 circle   3.4 cm jitter 0.1327 | crash  0 circle   6.7 cm jitter 0.1295 | crash  0 circle   5.4 cm jitter 0.1544
+1600000  crash  0 circle   3.5 cm jitter 0.0705 | crash  0 circle   7.4 cm jitter 0.0694 | crash  0 circle   5.7 cm jitter 0.0940
+1700000  crash  0 circle   3.7 cm jitter 0.0504 | crash  0 circle   7.4 cm jitter 0.0503 | crash  0 circle   5.6 cm jitter 0.0724
+1800000  crash  0 circle   3.3 cm jitter 0.0489 | crash  0 circle   6.8 cm jitter 0.0491 | crash  0 circle   5.0 cm jitter 0.0681
+1900000  crash  0 circle   3.7 cm jitter 0.0427 | crash  0 circle   7.5 cm jitter 0.0436 | crash  0 circle   4.9 cm jitter 0.0593
+2000000  crash  0 circle   3.1 cm jitter 0.0439 | crash  0 circle   6.5 cm jitter 0.0439 | crash  0 circle   4.6 cm jitter 0.0625
+== d12 ms estimate delay
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash 54 circle  50.6 cm jitter 0.4473 | crash 90 circle 116.7 cm jitter 0.3616 | crash 73 circle  67.8 cm jitter 0.4372
+1100000  crash 30 circle  21.1 cm jitter 0.4592 | crash 54 circle  54.8 cm jitter 0.4001 | crash 37 circle  22.2 cm jitter 0.4528
+1200000  crash 31 circle  18.3 cm jitter 0.4573 | crash 49 circle  49.0 cm jitter 0.4004 | crash 51 circle  39.0 cm jitter 0.4418
+1300000  crash  1 circle   4.2 cm jitter 0.4208 | crash 28 circle  34.0 cm jitter 0.3822 | crash 16 circle  10.6 cm jitter 0.4223
+1400000  crash  0 circle   3.6 cm jitter 0.2477 | crash  1 circle   7.9 cm jitter 0.2613 | crash  0 circle   5.5 cm jitter 0.2822
+1500000  crash  0 circle   3.4 cm jitter 0.1373 | crash  0 circle   6.7 cm jitter 0.1343 | crash  0 circle   5.4 cm jitter 0.1621
+1600000  crash  0 circle   3.4 cm jitter 0.0738 | crash  0 circle   7.4 cm jitter 0.0727 | crash  0 circle   5.7 cm jitter 0.1002
+1700000  crash  0 circle   3.7 cm jitter 0.0531 | crash  0 circle   7.4 cm jitter 0.0531 | crash  0 circle   5.6 cm jitter 0.0787
+1800000  crash  0 circle   3.3 cm jitter 0.0519 | crash  0 circle   6.8 cm jitter 0.0527 | crash  0 circle   4.9 cm jitter 0.0743
+1900000  crash  0 circle   3.7 cm jitter 0.0465 | crash  0 circle   7.5 cm jitter 0.0505 | crash  0 circle   4.9 cm jitter 0.0666
+2000000  crash  0 circle   3.1 cm jitter 0.0540 | crash  0 circle   6.5 cm jitter 0.0561 | crash  0 circle   4.6 cm jitter 0.0745
+== d20 ms estimate delay
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash 45 circle  47.4 cm jitter 0.4484 | crash 91 circle 112.4 cm jitter 0.3631 | crash 58 circle  55.3 cm jitter 0.4399
+1100000  crash 26 circle  19.0 cm jitter 0.4564 | crash 70 circle  71.2 cm jitter 0.4096 | crash 29 circle  21.0 cm jitter 0.4515
+1200000  crash  6 circle   8.9 cm jitter 0.4594 | crash 53 circle  47.7 cm jitter 0.3958 | crash 27 circle  17.6 cm jitter 0.4501
+1300000  crash  0 circle   4.7 cm jitter 0.4409 | crash 24 circle  29.2 cm jitter 0.4115 | crash  4 circle   8.2 cm jitter 0.4393
+1400000  crash  0 circle   3.6 cm jitter 0.3193 | crash  3 circle  10.0 cm jitter 0.3381 | crash  0 circle   5.6 cm jitter 0.3442
+1500000  crash  0 circle   3.4 cm jitter 0.1977 | crash  0 circle   6.9 cm jitter 0.1955 | crash  0 circle   5.4 cm jitter 0.2130
+1600000  crash  0 circle   3.5 cm jitter 0.1462 | crash  0 circle   7.5 cm jitter 0.1502 | crash  0 circle   5.6 cm jitter 0.1601
+1700000  crash  0 circle   3.7 cm jitter 0.1732 | crash  0 circle   7.6 cm jitter 0.1652 | crash  0 circle   5.6 cm jitter 0.1761
+1800000  crash  0 circle   3.3 cm jitter 0.1368 | crash  0 circle   6.8 cm jitter 0.1386 | crash  0 circle   4.8 cm jitter 0.1460
+1900000  crash  0 circle   3.4 cm jitter 0.1440 | crash  1 circle   7.5 cm jitter 0.1422 | crash  0 circle   4.6 cm jitter 0.1479
+2000000  crash  0 circle   3.5 cm jitter 0.1740 | crash  2 circle   8.2 cm jitter 0.1813 | crash  0 circle   4.9 cm jitter 0.1785

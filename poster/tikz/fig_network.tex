@@ -1,0 +1,50 @@
+% Fig. B: the network. \input{rl_styles} once, then \input{fig_network}.
+\begin{tikzpicture}[rl]
+  % input groups (stacked, like a feature vector)
+  \foreach \i/\name/\n/\sty in {0/error to target/3/blk, 1/tilt (rotation matrix)/9/blk,
+                                 2/speed vs target/3/blk, 3/rotation rate (gyro)/3/blk,
+                                 4/last 32 motor commands/128/soft, 5/position-error integral/3/soft} {
+    \node[\sty=3.6cm, minimum height=0.46cm, anchor=north west] (in\i) at (0,-\i*0.56) {\name \hfill \textbf{\n}};
+  }
+  \node[hd, anchor=south west] at (in0.north west) {Inputs (149)};
+
+  % bracket into the input layer
+  \draw[rllearn, line width=0.7pt] ($(in0.north east)+(0.12,0)$) -- ++(0.15,0) |- ($(in5.south east)+(0.12,0)$);
+  \coordinate (br) at ($(in0.north east)!0.5!(in5.south east)+(0.27,0)$);
+
+  % layers as columns of neurons
+  \newcommand{\layer}[6]{% name, x, height, count label, sublabel, style colour
+    \node[draw=#6, fill=#6!12, rounded corners=3pt, line width=0.8pt, minimum width=0.85cm, minimum height=#3cm] (#1) at (#2,-1.55) {};
+    \node[font=\sffamily\scriptsize\bfseries, anchor=north] at ($(#1.south)+(0,-0.06)$) {#4};
+    \node[font=\sffamily\tiny, text=rlmuted, anchor=north] at ($(#1.south)+(0,-0.36)$) {#5};
+  }
+  \layer{L0}{5.05}{3.25}{149}{inputs}{rlflow}
+  \layer{L1}{6.75}{2.35}{64}{dense + tanh}{rllearn}
+  \layer{L2}{8.45}{2.35}{64}{dense + tanh}{rllearn}
+  \layer{L3}{10.15}{1.15}{4}{dense + tanh}{rllearn}
+  \foreach \y in {1.25,0.9,0.55,0.2,-0.6,-0.95,-1.3} \node[neuron=rlflow] at ($(L0.center)+(0,\y)$) {};
+  \node[font=\sffamily\scriptsize] at ($(L0.center)+(0,-0.18)$) {$\vdots$};
+  \foreach \L in {L1,L2} {
+    \foreach \y in {0.85,0.5,0.15,-0.6,-0.95} \node[neuron] at ($(\L.center)+(0,\y)$) {};
+    \node[font=\sffamily\scriptsize] at ($(\L.center)+(0,-0.18)$) {$\vdots$};
+  }
+  \foreach \y in {0.39,0.13,-0.13,-0.39} \node[neuron] at ($(L3.center)+(0,\y)$) {};
+
+  \draw[flowl] (br) -- (L0.west);
+  \draw[flowl] (L0) -- node[labl, above] {all-to-all} (L1);
+  \draw[flowl] (L1) -- (L2);
+  \draw[flowl] (L2) -- (L3);
+
+  \node[anchor=west, align=left] (o) at ($(L3.east)+(0.5,0)$) {\textcolor{rllearn}{\textbf{Motor 1--4}}\\target speed\\0--24{,}000 RPM};
+  \draw[flowl] (L3) -- (o);
+  \node[anchor=north west, align=left, text=rlmuted, font=\sffamily\tiny] at ($(o.south west)+(0,-0.15)$)
+      {$\approx$14k weights\\0.7\,ms per step\\on the drone's chip};
+
+  % legend
+  \node[legendbox=rlgray, anchor=west] (k1) at ($(in5.south west)+(0,-0.95)$) {};
+  \node[anchor=west, font=\sffamily\tiny] (t1) at (k1.east) {measured state (Kalman filter)};
+  \node[legendbox=rlflow, anchor=west] (k2) at ($(t1.east)+(0.25,0)$) {};
+  \node[anchor=west, font=\sffamily\tiny] (t2) at (k2.east) {memory added on the drone};
+  \node[legendbox=rllearn, anchor=west] (k3) at ($(t2.east)+(0.25,0)$) {};
+  \node[anchor=west, font=\sffamily\tiny] at (k3.east) {learned layers (fully connected, no recurrence)};
+\end{tikzpicture}

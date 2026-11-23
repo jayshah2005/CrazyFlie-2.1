@@ -1,0 +1,10 @@
+/cmake-build-debug*
+/cmake-build-release*
+/checkpoints
+/build
+/logs
+/.idea
+/**/*.h5
+*.bin
+/build_*
+/compare_*

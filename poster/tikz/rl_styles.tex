@@ -1,0 +1,33 @@
+% Shared colours and styles for the RL controller figures.
+% Preamble needs: \usepackage{tikz}
+%                 \usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds}
+\definecolor{rlflow}{HTML}{0E7480}      % signal flow (sensors, radio, training data)
+\definecolor{rlflowsoft}{HTML}{E3F2F3}
+\definecolor{rllearn}{HTML}{C2620A}     % the learned part (neural network)
+\definecolor{rllearnsoft}{HTML}{FCEBD8}
+\definecolor{rlgray}{HTML}{8996A4}
+\definecolor{rlpanel}{HTML}{F5F7F9}
+\definecolor{rlink}{HTML}{1B2733}
+\definecolor{rlmuted}{HTML}{5A6876}
+\tikzset{
+  rl/.style={font=\sffamily\scriptsize, text=rlink, >={Stealth[length=2.2mm,width=1.6mm]}},
+  blk/.style={draw=rlgray, fill=white, rounded corners=2pt, line width=0.6pt,
+              align=left, inner sep=4pt, text width=#1},
+  blk/.default=2.6cm,
+  learn/.style={draw=rllearn, fill=rllearnsoft, rounded corners=2pt, line width=1pt,
+                align=left, inner sep=4pt, text width=#1},
+  learn/.default=2.6cm,
+  soft/.style={draw=rlflow, fill=rlflowsoft, rounded corners=2pt, line width=0.6pt,
+               align=left, inner sep=4pt, text width=#1},
+  soft/.default=2.6cm,
+  zone/.style={draw=rlgray, dashed, rounded corners=5pt, line width=0.6pt},
+  zonelabel/.style={font=\sffamily\tiny\bfseries, text=rlmuted, anchor=north west},
+  flow/.style={->, draw=rlflow, line width=0.9pt},
+  flowl/.style={->, draw=rllearn, line width=0.9pt},
+  lab/.style={font=\sffamily\tiny, text=rlflow},
+  labl/.style={font=\sffamily\tiny, text=rllearn},
+  hd/.style={font=\sffamily\scriptsize\bfseries},
+  neuron/.style={circle, fill=#1, inner sep=0pt, minimum size=1.6mm},
+  neuron/.default=rllearn,
+  legendbox/.style={draw=#1, fill=#1!18, minimum width=2.2mm, minimum height=2.2mm, inner sep=0pt},
+}

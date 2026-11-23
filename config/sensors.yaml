@@ -1,0 +1,77 @@
+# Sensor models of the simulator's sensor path (L2F_SENSOR_SIM; plan Step 2, E2), SI units.
+# Each value is a prior (a datasheet value or an earlier measurement) until the survey
+# (noise_survey.py, plan Step 4) measures it on the drone; Step 5 replaces the prior with the
+# measured range, widened ~20% ("measured" below: survey 2026-11-22, still 16:46 and hovers
+# 16:49/16:59 at 0.3-1.0 m, IH222A; heights, slide and logs were not run, so the range below
+# 4 cm, the flow and the drop-outs keep their priors). A value [lo, hi] is drawn uniformly per
+# episode (domain randomization).
+# Read by include/learning_to_fly/simulator/sensor_sim.h (simple "section: / key: value" lines).
+
+imu:
+  # gyroscope (BMI088, +-2000 deg/s)
+  gyro_clip: 34.9                # rad/s, the range (2000 deg/s)
+  gyro_bias: [-0.005, 0.005]     # rad/s per axis, left after the firmware's bias calibration (datasheet
+                                 # zero-rate offset +-1 deg/s = 0.017 before it)
+  gyro_noise_avg: [0.015, 0.06]  # rad/s, std of the 10 ms average the filter predicts with; measured
+                                 # in hover 0.017-0.079 per axis (prior [0.003, 0.02]: datasheet 0.0024-0.004)
+  gyro_noise_sample: [0.05, 0.09]  # rad/s, std of the single filtered sample the actor reads, one
+                                 # value for every axis, white; only used without the _x/_y/_z keys below
+  # the actor's gyro sample per axis, measured in hover: std and lag-1 correlation (AR(1) noise)
+  # upper ends raised to 0.08-0.10 (2026-11-22): the policies trained below the old path's 0.069
+  # white gyro noise shook on the drone, the old-path E policy (0.069) flew smoothly
+  gyro_noise_sample_x: [0.034, 0.080]  # rad/s (measured 0.042-0.050)
+  gyro_noise_sample_y: [0.053, 0.100]  # rad/s (measured 0.066-0.079)
+  gyro_noise_sample_z: [0.014, 0.070]  # rad/s (measured 0.017-0.020)
+  gyro_noise_r1_x: [0.45, 0.70]   # (measured 0.54-0.66)
+  gyro_noise_r1_y: [0.15, 0.45]   # (measured 0.24-0.35)
+  gyro_noise_r1_z: [0.15, 0.45]   # (measured 0.23-0.39)
+  # accelerometer (BMI088, +-16 g)
+  acc_bias: [-0.05, 0.05]        # m/s^2 per axis (datasheet offset +-20 mg = 0.2 before calibration)
+  acc_noise_avg: [0.04, 0.10]    # m/s^2, std of the 10 ms average; measured in hover 0.05-0.08
+                                 # (prior [0.05, 0.5])
+
+range:
+  # VL53L1X on the Flow deck v2 (zranger2.c: medium distance mode, 25 ms timing budget)
+  period: 0.025                  # s
+  rest_gap: [0.0, 0.015]         # m, sensor distance from the floor with the drone landed (LH z = 0)
+  bias: [-0.005, 0.005]          # m
+  noise: [0.001, 0.0022]         # m; measured in hover 1.3-1.8 mm at 0.3-1.0 m (prior [0.001, 0.004];
+                                 # the firmware assumes 2.5 mm)
+  min_distance: 0.04             # m, accurate only from here (datasheet DS12385, 7.3)
+  below_min_bias: [-0.01, 0.02]  # m, below min_distance (unknown: survey heights)
+  below_min_noise: [0.003, 0.015]  # m
+  cone_half_angle: 7.5           # deg, half of the 15 deg field of view the firmware models (mm_tof.c)
+
+flow:
+  # PMW3901 on the Flow deck v2 (flowdeck_v1v2.c: vTaskDelay(10))
+  period: [0.0100, 0.0105]       # s
+  rest_gap: [0.0, 0.015]         # m, camera distance from the floor with the drone landed
+  noise: [0.3, 1.5]              # raw counts (the firmware assumes 2.0)
+  min_height: 0.08               # m, working range from 80 mm (datasheet)
+  max_rate: 7.4                  # rad/s (datasheet)
+  out_of_spec_gain: [0.3, 1.0]   # flow gain below min_height or above max_rate (unknown: survey slide)
+
+lighthouse:
+  # Lighthouse V2 base stations and deck
+  system: config/current/config.yaml  # stored geometry and calibration of the active room (cfclient file)
+  # placement: random draws a new layout of the file's stations every episode, so a policy does
+  # not learn one room (room = the file's geometry). Both IH222A layouts (2026-11) lie inside.
+  placement: random
+  placement_distance: [1.5, 3.5]   # m, horizontal distance of each station from the room centre
+  placement_height: [1.4, 2.6]     # m above the floor
+  placement_separation: [60, 180]  # deg, azimuth between neighbouring stations seen from the centre
+  placement_aim_xy: 0.5            # m, each station aims within +-this of the centre
+  placement_aim_height: [0.0, 1.0]  # m, height of the aim point
+  rotation_rate: [49.5, 50.5]    # rotations / s per base station
+  angle_noise: [0.00002, 0.00004]  # rad per sweep; measured still 0.024-0.033 mrad
+                                 # (prior [0.0001, 0.0003]: V2 jitter about 0.7 mm at 2-3 m)
+  geometry_error_position: 0.005  # m std per axis: true minus stored base station origin (accuracy ~1 cm)
+  geometry_error_rotation: 0.002  # rad std per axis: true minus stored base station rotation
+  dropout_rate: [0.0, 1.0]       # dropouts / s per base station (unknown: survey logs mode)
+  dropout_duration: [0.02, 0.2]  # s
+
+estimator:
+  # the firmware's switches that the plan's E4 adds (Q13); off = the firmware as flown today
+  flow_off_below: 0.0            # m estimated height: flow disabled below it (0 = never; E4: 0.1)
+  range_min_distance: 0.0        # m sensor distance: below it the range sigma is range_low_std (0 = off; E4: 0.04)
+  range_low_std: 0.05            # m (<= 0: such readings are skipped)

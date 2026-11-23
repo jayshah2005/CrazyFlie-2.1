@@ -21,3 +21,22 @@ All scripts must use [`run_log.py`](run_log.py) for console and CSV logs — do 
 - Claude Code: `.claude/skills/run-log` → same skill
 
 Pattern: `log = run_log.setup(__file__)`; CSVs via `run_log.csv_path` + `run_log.write_csv`.
+
+## Explanations: give the math
+
+Whenever something can be written as a formula (a reward, a cost, dynamics, an update rule, a
+metric, a schedule), give the formula and explain it:
+
+- Write the formula itself, not only a description of it.
+- Say what every symbol means and its units.
+- Say in words what the formula does and why it has that shape.
+- Use the real values from the code (weights, limits, rates) and name the file they come from.
+- Where it helps, work one example with numbers.
+
+## Plain-English rewrites (`asd-ste100`)
+
+To rewrite text that an agent or a tool must read without ambiguity (tool descriptions,
+error messages, agent instructions), use the ASD-STE100 skill.
+
+- Canonical: [`.agents/skills/asd-ste100/SKILL.md`](.agents/skills/asd-ste100/SKILL.md)
+- Cursor and Claude Code: `.cursor/skills/asd-ste100`, `.claude/skills/asd-ste100` → same skill

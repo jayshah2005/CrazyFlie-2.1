@@ -1,0 +1,52 @@
+== rand_d6 (random = new base-station layout per episode, room = IH222A; dN = N ms estimate delay)
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash  0 circle   5.5 cm jitter 0.2052 | crash  5 circle  12.4 cm jitter 0.2073 | crash  0 circle   5.4 cm jitter 0.2064
+1100000  crash  0 circle   5.3 cm jitter 0.1615 | crash  7 circle  12.8 cm jitter 0.1648 | crash  0 circle   5.2 cm jitter 0.1623
+1200000  crash  0 circle   6.0 cm jitter 0.1344 | crash 10 circle  11.6 cm jitter 0.1281 | crash  0 circle   6.0 cm jitter 0.1354
+1300000  crash  0 circle   5.4 cm jitter 0.1244 | crash  6 circle  11.0 cm jitter 0.1178 | crash  0 circle   5.4 cm jitter 0.1249
+1400000  crash  0 circle   6.2 cm jitter 0.1214 | crash  3 circle  10.7 cm jitter 0.1111 | crash  0 circle   6.2 cm jitter 0.1217
+1500000  crash  0 circle   4.4 cm jitter 0.1120 | crash  0 circle   9.3 cm jitter 0.1032 | crash  0 circle   4.4 cm jitter 0.1122
+1600000  crash  0 circle   4.9 cm jitter 0.1331 | crash  0 circle   9.1 cm jitter 0.1243 | crash  0 circle   4.9 cm jitter 0.1335
+1700000  crash  0 circle   6.3 cm jitter 0.1293 | crash  2 circle  10.5 cm jitter 0.1182 | crash  1 circle   6.7 cm jitter 0.1311
+1800000  crash  0 circle   4.3 cm jitter 0.1321 | crash  1 circle   9.7 cm jitter 0.1225 | crash  0 circle   4.2 cm jitter 0.1327
+1900000  crash  0 circle   4.8 cm jitter 0.1171 | crash  5 circle  12.1 cm jitter 0.1092 | crash  1 circle   7.7 cm jitter 0.1187
+2000000  crash  0 circle   4.1 cm jitter 0.1166 | crash  0 circle   8.7 cm jitter 0.1072 | crash  0 circle   4.0 cm jitter 0.1175
+== rand_d12 (random = new base-station layout per episode, room = IH222A; dN = N ms estimate delay)
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash  0 circle   5.4 cm jitter 0.2118 | crash  7 circle  12.4 cm jitter 0.2155 | crash  0 circle   5.4 cm jitter 0.2127
+1100000  crash  0 circle   5.2 cm jitter 0.1671 | crash  7 circle  12.8 cm jitter 0.1742 | crash  0 circle   5.2 cm jitter 0.1681
+1200000  crash  0 circle   6.0 cm jitter 0.1453 | crash 10 circle  11.7 cm jitter 0.1413 | crash  0 circle   5.9 cm jitter 0.1466
+1300000  crash  0 circle   5.4 cm jitter 0.1470 | crash  7 circle  11.1 cm jitter 0.1360 | crash  0 circle   5.3 cm jitter 0.1469
+1400000  crash  0 circle   5.7 cm jitter 0.1657 | crash  3 circle  10.8 cm jitter 0.1498 | crash  0 circle   5.6 cm jitter 0.1654
+1500000  crash  0 circle   4.2 cm jitter 0.1477 | crash  0 circle   9.6 cm jitter 0.1354 | crash  0 circle   4.2 cm jitter 0.1489
+1600000  crash  0 circle   4.6 cm jitter 0.1614 | crash  0 circle   9.2 cm jitter 0.1480 | crash  0 circle   4.5 cm jitter 0.1627
+1700000  crash  0 circle   5.8 cm jitter 0.1550 | crash  2 circle  10.5 cm jitter 0.1432 | crash  0 circle   5.8 cm jitter 0.1556
+1800000  crash  0 circle   4.1 cm jitter 0.1433 | crash  1 circle   9.8 cm jitter 0.1328 | crash  0 circle   4.1 cm jitter 0.1447
+1900000  crash  0 circle   4.7 cm jitter 0.1323 | crash  5 circle  12.2 cm jitter 0.1211 | crash  1 circle   5.0 cm jitter 0.1329
+2000000  crash  0 circle   4.0 cm jitter 0.1335 | crash  0 circle   8.7 cm jitter 0.1209 | crash  0 circle   3.9 cm jitter 0.1348
+== rand_d20 (random = new base-station layout per episode, room = IH222A; dN = N ms estimate delay)
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash  0 circle   5.3 cm jitter 0.2699 | crash 14 circle  15.9 cm jitter 0.3005 | crash  0 circle   5.2 cm jitter 0.2694
+1100000  crash  0 circle   5.1 cm jitter 0.2261 | crash 15 circle  16.3 cm jitter 0.2653 | crash  0 circle   5.1 cm jitter 0.2270
+1200000  crash  3 circle   7.5 cm jitter 0.2912 | crash 30 circle  28.3 cm jitter 0.2942 | crash  3 circle   7.1 cm jitter 0.2932
+1300000  crash 19 circle  11.7 cm jitter 0.3112 | crash 33 circle  26.9 cm jitter 0.2889 | crash 17 circle  14.2 cm jitter 0.3083
+1400000  crash 13 circle   9.5 cm jitter 0.2943 | crash 32 circle  22.4 cm jitter 0.2929 | crash 11 circle   8.3 cm jitter 0.2922
+1500000  crash 13 circle   9.9 cm jitter 0.2568 | crash 30 circle  24.9 cm jitter 0.2696 | crash  8 circle   8.7 cm jitter 0.2554
+1600000  crash  3 circle   5.5 cm jitter 0.2559 | crash 19 circle  18.9 cm jitter 0.2525 | crash  2 circle   5.1 cm jitter 0.2532
+1700000  crash  0 circle   5.0 cm jitter 0.2464 | crash 13 circle  14.2 cm jitter 0.2481 | crash  1 circle   5.3 cm jitter 0.2495
+1800000  crash  0 circle   4.0 cm jitter 0.2005 | crash  5 circle  10.4 cm jitter 0.1901 | crash  0 circle   3.9 cm jitter 0.1979
+1900000  crash  0 circle   4.5 cm jitter 0.2100 | crash  5 circle  11.5 cm jitter 0.1877 | crash  0 circle   4.3 cm jitter 0.2110
+2000000  crash  0 circle   3.9 cm jitter 0.2089 | crash  2 circle  10.0 cm jitter 0.1982 | crash  0 circle   3.9 cm jitter 0.2072
+== room_d12 (random = new base-station layout per episode, room = IH222A; dN = N ms estimate delay)
+checkpoint   clean                             | randomized                        | jumps 1%
+1000000  crash  0 circle   5.4 cm jitter 0.2132 | crash  2 circle  11.5 cm jitter 0.2167 | crash  0 circle   5.3 cm jitter 0.2126
+1100000  crash  0 circle   5.2 cm jitter 0.1686 | crash  3 circle  11.6 cm jitter 0.1751 | crash  0 circle   5.2 cm jitter 0.1679
+1200000  crash  0 circle   5.9 cm jitter 0.1465 | crash  4 circle  11.0 cm jitter 0.1437 | crash  0 circle   5.9 cm jitter 0.1460
+1300000  crash  0 circle   5.3 cm jitter 0.1467 | crash  0 circle  10.2 cm jitter 0.1400 | crash  0 circle   5.3 cm jitter 0.1470
+1400000  crash  0 circle   5.6 cm jitter 0.1650 | crash  1 circle   9.8 cm jitter 0.1522 | crash  0 circle   5.5 cm jitter 0.1651
+1500000  crash  0 circle   4.1 cm jitter 0.1477 | crash  0 circle   8.7 cm jitter 0.1389 | crash  0 circle   4.1 cm jitter 0.1487
+1600000  crash  0 circle   4.5 cm jitter 0.1622 | crash  0 circle   8.3 cm jitter 0.1515 | crash  0 circle   4.4 cm jitter 0.1627
+1700000  crash  0 circle   5.8 cm jitter 0.1558 | crash  0 circle   9.5 cm jitter 0.1458 | crash  0 circle   5.8 cm jitter 0.1546
+1800000  crash  0 circle   4.0 cm jitter 0.1443 | crash  0 circle   8.7 cm jitter 0.1358 | crash  0 circle   4.0 cm jitter 0.1431
+1900000  crash  0 circle   4.6 cm jitter 0.1340 | crash  1 circle   9.3 cm jitter 0.1235 | crash  0 circle   4.6 cm jitter 0.1323
+2000000  crash  0 circle   3.9 cm jitter 0.1349 | crash  0 circle   7.9 cm jitter 0.1237 | crash  0 circle   3.9 cm jitter 0.1334

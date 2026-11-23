@@ -1,0 +1,47 @@
+% Fig. A: the control loop in flight. \input{rl_styles} once, then \input{fig_loop}.
+\begin{tikzpicture}[rl]
+  % drone zone
+  \node[blk=2.2cm] (sens) at (4.4,1.2) {\textbf{Sensors}\\Lighthouse deck\\IMU (gyro, accel)};
+  \node[blk=2.2cm] (kal) at (7.3,1.2) {\textbf{Kalman filter}\\stock firmware\\position, tilt, speed};
+  \node[soft=2.7cm] (obs) at (10.6,0.55) {\textbf{What it sees} \hfill \textbf{149}\\[1pt]
+      error to target \hfill 3\\ tilt (rotation) \hfill 9\\ speed vs target \hfill 3\\
+      rotation rate \hfill 3\\ last 32 commands \hfill 128\\ error integral \hfill 3};
+  \node[learn=2.3cm, minimum height=2.95cm, anchor=west] (net) at ($(obs.east)+(0.75,0)$) {};
+  \node[font=\sffamily\scriptsize\bfseries, text=rllearn, anchor=north west] at ($(net.north west)+(0.08,-0.08)$) {Neural network};
+  \node[font=\sffamily\tiny, text=rlmuted, anchor=north west, align=left] at ($(net.north west)+(0.08,-0.42)$) {$149\to64\to64\to4$\\$\approx$14k weights};
+  \foreach \y in {-0.05,-0.40,-0.75} \node[neuron] at ($(net.center)+(-0.65,\y)$) {};
+  \foreach \y in {0.12,-0.22,-0.56,-0.90} \node[neuron] at ($(net.center)+(0.0,\y)$) {};
+  \foreach \y in {-0.22,-0.56} \node[neuron] at ($(net.center)+(0.65,\y)$) {};
+
+  \node[learn=2.3cm, below=0.6cm of net] (out) {\textbf{4 motor speeds}\\0--24{,}000 RPM};
+  \node[blk=2.7cm] (map) at (out -| obs) {\textbf{RPM $\to$ command}\\measured, battery-aware};
+  \node[blk=2.2cm] (mot) at (out -| kal) {\textbf{4 brushless motors}\\DShot, 1\,kHz};
+
+  \draw[flow] (sens) -- (kal);
+  \draw[flow] (kal.east) -- (kal.east -| obs.west);
+  \draw[flow] (obs) -- (net);
+  \draw[flowl] (net) -- (out);
+  \draw[flowl] (out) -- (map);
+  \draw[flowl] (map) -- (mot);
+  \draw[flow] (mot.west) -| node[lab, pos=0.75, left, align=right] {the drone\\moves} (sens.south);
+  % the network's own commands feed back
+  \coordinate (fb) at ($(out.east)+(0.4,0)$);
+  \draw[flowl, dashed] (out.east) -- (fb) |- ($(obs.north)+(0.55,0.35)$) -- ($(obs.north)+(0.55,0)$);
+  \node[labl, anchor=south] at ($(obs.north)+(2.4,0.37)$) {its last 32 commands};
+
+  \begin{scope}[on background layer]
+    \node[zone, fit=(sens)(kal)(obs)(net)(out)(map)(mot)(fb), inner xsep=10pt, inner ysep=16pt, yshift=6pt] (drone) {};
+  \end{scope}
+  \node[zonelabel] at ($(drone.north west)+(0.12,-0.08)$) {ON THE DRONE $\cdot$ STM32 $\cdot$ EVERY 10 ms};
+
+  % laptop
+  \node[blk=3.5cm, above=0.95cm of drone.north, xshift=1.4cm] (lap) {\textbf{Laptop} \quad mission plan:\\
+      sit $\to$ climb $\to$ hover $\to$ circle $\to$ return $\to$ land\\
+      safety: auto-land on release, low battery, lost link};
+  \coordinate (rx) at ($(obs.north)+(-0.6,0)$);
+  \draw[flow] (rx |- lap.south) -- node[lab, pos=0.42, left, align=right] {target position\\+ velocity\\radio, 50\,Hz} (rx);
+  \draw[flow, dashed] (kal.north) |- node[lab, pos=0.8, above] {telemetry} (lap.west);
+
+  \node[font=\sffamily\scriptsize, anchor=north west, align=left, text=rlink] at ($(drone.south west)+(0,-0.12)$)
+      {\textbf{No PID in the loop:} the network's four outputs go straight to the motors; the laptop only moves the target.};
+\end{tikzpicture}

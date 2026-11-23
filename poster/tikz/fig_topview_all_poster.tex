@@ -1,0 +1,58 @@
+% Three real I1 flights seen from above in one plot (0.6 / 1.0 / 1.5 m), for the
+% A1 poster. Data: data/top_*.dat, exported from logs/ (flights 2026-11-04
+% 175759, 182211, 183201). Compile on its own, then in the poster:
+%   \includegraphics[width=\linewidth]{images/fig_topview_all_poster.pdf}
+\documentclass[12pt, border=4pt]{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,calc}
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{saclaydk}{RGB}{27,67,32}
+\definecolor{mandarine}{RGB}{243,115,32}
+\definecolor{vert}{RGB}{140,198,62}
+\definecolor{rouge}{RGB}{198,11,70}
+\colorlet{c060}{vert!75!black}
+\colorlet{c100}{mandarine}
+\colorlet{c150}{rouge}
+
+\begin{document}
+\begin{tikzpicture}
+  \begin{axis}[name=p, width=12cm, height=12cm, axis equal image,
+      xmin=-0.95, xmax=0.95, ymin=-0.95, ymax=0.95, axis lines=none, clip=false]
+    % floor grid (20 cm squares)
+    \pgfplotsinvokeforeach{-0.8,-0.6,-0.4,-0.2,0,0.2,0.4,0.6,0.8}{
+      \draw[saclaydk!13, line width=0.5pt] (axis cs:#1,-0.95) -- (axis cs:#1,0.95);
+      \draw[saclaydk!13, line width=0.5pt] (axis cs:-0.95,#1) -- (axis cs:0.95,#1);
+    }
+    % targets
+    \addplot[draw=black!65, dashed, line width=1.4pt, domain=0:360, samples=120] ({0.3*cos(x)}, {0.3*sin(x)});
+    \addplot[draw=black!65, dashed, line width=1.4pt, domain=0:360, samples=120] ({0.6*cos(x)}, {0.6*sin(x)});
+    % measured circles
+    \addplot[draw=c100, line width=2.2pt, opacity=0.85] table[x=x, y=y] {data/top_h100_circle.dat};
+    \addplot[draw=c150, line width=2.2pt, opacity=0.85] table[x=x, y=y] {data/top_h150_circle.dat};
+    \addplot[draw=c060, line width=2.4pt, opacity=0.9] table[x=x, y=y] {data/top_h060_circle.dat};
+    % direction of travel
+    \addplot[-{Stealth[length=5mm,width=4mm]}, draw=saclaydk, line width=2pt, domain=15:60, samples=30]
+      ({0.8*cos(x)}, {0.8*sin(x)});
+    % take-off / landing point
+    \addplot[only marks, mark=*, mark size=5pt, saclaydk] coordinates {(0,0)};
+    \node[anchor=north, align=center, font=\normalsize\bfseries, text=saclaydk] at (axis cs:0,-0.04)
+         {take off\\\& land};
+    % Lighthouse jump on the 1.5 m flight
+    \draw[c150, line width=1.4pt] (axis cs:-0.87,-0.36) circle (0.4cm);
+    \node[anchor=north, align=center, font=\normalsize\bfseries, text=c150] at (axis cs:-0.5,-0.76)
+         {1.5\,m: Lighthouse jump\\36\,cm, recovered};
+    % scale
+    \draw[saclaydk, line width=1.6pt] (axis cs:0.6,-0.9) -- node[above, font=\normalsize, text=saclaydk] {20\,cm} (axis cs:0.8,-0.9);
+  \end{axis}
+  \node[anchor=south, font=\Large\bfseries, text=saclaydk] at ($(p.north)+(0,0.1)$) {Real flights seen from above};
+  % legend: height, circle size, mean circle error
+  \matrix[anchor=north, row sep=4pt, column sep=6pt, font=\normalsize] at ($(p.south)+(0,-0.25)$) {
+    \draw[c060, line width=2.6pt] (0,0) -- (0.8,0); & \node[anchor=west]{\textbf{0.6\,m} high, 0.3\,m circle: error 6.4\,cm}; &
+    \draw[black!65, dashed, line width=1.4pt] (0,0) -- (0.8,0); & \node[anchor=west]{target}; \\
+    \draw[c100, line width=2.6pt] (0,0) -- (0.8,0); & \node[anchor=west]{\textbf{1.0\,m} high, 0.6\,m circle: error 6.7\,cm}; & & \\
+    \draw[c150, line width=2.6pt] (0,0) -- (0.8,0); & \node[anchor=west]{\textbf{1.5\,m} high, 0.6\,m circle: error 10.9\,cm}; & & \\
+  };
+\end{tikzpicture}
+\end{document}

@@ -32,6 +32,8 @@ htmlcov/
 crazyflie-lib-python/
 crazyflie-firmware/
 aideck-gap8-examples/
+aideck-esp-firmware/
+aideck-gap8-bootloader/
 
 # Crazyflie radio / TOC cache
 cache/
@@ -57,3 +59,11 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local-only files that must never be published
+*_local.h
+*_local.py
+
+# LaTeX build files of the poster figures
+poster/**/*.aux
+poster/**/*.log

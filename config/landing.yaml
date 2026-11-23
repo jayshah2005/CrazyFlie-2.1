@@ -1,0 +1,25 @@
+# Mission landing: one set of values for the flight script and for training.
+#
+#   rl_trigger.py --mode mission reads its landing defaults from here
+#   (command-line options still override them).
+#   l2f/sim/train_mission.sh LANDING_CUT=1 passes them to the simulator, which then
+#   lands the same way in training and in evaluate_robustness.
+#
+# Plain "key: value" lines only, so shell scripts can read them without a YAML library.
+
+# Motors are cut below this estimated height above the take-off point (m). Today's
+# flight value; to be lowered after the sensor survey (plan, Q2).
+cut_height: 0.06
+# Training draws each landing episode's cut height from cut_height +- this (m).
+cut_height_spread: 0.01
+# The cut is allowed once the landing target is less than this above the floor (m).
+cut_window: 0.1
+# The landing target ends this far under the floor (m).
+below: 0.02
+# Cut anyway this long after the target reached its lowest point (s).
+floor_timeout: 2.0
+# The flight script's default descent rate (m/s).
+descent_rate: 0.1
+# Training draws each landing episode's descent rate from this range (m/s).
+descent_rate_min: 0.1
+descent_rate_max: 0.25

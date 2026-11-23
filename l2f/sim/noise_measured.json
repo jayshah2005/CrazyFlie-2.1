@@ -1,0 +1,1657 @@
+{
+ "acceleration": {
+  "x": {
+   "measurements": 8,
+   "r1_median": 0.2961653140500208,
+   "sigma_max": 0.05184520451740815,
+   "sigma_min": 0.011242667055397074
+  },
+  "y": {
+   "measurements": 8,
+   "r1_median": 0.3013498850940926,
+   "sigma_max": 0.05756505578280857,
+   "sigma_min": 0.01236339216283383
+  },
+  "z": {
+   "measurements": 8,
+   "r1_median": 0.4910835218217985,
+   "sigma_max": 0.07694313187161418,
+   "sigma_min": 0.011651895065382703
+  }
+ },
+ "angular_velocity": {
+  "x": {
+   "measurements": 8,
+   "r1_median": 0.48203509501763075,
+   "sigma_max": 0.04980529504806466,
+   "sigma_min": 0.0022239975409026366
+  },
+  "y": {
+   "measurements": 8,
+   "r1_median": 0.2824219208174428,
+   "sigma_max": 0.07930065627835325,
+   "sigma_min": 0.0030947859534663134
+  },
+  "z": {
+   "measurements": 8,
+   "r1_median": 0.2559696678276401,
+   "sigma_max": 0.02086874663126252,
+   "sigma_min": 0.0024744166889961116
+  }
+ },
+ "lh_angle": {
+  "bs0_sweep0": {
+   "measurements": 8,
+   "r1_median": 0.6951395690303788,
+   "sigma_max": 0.00026300380805885533,
+   "sigma_min": 2.5476537275535746e-05
+  },
+  "bs0_sweep1": {
+   "measurements": 8,
+   "r1_median": 0.6981579169969012,
+   "sigma_max": 0.0003072677309072592,
+   "sigma_min": 2.980337709993185e-05
+  },
+  "bs1_sweep0": {
+   "measurements": 8,
+   "r1_median": 0.6773683328749481,
+   "sigma_max": 0.00017838756013558485,
+   "sigma_min": 2.3871256136867842e-05
+  },
+  "bs1_sweep1": {
+   "measurements": 8,
+   "r1_median": 0.7006720630498289,
+   "sigma_max": 0.00028493721038567446,
+   "sigma_min": 2.6362272426522983e-05
+  }
+ },
+ "linear_velocity": {
+  "x": {
+   "measurements": 8,
+   "r1_median": 0.7527537107425679,
+   "sigma_max": 0.024038655396036293,
+   "sigma_min": 0.004816979354315226
+  },
+  "y": {
+   "measurements": 8,
+   "r1_median": 0.755259911935543,
+   "sigma_max": 0.027679194928398924,
+   "sigma_min": 0.002947460959200613
+  },
+  "z": {
+   "measurements": 8,
+   "r1_median": 0.728087432982274,
+   "sigma_max": 0.02644742829702211,
+   "sigma_min": 0.006680514721178017
+  }
+ },
+ "measurements": [
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.9093432456550817,
+   "sigma": 0.004911398736125548,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.9286708100093841,
+   "sigma": 0.0061619317591494974,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.8783001951869426,
+   "sigma": 0.005190075042314482,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "roll",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9191382118845018,
+   "sigma": 0.0033332128949238567,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "pitch",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9004391593907475,
+   "sigma": 0.0031583743414143974,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "yaw",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9768208819146852,
+   "sigma": 0.0054797855047627,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.8994065190969094,
+   "sigma": 0.021806397984649194,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.9192804333004272,
+   "sigma": 0.026907146368805354,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7314869331280043,
+   "sigma": 0.024241988480683586,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.027157833613178847,
+   "sigma": 0.0022342290442451083,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.02393543630354855,
+   "sigma": 0.0031448328150362977,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.02740657541738575,
+   "sigma": 0.002508412487047636,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3145282640949801,
+   "sigma": 0.011242667055397074,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3064341810645978,
+   "sigma": 0.012611760328898844,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3096377874040817,
+   "sigma": 0.01167182902971913,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6218003389793526,
+   "sigma": 2.5476537275535746e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7630939847424234,
+   "sigma": 3.2867515453710573e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6687920202926446,
+   "sigma": 2.4680517519576483e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.687130564835513,
+   "sigma": 2.8235309789176536e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "takeoff"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.9070284193227487,
+   "sigma": 0.005111347576534764,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.9287453383898009,
+   "sigma": 0.006202460276368085,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.8777244140372522,
+   "sigma": 0.005360114363855409,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "roll",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9186381682336164,
+   "sigma": 0.003426213683142481,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "pitch",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9036544443835371,
+   "sigma": 0.003481135858284139,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "yaw",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9677138385230905,
+   "sigma": 0.004803170939861242,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.9060235391166616,
+   "sigma": 0.024038655396036293,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.919054718131481,
+   "sigma": 0.027679194928398924,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7647252239350053,
+   "sigma": 0.02644742829702211,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.06713832574301641,
+   "sigma": 0.0022239975409026366,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.0565543608779666,
+   "sigma": 0.0031695041783504556,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.07425332439863516,
+   "sigma": 0.0024823911409077586,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.2976594056011651,
+   "sigma": 0.011376822230091607,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3348880663302589,
+   "sigma": 0.012491110189455474,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3353960685619797,
+   "sigma": 0.011651895065382703,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6459210109048874,
+   "sigma": 2.6817107766396658e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7094723955907196,
+   "sigma": 2.980337709993185e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6879519935413858,
+   "sigma": 2.4935815459233194e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7208333075328969,
+   "sigma": 2.9098202086331276e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "centre"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.8898790552625877,
+   "sigma": 0.00449229271279854,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.9210511987383195,
+   "sigma": 0.005529200759144148,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.8627863393074465,
+   "sigma": 0.004902008318744095,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "roll",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9089041411546784,
+   "sigma": 0.0031394926840823,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "pitch",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8854846142552965,
+   "sigma": 0.0031260151628793443,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "yaw",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9672877277175667,
+   "sigma": 0.004786999370177559,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.8866426751177984,
+   "sigma": 0.021538537023280915,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.9094705891212028,
+   "sigma": 0.02522361220939175,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7313121391416226,
+   "sigma": 0.0252380327090153,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.052391226233603594,
+   "sigma": 0.002308107396911429,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.0684836627204976,
+   "sigma": 0.0030947859534663134,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": -0.06258592892592191,
+   "sigma": 0.0024744166889961116,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "x",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.2946712224988765,
+   "sigma": 0.011345708853735256,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "y",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3226105534783988,
+   "sigma": 0.01236339216283383,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "z",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3269997338160041,
+   "sigma": 0.01187000161049876,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6179774496612086,
+   "sigma": 2.7656589998432675e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6975365757946455,
+   "sigma": 3.129732399027517e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6608193191141983,
+   "sigma": 2.3871256136867842e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "still",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7136894475770612,
+   "sigma": 2.6362272426522983e-05,
+   "time": "2026-11-22T16:46:51-05:00",
+   "where": "landing"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6904754507949497,
+   "sigma": 0.001338380335549722,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7112301038422143,
+   "sigma": 0.0007662618021020514,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6518295776338977,
+   "sigma": 0.00114841883350091,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "roll",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8939241742083659,
+   "sigma": 0.0012995774645838299,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "pitch",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8949924964163954,
+   "sigma": 0.002332034431921035,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "yaw",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.6322186900705532,
+   "sigma": 0.0015120801225535663,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7290205505574885,
+   "sigma": 0.006734908599779471,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.728514507984693,
+   "sigma": 0.0034741685183963147,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.6959147021818303,
+   "sigma": 0.010274203785163579,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.49100926810792267,
+   "sigma": 0.04905883339321151,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.3942805319564969,
+   "sigma": 0.07667472288594847,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.2789726816153746,
+   "sigma": 0.019267363682197867,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.193793940483638,
+   "sigma": 0.04301098583001156,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.1767837680320336,
+   "sigma": 0.041878831260201185,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.5922755167624806,
+   "sigma": 0.07185366651754503,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7282106732788828,
+   "sigma": 0.00026300380805885533,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6987792581991571,
+   "sigma": 0.00015950293575286954,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6859446454572516,
+   "sigma": 0.00017838756013558485,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7241979819198898,
+   "sigma": 0.00028493721038567446,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7101351006473313,
+   "sigma": 0.0009552907155162588,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7179303762755687,
+   "sigma": 0.0006295948582139045,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6931203316967549,
+   "sigma": 0.0010606455325626789,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "roll",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8946317405042169,
+   "sigma": 0.001162871721098832,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "pitch",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8918697753163725,
+   "sigma": 0.0018894872903579669,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "yaw",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.6586514157809337,
+   "sigma": 0.002112517156855566,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7458653762778397,
+   "sigma": 0.0051686357484404385,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7451515182146846,
+   "sigma": 0.002947460959200613,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.737266979589212,
+   "sigma": 0.008672016260508446,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.47306092192733884,
+   "sigma": 0.04467960853958307,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.382915069392031,
+   "sigma": 0.06644146240008338,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.3964005121770379,
+   "sigma": 0.02086874663126252,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.40437763595768406,
+   "sigma": 0.047054225407044396,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.2962655891235874,
+   "sigma": 0.04807658811111887,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.44740950391377604,
+   "sigma": 0.07255628068567473,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7037013602445468,
+   "sigma": 0.0001439715031231853,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6920667531690858,
+   "sigma": 0.00013718322146868026,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6955651525355304,
+   "sigma": 0.00014443102870050276,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6936004653513714,
+   "sigma": 0.0002000971433898949,
+   "time": "2026-11-22T16:49:34-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6733006022613691,
+   "sigma": 0.0012990661899939086,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7135530766385249,
+   "sigma": 0.0007107726285521842,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6826617368091339,
+   "sigma": 0.0012297022182707342,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "roll",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9037449332249898,
+   "sigma": 0.0011758865345504153,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "pitch",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.887705597931119,
+   "sigma": 0.002299306565273907,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "yaw",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.6792681628649524,
+   "sigma": 0.001142423124920069,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7145738880417172,
+   "sigma": 0.006962853786344449,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7277746530773446,
+   "sigma": 0.0032204306175811705,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7248627268229253,
+   "sigma": 0.01095837512342889,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.5403918421303046,
+   "sigma": 0.042341153860555814,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.3507348534838271,
+   "sigma": 0.07922525337964675,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.29282391060003987,
+   "sigma": 0.016783055321622685,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.2557009785422715,
+   "sigma": 0.05160925715334134,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.18459822217053187,
+   "sigma": 0.05756505578280857,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.6767741502756439,
+   "sigma": 0.07694313187161418,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7006946248639881,
+   "sigma": 0.000152502549688076,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6708697057272829,
+   "sigma": 0.00010532958162760974,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6918521070690952,
+   "sigma": 0.0001635021650209792,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6749823302348641,
+   "sigma": 0.00015795340677378415,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.3m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6907591616537678,
+   "sigma": 0.0009515753591877402,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7366910855317261,
+   "sigma": 0.0007363215452411099,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6127111473319543,
+   "sigma": 0.0009029141925392157,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "roll",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9049544636066582,
+   "sigma": 0.0012515833172563025,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "pitch",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8730059483767586,
+   "sigma": 0.0017088001512698047,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "yaw",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.6171591470474909,
+   "sigma": 0.001222389193668435,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7213714383730393,
+   "sigma": 0.004816979354315226,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7514795050621482,
+   "sigma": 0.003298989862602331,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.6715876714234618,
+   "sigma": 0.007514786041812031,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.5942890884533273,
+   "sigma": 0.043830105064840016,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.2422061721204437,
+   "sigma": 0.07384630176743641,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.23296665403990557,
+   "sigma": 0.016574196570852958,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.24969530580179444,
+   "sigma": 0.05184520451740815,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.19086516772037224,
+   "sigma": 0.05700265827387142,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.5347575397298209,
+   "sigma": 0.06386784654110353,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6896277337479931,
+   "sigma": 0.00014629740842454523,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6880746476716506,
+   "sigma": 0.00013977802561637967,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6547404459985889,
+   "sigma": 9.089583023809327e-05,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7077436607482863,
+   "sigma": 0.00017826722549223707,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "0.6m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7328165047233441,
+   "sigma": 0.0012072690098715658,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.7382747552725709,
+   "sigma": 0.0012773978479829933,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "position",
+   "r1": 0.6101642273186159,
+   "sigma": 0.0009344311880683935,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "roll",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.9002221886738904,
+   "sigma": 0.001916079044174556,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "pitch",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.8761848625189894,
+   "sigma": 0.001908742515784587,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "yaw",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "orientation",
+   "r1": 0.6684456815366835,
+   "sigma": 0.0019774745676461136,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7596420452072962,
+   "sigma": 0.005024183436271,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.7590403188089377,
+   "sigma": 0.005392936191030585,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "linear_velocity",
+   "r1": 0.6422319087790167,
+   "sigma": 0.006680514721178017,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.6648715768239442,
+   "sigma": 0.04980529504806466,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.3226376695144419,
+   "sigma": 0.07930065627835325,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "angular_velocity",
+   "r1": 0.38546777752955574,
+   "sigma": 0.019586663124534786,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "x",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3146977218663994,
+   "sigma": 0.04802881190218577,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "y",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.3560512135709053,
+   "sigma": 0.056025058262291684,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "z",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "acceleration",
+   "r1": 0.5836746112583776,
+   "sigma": 0.060535090050457784,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "bs0_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7006514043127643,
+   "sigma": 0.0002613598973892923,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "bs0_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.7142955459286494,
+   "sigma": 0.0003072677309072592,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "bs1_sweep0",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6462451517322237,
+   "sigma": 0.00010892595999999944,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  },
+  {
+   "axis": "bs1_sweep1",
+   "mode": "hover",
+   "placement": "7f90c03d0232",
+   "quantity": "lh_angle",
+   "r1": 0.6629031722207586,
+   "sigma": 0.00012289578136212762,
+   "time": "2026-11-22T16:59:27-05:00",
+   "where": "1m"
+  }
+ ],
+ "orientation": {
+  "pitch": {
+   "measurements": 8,
+   "r1_median": 0.8897876866237457,
+   "sigma_max": 0.003481135858284139,
+   "sigma_min": 0.0017088001512698047
+  },
+  "roll": {
+   "measurements": 8,
+   "r1_median": 0.904349698415824,
+   "sigma_max": 0.003426213683142481,
+   "sigma_min": 0.001162871721098832
+  },
+  "yaw": {
+   "measurements": 8,
+   "r1_median": 0.6738569222008179,
+   "sigma_max": 0.0054797855047627,
+   "sigma_min": 0.001142423124920069
+  }
+ },
+ "position": {
+  "x": {
+   "measurements": 8,
+   "r1_median": 0.7214758026853377,
+   "sigma_max": 0.005111347576534764,
+   "sigma_min": 0.0009515753591877402
+  },
+  "y": {
+   "measurements": 8,
+   "r1_median": 0.7374829204021485,
+   "sigma_max": 0.006202460276368085,
+   "sigma_min": 0.0006295948582139045
+  },
+  "z": {
+   "measurements": 8,
+   "r1_median": 0.6878910342529444,
+   "sigma_max": 0.005360114363855409,
+   "sigma_min": 0.0009029141925392157
+  }
+ },
+ "still_height_offset_m": {
+  "centre": -0.0002152384577625288,
+  "landing": -0.0004046780739375387,
+  "takeoff": 0.0
+ },
+ "updated": "2026-11-22T17:26:17-05:00",
+ "vibration_vs_rpm": []
+}

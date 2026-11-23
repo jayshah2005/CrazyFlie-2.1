@@ -1,0 +1,82 @@
+% Mission figure for the A1 poster, drawn from real flight logs (data/*.dat,
+% exported from logs/ by export_mission.py). Compile on its own, then in the poster:
+%   \includegraphics[width=\linewidth]{images/fig_mission_poster.pdf}
+\documentclass[12pt, border=4pt]{standalone}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta,calc}
+\renewcommand{\familydefault}{\sfdefault}
+
+\definecolor{saclaydk}{RGB}{27,67,32}
+\definecolor{mandarine}{RGB}{243,115,32}
+\definecolor{vert}{RGB}{140,198,62}
+\definecolor{bleu}{RGB}{80,144,205}
+\definecolor{rouge}{RGB}{198,11,70}
+\colorlet{cup}{vert!75!black}
+\colorlet{chover}{bleu}
+\colorlet{cmove}{saclaydk!45}
+\colorlet{ccircle}{mandarine}
+\colorlet{cland}{rouge}
+
+\begin{document}
+\begin{tikzpicture}
+  % ================= the 1.5 m flight seen from above =================
+  \begin{axis}[name=p3d, width=10.5cm, height=10.5cm, axis equal image,
+      xmin=-1.0, xmax=1.0, ymin=-1.0, ymax=1.0, axis lines=none, clip=false]
+    % floor grid (20 cm squares)
+    \pgfplotsinvokeforeach{-1.0,-0.8,-0.6,-0.4,-0.2,0,0.2,0.4,0.6,0.8,1.0}{
+      \draw[saclaydk!15, line width=0.5pt] (axis cs:#1,-1) -- (axis cs:#1,1);
+      \draw[saclaydk!15, line width=0.5pt] (axis cs:-1,#1) -- (axis cs:1,#1);
+    }
+    % target circle (dashed) and the real path
+    \addplot[draw=black!65, dashed, line width=1.4pt, domain=0:360, samples=120] ({0.6*cos(x)}, {0.6*sin(x)});
+    \addplot[draw=cmove,   line width=2.8pt] table[x=x, y=y] {data/path_move.dat};
+    \addplot[draw=cmove,   line width=2.8pt] table[x=x, y=y] {data/path_back.dat};
+    \addplot[draw=ccircle, line width=2.8pt] table[x=x, y=y] {data/path_circle.dat};
+    % direction of travel
+    \draw[-{Stealth[length=5mm,width=4mm]}, saclaydk, line width=2pt]
+      (axis cs:{0.78*cos(20)},{0.78*sin(20)}) arc[start angle=20, end angle=60, radius=3.7cm];
+    % centre: take-off and landing spot
+    \addplot[only marks, mark=*, mark size=5pt, saclaydk] coordinates {(0,0)};
+    \node[anchor=north, align=center, font=\normalsize\bfseries, text=saclaydk] at (axis cs:0,-0.05)
+         {take off \&\\land here};
+    % radius label
+    \draw[saclaydk, line width=1pt, {Stealth[length=3mm]}-{Stealth[length=3mm]}] (axis cs:0,0) -- (axis cs:-0.424,0.424);
+    \node[font=\normalsize\bfseries, text=saclaydk, anchor=south east] at (axis cs:-0.21,0.23) {0.6\,m};
+    % the Lighthouse glitch
+    \draw[rouge, line width=1.4pt] (axis cs:-0.87,-0.36) circle (0.35cm);
+    \node[anchor=north, align=center, font=\normalsize\bfseries, text=rouge] at (axis cs:-0.62,-0.72)
+         {position jumped 36\,cm,\\it recovered};
+    % scale
+    \draw[saclaydk, line width=1.6pt] (axis cs:0.6,-0.95) -- node[below, font=\normalsize, text=saclaydk] {20\,cm} (axis cs:0.8,-0.95);
+  \end{axis}
+  % legend for the top view
+  \matrix[anchor=north, row sep=3pt, column sep=4pt, font=\normalsize] at ($(p3d.south)+(0,-0.1)$) {
+    \draw[ccircle, line width=2.8pt] (0,0) -- (0.7,0); & \node[anchor=west]{measured circle}; &
+    \draw[cmove, line width=2.8pt] (0,0) -- (0.7,0); & \node[anchor=west]{move out / back}; \\
+    \draw[black!65, dashed, line width=1.4pt] (0,0) -- (0.7,0); & \node[anchor=west]{target}; & & \\
+  };
+  \node[anchor=south, font=\large\bfseries, text=saclaydk] at ($(p3d.north)+(0,0.1)$) {The 1.5\,m flight, seen from above};
+
+  % ================= height vs time, all four flights =================
+  \begin{axis}[name=pz, at={(12.8cm,0.9cm)}, anchor=south west, width=10cm, height=8.5cm,
+      xmin=0, xmax=34, ymin=0, ymax=1.75, xlabel={time (s)}, ylabel={height (m)},
+      tick label style={font=\normalsize}, label style={font=\normalsize},
+      axis lines=left, axis line style={saclaydk, line width=1pt}, tick style={saclaydk},
+      ytick={0,0.5,1,1.5}, grid=major, grid style={saclaydk!12},
+      title={\large\bfseries\color{saclaydk} All four real flights}, title style={yshift=-2pt}]
+    \foreach \f/\c/\lab/\yl in {h060/vert!75!black/0.6\,m/0.64, h075/bleu/0.75\,m/0.84,
+                                h100/mandarine/1.0\,m/1.07, h150/rouge/1.5\,m/1.55} {
+      \edef\tmp{\noexpand\addplot[draw=black!45, dashed, line width=0.8pt] table[x=t, y=tz] {data/\f_z.dat};
+                \noexpand\addplot[draw=\c, line width=2pt] table[x=t, y=z] {data/\f_z.dat};}
+      \tmp
+    }
+    \node[anchor=west, font=\normalsize\bfseries, text=rouge]          at (axis cs:7,1.67) {1.5\,m};
+    \node[anchor=west, font=\normalsize\bfseries, text=mandarine]      at (axis cs:7,1.19) {1.0\,m};
+    \node[anchor=west, font=\normalsize\bfseries, text=bleu]           at (axis cs:7,0.93) {0.75\,m};
+    \node[anchor=west, font=\normalsize\bfseries, text=vert!60!black]  at (axis cs:7,0.50) {0.6\,m};
+  \end{axis}
+  \node[anchor=north, align=center, font=\normalsize, text=saclaydk] at ($(pz.south)+(0,-1.3)$)
+       {solid = measured, dashed = target\\each flight: take off, circle, land on its own};
+\end{tikzpicture}
+\end{document}
