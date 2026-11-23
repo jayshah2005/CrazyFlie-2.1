@@ -29,6 +29,7 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         T power = 0;       // weight on rotor power above hover, max(0, sum (rpm / rpm_max)^3 minus its hover value)
         T speed_limit = 0; // weight on (speed - allowed speed)^2 above it (Mission::speed_cap, brake_acc)
         T energy = 0;      // weight on sum (rpm / rpm_max)^3 (hover included) while a static target is not reached
+        T progress = 0;    // K, reward per metre closed (Mission::progress_cap; set by the Python binding, L2F_PROGRESS_K)
         struct Components{
             T orientation_cost;
             T position_cost;
@@ -44,6 +45,8 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             T power_cost = 0;  // max(0, sum (rpm / rpm_max)^3 - its hover value)
             T speed_cost = 0;  // (speed - allowed speed)^2 above it
             T energy_cost = 0; // sum (rpm / rpm_max)^3 while a static target is not reached (energy per leg)
+            T progress_gain = 0;     // d_t - gamma d_t+1 (an unweighted reward, not a cost)
+            T progress_distance = 0; // d_t, charged on a crash step
             bool terminated;
             bool landed;    // terminated by a landing (motor cut), not a crash
             T weighted_cost;
@@ -85,6 +88,27 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             }
         }
         return cost;
+    }
+    // Progress reward (Squared::progress = K, Mission::progress_cap / progress_gamma): flat position
+    // cost and no velocity cost beyond the cap, and the distance gain d_t - gamma d_t+1 (any target,
+    // moving or not; d = |position|, the error to the target). Out of line, like the terms below.
+    template<typename DEVICE, typename SPEC, typename STATE, typename COMPONENTS>
+    __attribute__((noinline)) void progress_terms(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const STATE& state, const STATE& next_state, COMPONENTS& components){
+        using T = typename SPEC::T;
+        using TI = typename DEVICE::index_t;
+        const auto& m = env.mission;
+        T d2 = 0, d2_next = 0;
+        for(TI i = 0; i < 3; i++){
+            d2 += state.position[i] * state.position[i];
+            d2_next += next_state.position[i] * next_state.position[i];
+        }
+        const T d = math::sqrt(device.math, d2), d_next = math::sqrt(device.math, d2_next);
+        if(d > m.progress_cap){
+            components.position_cost = m.progress_cap * m.progress_cap;
+            components.linear_vel_cost = 0;
+        }
+        components.progress_gain = d - m.progress_gamma * d_next;
+        components.progress_distance = d;
     }
     // Reward terms of the time-to-target study (Mission::pos_cap, arrive_*, speed_cap; reward
     // parts time, power, speed_limit). Static target = no target velocity. Kept out of line so
@@ -170,6 +194,10 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         if(params.time != 0 || params.power != 0 || params.speed_limit != 0 || params.energy != 0 || env.mission.pos_cap > 0){
             time_to_target_terms(device, env, state, components);
         }
+        // progress reward: after the time terms, so their arrival test sees the true distance
+        if(params.progress != 0){
+            progress_terms(device, env, state, next_state, components);
+        }
         // gentle touchdown: penalize sinking fast close to the floor (mission episodes only)
         T landing_cost = 0;
         if(state.floor_z > -50 && state.position[2] - state.floor_z < (T)0.1 && state.linear_velocity[2] < 0){
@@ -196,9 +224,16 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             // a landing (motor cut) is paid the bonus it gives up; a crash or a failed
             // landing gets the termination (crash) penalty
             components.reward = components.landed ? params.landing_payout : params.termination_penalty;
+            if(params.progress != 0 && !components.landed){
+                // a crash does not refund the distance still to fly
+                components.reward -= params.progress * components.progress_distance;
+            }
         }
         else{
             components.reward = -components.scaled_weighted_cost + params.constant;
+            if(params.progress != 0){
+                components.reward += params.progress * components.progress_gain;
+            }
             components.reward = (components.reward > 0 || !params.non_negative) ? components.reward : 0;
         }
 

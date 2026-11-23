@@ -523,6 +523,14 @@ namespace rl_tools::rl::environments{
             // linear beyond it (Huber), and the velocity cost applies only within pos_cap of it (far away
             // the time objective and the linear pull drive, near it precision); 0 = off (plain squared)
             T pos_cap = env_or("L2F_POS_CAP", 0);
+            // Progress reward (reward weight `progress` = L2F_PROGRESS_K, set by the Python binding;
+            // 0 = off): beyond progress_cap m of the target the position cost is flat (cap^2) and the
+            // velocity cost 0, and every step pays K (d_t - progress_gamma d_t+1), a crash step -K d_t.
+            // A leg then costs about K x its length however long it takes (a Huber or squared cost
+            // made legs over ~1 m cost more than the crash penalty; time_to_target_study.md, 5.6).
+            // progress_gamma must be the TD3 discount. Not combined with pos_cap (progress wins).
+            T progress_cap = env_or("L2F_PROGRESS_CAP", 0.2);
+            T progress_gamma = env_or("L2F_PROGRESS_GAMMA", 0.99);
             // speed_cap: reward part "speed_limit" = (speed - speed_cap)^2 above it (safety);
             // speed_crash > 0: faster than this ends the episode like a crash
             T speed_cap = env_or("L2F_SPEED_CAP", 1.5);

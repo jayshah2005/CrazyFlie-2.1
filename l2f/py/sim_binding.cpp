@@ -40,11 +40,11 @@ using RNG = decltype(rlt::random::default_engine(typename DEVICE::SPEC::RANDOM()
 constexpr TI OBS_DIM = ENVIRONMENT::OBSERVATION_DIM;
 constexpr TI OBS_DIM_PRIVILEGED = ENVIRONMENT::OBSERVATION_DIM_PRIVILEGED;
 constexpr TI ACTION_DIM = ENVIRONMENT::ACTION_DIM;
-constexpr TI N_PARTS = 15;
+constexpr TI N_PARTS = 16;
 const std::vector<std::string> PART_NAMES = {
     "survival", "position", "orientation", "linear_velocity", "angular_velocity", "linear_acceleration",
     "angular_acceleration", "action", "action_rate", "zigzag", "landing_speed",
-    "time", "power", "speed_limit", "energy"};
+    "time", "power", "speed_limit", "energy", "progress"};
 
 // Unweighted reward parts of one transition (the reward is sum_k w_k u_k with w from weights_of).
 template <typename P, typename C>
@@ -69,32 +69,37 @@ void parts_of(const P& p, const C& c, T* u){
     u[12] = -p.scale * c.power_cost;
     u[13] = -p.scale * c.speed_cost;
     u[14] = -p.scale * c.energy_cost;
+    u[15] = c.progress_gain;  // a reward (progress per metre), not a cost; weight K
 }
 template <typename P>
 void weights_of(const P& p, T* w){
     T v[N_PARTS] = {1, p.position, p.orientation, p.linear_velocity, p.angular_velocity, p.linear_acceleration,
                     p.angular_acceleration, p.action, p.action_rate, p.zigzag, p.landing_speed,
-                    p.time, p.power, p.speed_limit, p.energy};
+                    p.time, p.power, p.speed_limit, p.energy, p.progress};
     for(TI k = 0; k < N_PARTS; k++) w[k] = v[k];
 }
 
 template <TI COLS>
 using Row = rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, COLS>>;
 
+// The recipe's parameters plus the runtime reward weights (0 = off), runtime options like the
+// L2F_* ones: the time-to-target terms and the progress reward (Mission::progress_cap).
+void set_parameters(ENVIRONMENT& env){
+    auto env_or = [](const char* name){ const char* v = std::getenv(name); return v ? (T)std::atof(v) : (T)0; };
+    env.parameters = PENV::parameters;
+    env.parameters.mdp.reward.time = env_or("L2F_W_TIME");
+    env.parameters.mdp.reward.power = env_or("L2F_W_POWER");
+    env.parameters.mdp.reward.speed_limit = env_or("L2F_W_SPEED");
+    env.parameters.mdp.reward.energy = env_or("L2F_W_ENERGY");
+    env.parameters.mdp.reward.progress = env_or("L2F_PROGRESS_K");
+}
+
 class Sim{
 public:
     Sim(TI n_envs, std::uint64_t seed): n(n_envs), envs(n_envs), states(n_envs),
         rng(rlt::random::default_engine(typename DEVICE::SPEC::RANDOM(), (TI)seed)){
-        // weights of the time-to-target terms (0 = off), runtime options like the L2F_* ones
-        auto env_or = [](const char* name){ const char* v = std::getenv(name); return v ? (T)std::atof(v) : (T)0; };
-        const T w_time = env_or("L2F_W_TIME"), w_power = env_or("L2F_W_POWER"), w_speed = env_or("L2F_W_SPEED");
-        const T w_energy = env_or("L2F_W_ENERGY");
         for(auto& env: envs){
-            env.parameters = PENV::parameters;
-            env.parameters.mdp.reward.time = w_time;
-            env.parameters.mdp.reward.power = w_power;
-            env.parameters.mdp.reward.speed_limit = w_speed;
-            env.parameters.mdp.reward.energy = w_energy;
+            set_parameters(env);
             rlt::malloc(dev, env);
         }
         rlt::malloc(dev, obs);
@@ -264,7 +269,7 @@ private:
 py::dict reference_rollout(std::uint64_t seed, TI steps){
     DEVICE dev;
     ENVIRONMENT env;
-    env.parameters = PENV::parameters;
+    set_parameters(env);  // the same runtime weights as Sim, so the test covers them too
     rlt::malloc(dev, env);
     auto rng = rlt::random::default_engine(typename DEVICE::SPEC::RANDOM(), (TI)seed);
     Row<OBS_DIM> obs;

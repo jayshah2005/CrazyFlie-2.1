@@ -95,7 +95,13 @@ def train(args, extra_env):
     torch.set_num_threads(1)  # 64-unit networks: threads cost more than they save
     rng = np.random.default_rng(args.seed)
     sim = l2f_sim.Sim(1, args.seed)
-    agent = make_agent(args, cfg, info, sim.weights())
+    # The progress reward's part (L2F_PROGRESS_K) stays out of the buffer while it is off: an
+    # extra all-zero column changes the float32 summation order of parts @ weights, and older
+    # recipes would no longer reproduce bit for bit.
+    keep = [i for i, (n, w) in enumerate(zip(info['part_names'], sim.weights())) if n != 'progress' or w != 0]
+    info = {**info, 'part_names': [info['part_names'][i] for i in keep]}
+    weights_now = lambda: np.asarray(sim.weights())[keep]
+    agent = make_agent(args, cfg, info, weights_now())
     buf = ReplayBuffer(cfg.replay_cap, info['obs_dim'], info['obs_dim_privileged'], info['action_dim'],
                        len(info['part_names']))
     names = info['part_names']
@@ -120,7 +126,7 @@ def train(args, extra_env):
             if waypoint_ramp > 0:  # B: the waypoint jumps grow on their own (slower) schedule
                 sim.set_waypoint_progress(min(1.0, t / waypoint_ramp))
         if weight_curriculum and t != 0 and t % 100_000 == 0 and t != cfg.steps - 1:
-            w = sim.weights()
+            w = weights_now()  # indexed like names (weight_index)
             sim.set_weights({k: min(cap, float(w[weight_index[k]]) * f) for k, (f, cap) in cfg.weight_caps.items()})
         if t % 100_000 == 0 and t >= 500_000:
             agent.decay_noise()
@@ -140,12 +146,12 @@ def train(args, extra_env):
         obs, obs_p = sim.observe()
         act = agent.act(obs, rng)
         out = sim.step(act)
-        buf.add(obs, obs_p, act, out['parts'], out['next_obs'], out['next_obs_privileged'], out['terminated'],
+        buf.add(obs, obs_p, act, out['parts'][:, keep], out['next_obs'], out['next_obs_privileged'], out['terminated'],
                 out['task'])
         episode_step += 1
         episode_return += float(out['reward'][0])
         done = out['terminated'] | (episode_step == cfg.step_limit)
-        agent.update(t, buf, rng, names, sim.weights())
+        agent.update(t, buf, rng, names, weights_now())
     log.info('Training took: %.1f s', time.time() - t0)
     if moo_log and agent.rows:
         run_log.write_csv(moo_log, agent.log_fields(), agent.rows, script=__file__,

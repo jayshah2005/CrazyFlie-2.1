@@ -30,24 +30,25 @@ from td3 import TD3
 
 OBJECTIVES = ['survival', 'position', 'orientation', 'linear_velocity', 'action', 'smoothing',
               'angular_acceleration', 'landing_speed']
+# the progress reward (L2F_PROGRESS_K) goes with position everywhere: it is the far-field position term
 GROUP_OF = {'survival': 0, 'position': 1, 'orientation': 2, 'linear_velocity': 3, 'action': 4,
             'action_rate': 5, 'zigzag': 5, 'angular_acceleration': 6, 'landing_speed': 7,
-            'time': 1, 'power': 4, 'speed_limit': 7, 'energy': 4}
+            'time': 1, 'power': 4, 'speed_limit': 7, 'energy': 4, 'progress': 1}
 # parts=3: the groups tracking, smoothness, safety; untested before 2026-11-22
 GROUPS3 = ['tracking', 'smoothness', 'safety']
 GROUP3_OF = {'position': 0, 'linear_velocity': 0, 'action': 1, 'action_rate': 1, 'zigzag': 1,
              'angular_acceleration': 1, 'survival': 2, 'orientation': 2, 'landing_speed': 2,
-             'time': 0, 'power': 1, 'speed_limit': 2, 'energy': 1}
+             'time': 0, 'power': 1, 'speed_limit': 2, 'energy': 1, 'progress': 0}
 # parts=4 (time-to-target study, 2026-11-22): time, precision, efficiency, safety
 GROUPS4 = ['time', 'precision', 'efficiency', 'safety']
 GROUP4_OF = {'time': 0, 'position': 1, 'linear_velocity': 1, 'action': 2, 'action_rate': 2, 'zigzag': 2,
              'angular_acceleration': 2, 'power': 2, 'survival': 3, 'orientation': 3, 'landing_speed': 3,
-             'speed_limit': 3, 'energy': 2}
+             'speed_limit': 3, 'energy': 2, 'progress': 1}
 # regrouped by measured conflict (2026-11-23, ungrouped run: survival fights the dense costs,
 # time agrees with position): --grouping regroup with parts=4 (crash, progress, effort, limits)
 # or parts=5 (+ energy per leg as its own objective)
 REGROUPS = {4: ['crash', 'progress', 'effort', 'limits'], 5: ['crash', 'progress', 'effort', 'limits', 'energy']}
-REGROUP_OF = {4: {'survival': 0, 'position': 1, 'linear_velocity': 1, 'time': 1, 'energy': 1,
+REGROUP_OF = {4: {'survival': 0, 'position': 1, 'linear_velocity': 1, 'time': 1, 'energy': 1, 'progress': 1,
                   'action': 2, 'action_rate': 2, 'zigzag': 2, 'angular_acceleration': 2, 'power': 2,
                   'orientation': 3, 'speed_limit': 3, 'landing_speed': 3}}
 REGROUP_OF[5] = {**REGROUP_OF[4], 'energy': 4}
