@@ -522,7 +522,12 @@ int run_landing(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
 // the time from the target's move to arrival (within L2F_ARRIVE_POS m and slower than
 // L2F_ARRIVE_SPEED m/s), the overshoot past the target along the leg, the error over the
 // last 0.3 s of the leg, and over the episode the peak speed and the mean rotor power above
-// hover (sum (rpm / rpm_max)^3 - hover).
+// hover (sum (rpm / rpm_max)^3 - hover). Also arrival within 10 cm (and slower than
+// L2F_ARRIVE_SPEED) and its time, on a line of its own.
+// L2F_EVAL_LEG_S=<s> (test only, 0 = off): both legs last this long (the second move comes
+// L2F_EVAL_LEG_S after the jump, and the episode runs on past the training step limit), so a
+// slow policy can settle before a leg ends; training's legs end after 1.5-2.5 s (the first)
+// and at the 5 s step limit (the second).
 template <typename ACTOR, typename BUFFER, typename RNG>
 int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng){
     ENVIRONMENT env;
@@ -540,12 +545,26 @@ int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rn
     rlt::malloc(dev, action);
     const T dt = env.parameters.integration.dt;
     const auto& m = env.mission;
-    TI crashed = 0, legs = 0, arrived = 0;
+    const char* s_leg = std::getenv("L2F_EVAL_LEG_S");
+    const T leg_s = s_leg ? (T)std::atof(s_leg) : 0;
+    constexpr T ARRIVE_POS2 = 0.10;
+    // L2F_EVAL_RESET_INTEGRAL=1 (test only, diagnostic): zero the position-error integral
+    // observation whenever the target moves (it builds up while the drone flies a leg)
+    const char* s_reset = std::getenv("L2F_EVAL_RESET_INTEGRAL");
+    const bool reset_integral = s_reset && std::atoi(s_reset) != 0;
+    T along_sum = 0, along_n = 0;  // signed final error along the leg (> 0: past the target)
+    TI crashed = 0, legs = 0, arrived = 0, arrived2 = 0;
+    T t2_sum = 0;
     T t_sum = 0, over_sum = 0, final_sum = 0, final_n = 0, vmax_sum = 0, power_sum = 0, power_n = 0, dist_sum = 0;
     for(TI e = 0; e < episodes; e++){
         typename ENVIRONMENT::State s, next;
         rlt::sample_initial_state(dev, env, s, rng);
+        if(leg_s > 0){
+            s.traj[4] = s.traj[3] + leg_s;  // the second move comes leg_s after the jump
+        }
         const T t_leg[2] = {s.traj[3], s.traj[4]};
+        // the episode: the training step limit, or both legs in full
+        const TI n_steps = leg_s > 0 ? (TI)std::ceil((s.traj[4] + leg_s) / dt) : CONFIG::ENVIRONMENT_STEP_LIMIT;
         // leg directions (unit) and lengths: 0 -> d, then d -> traj[5] d
         T d[3], len0 = 0;
         for(TI i = 0; i < 3; i++){ d[i] = s.traj[i]; len0 += d[i] * d[i]; }
@@ -556,9 +575,10 @@ int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rn
             dir[0][i] = d[i] / (len0 + (T)1e-9);
             dir[1][i] = (s.traj[5] - 1) * d[i] / (len1 + (T)1e-9);
         }
-        T t_arrive[2] = {-1, -1}, over[2] = {0, 0}, fin[2] = {0, 0}, fin_n[2] = {0, 0}, vmax = 0;
+        T t_arrive[2] = {-1, -1}, t_arrive2[2] = {-1, -1}, over[2] = {0, 0}, fin[2] = {0, 0}, fin_n[2] = {0, 0}, vmax = 0;
         bool alive = true;
-        for(TI step = 0; step < CONFIG::ENVIRONMENT_STEP_LIMIT; step++){
+        TI last_leg = 2;
+        for(TI step = 0; step < n_steps; step++){
             rlt::observe(dev, env, s, observation, rng);
             rlt::evaluate(dev, actor, observation, action, buffer);
             rlt::clamp(dev, action, (T)-1, (T)1);
@@ -567,6 +587,10 @@ int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rn
             if(rlt::terminated(dev, env, s, rng)){ alive = false; break; }
             const T t = s.traj_t;
             const TI leg = t >= t_leg[1] ? 1 : (t >= t_leg[0] ? 0 : 2);
+            if(reset_integral && leg != last_leg){
+                for(TI i = 0; i < 3; i++){ s.pos_integral[i] = 0; }
+            }
+            last_leg = leg;
             T p2 = 0, v2 = 0, along = 0;
             for(TI i = 0; i < 3; i++){
                 p2 += s.position[i] * s.position[i];
@@ -582,9 +606,12 @@ int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rn
                 if(t_arrive[leg] < 0 && p2 < m.arrive_pos * m.arrive_pos && v2 < m.arrive_speed * m.arrive_speed){
                     t_arrive[leg] = t - t_leg[leg];
                 }
+                if(t_arrive2[leg] < 0 && p2 < ARRIVE_POS2 * ARRIVE_POS2 && v2 < m.arrive_speed * m.arrive_speed){
+                    t_arrive2[leg] = t - t_leg[leg];
+                }
                 over[leg] = std::max(over[leg], along);
-                const T t_end = leg == 0 ? t_leg[1] : CONFIG::ENVIRONMENT_STEP_LIMIT * dt;
-                if(t >= t_end - (T)0.3){ fin[leg] += std::sqrt(p2); fin_n[leg]++; }
+                const T t_end = leg == 0 ? t_leg[1] : n_steps * dt;
+                if(t >= t_end - (T)0.3){ fin[leg] += std::sqrt(p2); fin_n[leg]++; along_sum += along; along_n++; }
             }
         }
         if(!alive){ crashed++; continue; }
@@ -593,6 +620,7 @@ int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rn
             legs++;
             dist_sum += l == 0 ? len0 : len1;
             if(t_arrive[l] >= 0){ arrived++; t_sum += t_arrive[l]; }
+            if(t_arrive2[l] >= 0){ arrived2++; t2_sum += t_arrive2[l]; }
             over_sum += over[l];
             if(fin_n[l] > 0){ final_sum += fin[l] / fin_n[l]; final_n++; }
         }
@@ -606,6 +634,11 @@ int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rn
                 (double)(arrived ? t_sum / arrived : -1), (double)(legs ? 100 * over_sum / legs : 0),
                 (double)(final_n ? 100 * final_sum / final_n : 0), (double)(ok ? vmax_sum / ok : 0),
                 (double)(power_n ? power_sum / power_n : 0));
+    std::printf("waypoint final error along the leg %.1f cm (> 0: past the target)%s\n",
+                (double)(along_n ? 100 * along_sum / along_n : 0), reset_integral ? "; integral reset at every target move" : "");
+    std::printf("waypoint 10 cm: arrived %d (%.0f%%), time to target %.2f s; legs %s\n", (int)arrived2,
+                (double)(legs ? 100.0 * arrived2 / legs : 0), (double)(arrived2 ? t2_sum / arrived2 : -1),
+                leg_s > 0 ? (std::to_string(leg_s).substr(0, 4) + " s each").c_str() : "as in training");
     return 0;
 }
 

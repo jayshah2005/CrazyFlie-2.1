@@ -17,8 +17,9 @@ A word KEY=VALUE is a runtime option (train.py --env); any other word goes to tr
 Every run is tested at each --delays estimate delay (ms), 100 episodes per checkpoint and test
 (train.py --evaluate-run: the last 11 checkpoints, clean / uneven motors / 1% jumps).
 Waypoint tests run on every checkpoint from 1.2M on (--wp-episodes each) and report medians over
-seeds x checkpoints: crashes, legs arrived (5 cm, 0.2 m/s), time to target, overshoot, final error,
-peak speed. Finished runs and tests are skipped, so an interrupted study continues where it stopped.
+seeds x checkpoints: crashes, legs arrived within 5 cm and within 10 cm (both below 0.2 m/s) and
+the time to each, overshoot, final error, peak speed. L2F_EVAL_LEG_S=<s> in a wtest line makes both
+legs that long (test only), so slow policies can settle before a leg ends. Finished runs and tests are skipped, so an interrupted study continues where it stopped.
 
 Usage:
   python l2f/sim/ablation.py --study l2f/sim/ablation_simopts.txt \
@@ -215,9 +216,10 @@ def main() -> None:
                     log.warning('waypoint %-8s | arm %-14s | no results', cond, arm)
                     continue
                 med = {k: st.median(r[k] for r in pooled) for k in pooled[0]}
-                log.info('waypoint %-8s | arm %-14s | crashed %4.1f%% (%s)  arrived %4.1f%%  time %.2f s  '
-                         'overshoot %4.1f cm  final error %4.1f cm  peak speed %.2f m/s', cond, arm, med['crash'],
-                         ', '.join(per_seed), med['arrived'], med['time'], med['overshoot'], med['final'], med['speed'])
+                log.info('waypoint %-8s | arm %-14s | crashed %4.1f%% (%s)  arrived 5 cm %4.1f%% in %.2f s, '
+                         '10 cm %4.1f%% in %.2f s  overshoot %4.1f cm  final error %4.1f cm  peak speed %.2f m/s',
+                         cond, arm, med['crash'], ', '.join(per_seed), med['arrived'], med['time'], med['arrived10'],
+                         med['time10'], med['overshoot'], med['final'], med['speed'])
     log.info('outputs in %s', out)
 
 
@@ -230,10 +232,14 @@ def wp_rows(path: Path) -> list[dict[str, float]]:
         m1 = re.search(r'waypoint episodes (\d+): crashed (\d+); legs \d+ \(mean [\d.]+ m\), arrived \d+ \(([\d.]+)%\)', block)
         m2 = re.search(r'time to target ([-\d.]+) s, overshoot ([-\d.]+) cm, final error ([-\d.]+) cm, '
                        r'peak speed ([-\d.]+) m/s', block)
+        m3 = re.search(r'waypoint 10 cm: arrived \d+ \(([\d.]+)%\), time to target ([-\d.]+) s', block)
         if m1 and m2:
             rows.append({'crash': 100 * int(m1.group(2)) / int(m1.group(1)), 'arrived': float(m1.group(3)),
                          'time': float(m2.group(1)), 'overshoot': float(m2.group(2)), 'final': float(m2.group(3)),
-                         'speed': float(m2.group(4))})
+                         'speed': float(m2.group(4)),
+                         # evaluators before the 10 cm line: nan, so the summary shows it is missing
+                         'arrived10': float(m3.group(1)) if m3 else float('nan'),
+                         'time10': float(m3.group(2)) if m3 else float('nan')})
     return rows
 
 
