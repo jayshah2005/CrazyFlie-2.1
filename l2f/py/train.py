@@ -191,7 +191,7 @@ def main():
     parser.add_argument('--evaluate-run', type=Path, help='only score the checkpoints of this run folder')
     parser.add_argument('--moo', choices=['parts', 'tasks'], help='multi-objective TD3 (moo.py): framing A or B')
     parser.add_argument('--agg', default='sum', choices=AGGREGATORS, help='TorchJD aggregator (--moo)')
-    parser.add_argument('--parts', type=int, default=8, choices=[1, 3, 8], help='--moo parts: 8 objectives, 3 groups '
+    parser.add_argument('--parts', type=int, default=8, choices=[1, 3, 4, 8], help='--moo parts: 8 objectives, 3 groups '
                         '(tracking, smoothness, safety), or 1 (all merged: the MOO code path on the scalar reward, '
                         'must match TD3)')
     parser.add_argument('--tasks', type=int, default=5, choices=[5, 9], help='--moo tasks: episode types')

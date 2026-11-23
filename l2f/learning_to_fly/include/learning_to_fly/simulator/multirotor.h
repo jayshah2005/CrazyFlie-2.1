@@ -31,6 +31,7 @@ namespace rl_tools::rl::environments::multirotor{
             T J_inv[3][3];
             T rpm_time_constant;
             ActionLimit action_limit;
+            T drag = 0;  // linear air drag (N s/m): F = -drag * v; Mission::drag_max randomizes it
         };
         struct Integration{
             T dt;
@@ -355,6 +356,13 @@ namespace rl_tools::rl::environments::multirotor{
         T cut_height;
         TI landed;
         T touchdown_speed;
+        // Actuator dead time (Mission::act_delay_p): with act_delay = 1 the motors get the
+        // previous step's command (10 ms, measured 2026-11-22); action_pending holds it (rpm).
+        T action_pending[4];
+        TI act_delay;
+        // Slowly wandering common motor gain (Mission::gain_walk_sigma): the motors settle
+        // at (1 + gain_walk) x the command, an AR(1) process (battery sag, 2026-11-22).
+        T gain_walk;
 #ifdef L2F_SENSOR_SIM
         // Sensor path (sensor_sim.h): the actor observes the estimator's output, not the
         // truth. world_offset turns the target-relative frame into the Lighthouse (room)
@@ -503,6 +511,32 @@ namespace rl_tools::rl::environments{
             T p_fast_circle = env_or("L2F_P_FAST_CIRCLE", 0);
             T p_p2p = env_or("L2F_P_P2P", 0);
             T p_gust = env_or("L2F_P_GUST", 0);
+            // Waypoint episodes (time-to-target study), off by default: the target jumps
+            // waypoint_min..max m (scaled by the curriculum), then moves to a second point on
+            // the same line; the time objective counts the steps until arrival
+            T p_waypoint = env_or("L2F_P_WAYPOINT", 0);
+            T waypoint_min = env_or("L2F_WAYPOINT_MIN", 0.3), waypoint_max = env_or("L2F_WAYPOINT_MAX", 1.5);
+            // Arrival at a static target (reward part "time"): within arrive_pos m and slower
+            // than arrive_speed m/s
+            T arrive_pos = env_or("L2F_ARRIVE_POS", 0.05), arrive_speed = env_or("L2F_ARRIVE_SPEED", 0.2);
+            // L2F_POS_CAP > 0: for a static target, the position cost is capped at pos_cap^2
+            // and the velocity cost applies only within pos_cap of it (far away the time
+            // objective drives, near it precision); 0 = off (the plain squared costs)
+            T pos_cap = env_or("L2F_POS_CAP", 0);
+            // speed_cap: reward part "speed_limit" = (speed - speed_cap)^2 above it (safety);
+            // speed_crash > 0: faster than this ends the episode like a crash
+            T speed_cap = env_or("L2F_SPEED_CAP", 1.5);
+            T speed_crash = env_or("L2F_SPEED_CRASH", 0);
+            // Sim-to-real options (2026-11-22 flights), all off by default:
+            // linear air drag U(0, drag_max) N s/m per episode
+            T drag_max = env_or("L2F_DRAG_MAX", 0);
+            // probability that an episode has the 1-step (10 ms) actuator dead time
+            T act_delay_p = env_or("L2F_ACT_DELAY_P", 0);
+            // absolute motor time-constant range (s); when tau_max > 0 it replaces the
+            // relative +-dr_motor_tau (low battery: the rotors followed at 0.09-0.19 s)
+            T tau_min = env_or("L2F_MOTOR_TAU_MIN", 0), tau_max = env_or("L2F_MOTOR_TAU_MAX", 0);
+            // common motor gain wander: std gain_walk_sigma, correlation time gain_walk_tau s
+            T gain_walk_sigma = env_or("L2F_GAIN_WALK", 0), gain_walk_tau = env_or("L2F_GAIN_WALK_TAU", 0.3);
             T delay_max_steps = env_or("L2F_DELAY_MAX_MS", 12) / 10;  // uniform 0..max (dt = 10 ms)
             bool domain_randomization = env_or("L2F_DR", 1) != 0;
             T dr_scale = env_or("L2F_DR_SCALE", 1);  // 1 = the paper's ranges

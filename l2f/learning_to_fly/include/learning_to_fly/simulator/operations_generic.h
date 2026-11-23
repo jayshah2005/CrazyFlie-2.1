@@ -158,6 +158,11 @@ namespace rl_tools::rl::environments::multirotor {
         // flops: 4
         utils::vector_operations::scalar_multiply<DEVICE, T, 3>(state_change.linear_velocity, 1 / params.dynamics.mass);
         utils::vector_operations::add_accumulate<DEVICE, T, 3>(params.dynamics.gravity, state_change.linear_velocity);
+        if(params.dynamics.drag > 0){  // linear air drag (Dynamics::drag)
+            for(TI i = 0; i < 3; i++){
+                state_change.linear_velocity[i] -= params.dynamics.drag / params.dynamics.mass * state.linear_velocity[i];
+            }
+        }
 
         T vector[3];
         T vector2[3];
@@ -222,6 +227,11 @@ namespace rl_tools{
             }
             state.floor_z = -100;  // no floor
             state.traj_t = 0;
+            for(TI i = 0; i < 4; i++){
+                state.action_pending[i] = 0;
+            }
+            state.act_delay = 0;
+            state.gain_walk = 0;
             state.traj_type = 0;
             state.task = 0;
             for(TI i = 0; i < 6; i++){
@@ -307,6 +317,12 @@ namespace rl_tools{
                 if(t >= state.traj[3]){
                     for(TI i = 0; i < 3; i++){ p[i] = state.traj[i]; }
                 }
+            }
+            else if(state.traj_type == 6){
+                // waypoints: jumps by traj[0..2] at time traj[3], then to traj[5] x traj[0..2]
+                // at time traj[4] (on the same line), static otherwise
+                T s = t >= state.traj[4] ? state.traj[5] : (t >= state.traj[3] ? (T)1 : (T)0);
+                for(TI i = 0; i < 3; i++){ p[i] = s * state.traj[i]; }
             }
             // traj_type 4 (gust): static target, the gust acts in post_integration
         }
@@ -462,6 +478,13 @@ namespace rl_tools{
                     d.J_inv[i][i] /= f;
                 }
                 d.rpm_time_constant *= U(1 - k * m.dr_motor_tau, 1 + k * m.dr_motor_tau);
+                if(m.tau_max > 0){  // absolute range (Mission::tau_min / tau_max), faded in by k
+                    const T tau0 = env.nominal_dynamics.rpm_time_constant;
+                    d.rpm_time_constant = tau0 + k * (U(m.tau_min, m.tau_max) - tau0);
+                }
+                if(m.drag_max > 0){
+                    d.drag = U(0, k * m.drag_max);
+                }
                 T kt = U(1 - k * m.dr_thrust, 1 + k * m.dr_thrust);
                 for(TI i = 0; i < 3; i++){
                     d.thrust_constants[i] *= kt;
@@ -519,6 +542,12 @@ namespace rl_tools{
                 }
             }
             state.delay_steps = U(0, k * m.delay_max_steps);
+            if(m.act_delay_p > 0){
+                state.act_delay = U(0, 1) < k * m.act_delay_p ? 1 : 0;
+            }
+            if(m.gain_walk_sigma > 0){
+                state.gain_walk = random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM(), (T)0, k * m.gain_walk_sigma, rng);
+            }
             state.ground_effect = U(0, k * m.ge_k_max);
             // per-axis position noise (no random numbers drawn when off, so older
             // recipes reproduce exactly)
@@ -707,6 +736,25 @@ namespace rl_tools{
                 state.traj[2] = a * climb / n;
                 state.traj[3] = U(0.3, 3.0);
                 state.traj[4] = U(0.2, 1.5);
+            }
+            else if(r < m.p_takeoff + m.p_land + m.p_circle + m.p_line + m.p_eight + m.p_fast_circle + m.p_p2p + m.p_gust + m.p_waypoint){
+                // waypoints (time-to-target study): hover, then the target jumps
+                // waypoint_min..max m (the far end faded in by the curriculum) in a mostly
+                // horizontal direction after 0.3-1 s, and 1.5-2.5 s later moves on to
+                // s x the jump, s in [-1, 0.5] (back past the start, or part way back)
+                near_hover();
+                state.task = 9;
+                state.floor_z = -U(0.6, 1.0);
+                T dist = U(m.waypoint_min, m.waypoint_min + k * (m.waypoint_max - m.waypoint_min));
+                T heading = U(0, 2 * math::PI<T>), climb = U(-0.25, 0.25);
+                T n = math::sqrt(device.math, 1 + climb * climb);
+                state.traj_type = 6;
+                state.traj[0] = dist * math::cos(device.math, heading) / n;
+                state.traj[1] = dist * math::sin(device.math, heading) / n;
+                state.traj[2] = dist * climb / n;
+                state.traj[3] = U(0.3, 1.0);
+                state.traj[4] = state.traj[3] + U(1.5, 2.5);
+                state.traj[5] = U(-1, 0.5);
             }
             // else: the original free-flight start, static target, no floor
 #ifdef L2F_TASK_REGIME
@@ -949,6 +997,9 @@ namespace rl_tools{
         if(env.mission.enabled){
             rl::environments::multirotor::mission::sample(device, env, state, state.rpm, rng);
             rl::environments::multirotor::mission::sync_rpm_meas(env, state);
+        }
+        for(TI i = 0; i < 4; i++){
+            state.action_pending[i] = state.rpm[i];  // actuator dead time: the first step keeps the current speeds
         }
         for(TI step_i = 0; step_i < HISTORY_LENGTH; step_i++){
             for(TI action_i = 0; action_i < MULTIROTOR::ACTION_DIM; action_i++){
@@ -1346,6 +1397,17 @@ namespace rl_tools{
         next_state.landed = state.landed;
         next_state.touchdown_speed = state.touchdown_speed;
         for(TI i = 0; i < 4; i++){
+            next_state.action_pending[i] = state.action_pending[i];  // step() sets the new one
+        }
+        next_state.act_delay = state.act_delay;
+        next_state.gain_walk = state.gain_walk;
+        if(env.mission.enabled && env.mission.gain_walk_sigma > 0){
+            // AR(1): g <- a g + sigma sqrt(1 - a^2) N(0, 1), a = exp(-dt / tau)
+            const T a = math::exp(device.math, -env.parameters.integration.dt / env.mission.gain_walk_tau);
+            const T s = env.mission.progress * env.mission.gain_walk_sigma * math::sqrt(device.math, 1 - a * a);
+            next_state.gain_walk = a * state.gain_walk + random::normal_distribution::sample(typename DEVICE::SPEC::RANDOM(), (T)0, s, rng);
+        }
+        for(TI i = 0; i < 4; i++){
             next_state.motor_gain[i] = state.motor_gain[i];
             next_state.motor_offset[i] = state.motor_offset[i];
             next_state.rpm_meas[i] = state.rpm_meas[i];
@@ -1533,11 +1595,23 @@ namespace rl_tools{
         // Per-motor command -> speed mismatch (StateBase::motor_gain / motor_offset).
         for(TI action_i = 0; action_i < ACTION_DIM; action_i++){
             T v = action_scaled[action_i] * state.motor_gain[action_i] + state.motor_offset[action_i];
+            if(state.gain_walk != 0){  // common gain wander (Mission::gain_walk_sigma); same arithmetic as before when off
+                v = action_scaled[action_i] * state.motor_gain[action_i] * (1 + state.gain_walk) + state.motor_offset[action_i];
+            }
             action_scaled[action_i] = math::clamp(device.math, v, env.parameters.dynamics.action_limit.min, env.parameters.dynamics.action_limit.max);
         }
         if(env.mission.motor_idle_rpm > 0){  // ESC idle (Mission::motor_idle_rpm)
             for(TI action_i = 0; action_i < ACTION_DIM; action_i++){
                 action_scaled[action_i] = math::max(device.math, action_scaled[action_i], env.mission.motor_idle_rpm);
+            }
+        }
+        // Actuator dead time (StateBase::act_delay): the motors get the previous step's
+        // command; this step's waits in action_pending (set after post_integration).
+        T action_now[ACTION_DIM];
+        for(TI action_i = 0; action_i < ACTION_DIM; action_i++){
+            action_now[action_i] = action_scaled[action_i];
+            if(state.act_delay){
+                action_scaled[action_i] = state.action_pending[action_i];
             }
         }
         if(env.mission.enabled && state.ground_effect > 0 && state.floor_z > -50){
@@ -1560,6 +1634,9 @@ namespace rl_tools{
 //        utils::integrators::euler<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE, ACTION_DIM, rl::environments::multirotor::multirotor_dynamics_dispatch<DEVICE, typename SPEC::T, typename SPEC::PARAMETERS, STATE>>(device, env.parameters, state, action_scaled, env.parameters.integration.dt, next_state);
 
         post_integration(device, env, state, action, next_state, rng);
+        for(TI action_i = 0; action_i < ACTION_DIM; action_i++){
+            next_state.action_pending[action_i] = action_now[action_i];
+        }
 
         return env.parameters.integration.dt;
     }
@@ -1582,9 +1659,20 @@ namespace rl_tools{
         if(env.parameters.mdp.termination.enabled){
             // rotation crash (Mission::omega_crash), else the preset's limit
             const T w_lim = env.mission.omega_crash > 0 ? env.mission.omega_crash : (T)env.parameters.mdp.termination.angular_velocity_threshold;
+            if(env.mission.enabled && env.mission.speed_crash > 0){
+                T v2 = 0;
+                for(TI i = 0; i < 3; i++){
+                    v2 += state.linear_velocity[i] * state.linear_velocity[i];
+                }
+                if(v2 > env.mission.speed_crash * env.mission.speed_crash){
+                    return true;
+                }
+            }
             for(TI i = 0; i < 3; i++){
+                // waypoint episodes: the target is up to 2 jumps away (traj_type 6)
+                const T p_lim = env.parameters.mdp.termination.position_threshold + (state.traj_type == 6 ? 2 * math::abs(device.math, state.traj[i]) : (T)0);
                 if(
-                    math::abs(device.math, state.position[i]) > env.parameters.mdp.termination.position_threshold ||
+                    math::abs(device.math, state.position[i]) > p_lim ||
                     math::abs(device.math, state.linear_velocity[i]) > env.parameters.mdp.termination.linear_velocity_threshold ||
                     math::abs(device.math, state.angular_velocity[i]) > w_lim
                 ){

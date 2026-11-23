@@ -31,12 +31,19 @@ from td3 import TD3
 OBJECTIVES = ['survival', 'position', 'orientation', 'linear_velocity', 'action', 'smoothing',
               'angular_acceleration', 'landing_speed']
 GROUP_OF = {'survival': 0, 'position': 1, 'orientation': 2, 'linear_velocity': 3, 'action': 4,
-            'action_rate': 5, 'zigzag': 5, 'angular_acceleration': 6, 'landing_speed': 7}
+            'action_rate': 5, 'zigzag': 5, 'angular_acceleration': 6, 'landing_speed': 7,
+            'time': 1, 'power': 4, 'speed_limit': 7}
 # parts=3: the groups tracking, smoothness, safety; untested before 2026-11-22
 GROUPS3 = ['tracking', 'smoothness', 'safety']
 GROUP3_OF = {'position': 0, 'linear_velocity': 0, 'action': 1, 'action_rate': 1, 'zigzag': 1,
-             'angular_acceleration': 1, 'survival': 2, 'orientation': 2, 'landing_speed': 2}
-TASK_NAMES = ['free_flight', 'takeoff', 'landing', 'circle', 'line', 'eight', 'fast_circle', 'p2p', 'gust']
+             'angular_acceleration': 1, 'survival': 2, 'orientation': 2, 'landing_speed': 2,
+             'time': 0, 'power': 1, 'speed_limit': 2}
+# parts=4 (time-to-target study, 2026-11-22): time, precision, efficiency, safety
+GROUPS4 = ['time', 'precision', 'efficiency', 'safety']
+GROUP4_OF = {'time': 0, 'position': 1, 'linear_velocity': 1, 'action': 2, 'action_rate': 2, 'zigzag': 2,
+             'angular_acceleration': 2, 'power': 2, 'survival': 3, 'orientation': 3, 'landing_speed': 3,
+             'speed_limit': 3}
+TASK_NAMES = ['free_flight', 'takeoff', 'landing', 'circle', 'line', 'eight', 'fast_circle', 'p2p', 'gust', 'waypoint']
 AGGREGATORS = ['sum', 'mean', 'upgrad', 'aligned_mtl', 'dualproj', 'pcgrad', 'mgda', 'svd_pga', 'osnmf_pga', 'task_share']
 
 
@@ -63,7 +70,7 @@ def group_parts(part_names, weights, k):
     w = np.asarray(weights, np.float64)
     if k == 1:
         return w[:, None].astype(np.float32), np.ones(1, np.float32)
-    group_of = GROUP3_OF if k == 3 else GROUP_OF
+    group_of = {3: GROUP3_OF, 4: GROUP4_OF}.get(k, GROUP_OF)
     U = np.zeros((len(part_names), k))
     W = np.zeros(k)
     for j in range(k):
@@ -100,7 +107,7 @@ class MooTD3(TD3):
         self.group_weights = np.ones(k, np.float32)
         self.log_every, self.updates, self.rows = log_every, 0, []
         self.share_rng = np.random.default_rng(54321)
-        self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else {8: OBJECTIVES, 3: GROUPS3, 1: ['total']}[k]
+        self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k]
 
     def reward_matrix(self, part_names, weights):
         """R for the critic outputs (see td3.py); also sets the value factors f."""

@@ -24,6 +24,10 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         T landing_speed = 0; // weight on (downward speed)^2 within 10 cm of the floor (gentle touchdown)
         T zigzag = 0; // weight on |a_t - 2 a_{t-1} + a_{t-2}|^2 (needs 2 past actions in the state)
         T landing_payout = 0; // reward of the step on which a landing ends the episode (Mission::landing_cut)
+        // time-to-target study (all 0 = off; set at runtime by the Python binding, L2F_W_*):
+        T time = 0;        // weight on 1 per step while a static target is not reached (Mission::arrive_*)
+        T power = 0;       // weight on rotor power, sum (rpm / rpm_max)^3 minus its hover value
+        T speed_limit = 0; // weight on (speed - Mission::speed_cap)^2 above the cap
         struct Components{
             T orientation_cost;
             T position_cost;
@@ -35,6 +39,9 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
             T action_rate_cost;
             T zigzag_cost;  // |a_t - 2 a_{t-1} + a_{t-2}|^2
             T landing_cost; // (downward speed)^2 near the floor
+            T time_cost = 0;   // 1 while a static target is not reached
+            T power_cost = 0;  // sum (rpm / rpm_max)^3 - its hover value
+            T speed_cost = 0;  // (speed - speed_cap)^2 above the cap
             bool terminated;
             bool landed;    // terminated by a landing (motor cut), not a crash
             T weighted_cost;
@@ -77,6 +84,40 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         }
         return cost;
     }
+    // Reward terms of the time-to-target study (Mission::pos_cap, arrive_*, speed_cap; reward
+    // parts time, power, speed_limit). Static target = no target velocity. Kept out of line so
+    // the other reward terms compile exactly as before.
+    template<typename DEVICE, typename SPEC, typename STATE, typename COMPONENTS>
+    __attribute__((noinline)) void time_to_target_terms(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const STATE& state, COMPONENTS& components){
+        using T = typename SPEC::T;
+        using TI = typename DEVICE::index_t;
+        const auto& m = env.mission;
+        T tv2 = 0, v2 = 0;
+        for(TI i = 0; i < 3; i++){
+            tv2 += state.target_velocity[i] * state.target_velocity[i];
+            v2 += state.linear_velocity[i] * state.linear_velocity[i];
+        }
+        const bool static_target = tv2 == 0;
+        if(m.pos_cap > 0 && static_target){
+            const T cap2 = m.pos_cap * m.pos_cap;
+            if(components.position_cost > cap2){
+                components.position_cost = cap2;
+                components.linear_vel_cost = 0;  // far from it: no speed penalty
+            }
+        }
+        const bool arrived = components.position_cost < m.arrive_pos * m.arrive_pos && v2 < m.arrive_speed * m.arrive_speed;
+        components.time_cost = static_target && !arrived ? (T)1 : (T)0;
+        const auto& dyn = env.parameters.dynamics;
+        const T hover = math::sqrt(device.math, dyn.mass * -dyn.gravity[2] / 4 / dyn.thrust_constants[2]) / dyn.action_limit.max;
+        T power = 0;
+        for(TI i = 0; i < 4; i++){
+            const T rho = state.rpm[i] / dyn.action_limit.max;
+            power += rho * rho * rho;
+        }
+        components.power_cost = power - 4 * hover * hover * hover;
+        const T speed = math::sqrt(device.math, v2);
+        components.speed_cost = speed > m.speed_cap ? (speed - m.speed_cap) * (speed - m.speed_cap) : (T)0;
+    }
     template<typename DEVICE, typename SPEC, typename ACTION_SPEC, typename T, typename RNG>
     RL_TOOLS_FUNCTION_PLACEMENT typename rl::environments::multirotor::parameters::reward_functions::Squared<T>::Components reward_components(DEVICE& device, const rl::environments::Multirotor<SPEC>& env, const rl::environments::multirotor::parameters::reward_functions::Squared<T>& params, const typename rl::environments::Multirotor<SPEC>::State& state, const Matrix<ACTION_SPEC>& action,  const typename rl::environments::Multirotor<SPEC>::State& next_state, RNG& rng){
         using TI = typename DEVICE::index_t;
@@ -105,12 +146,21 @@ namespace rl_tools::rl::environments::multirotor::parameters::reward_functions{
         components.action_cost = utils::vector_operations::norm<DEVICE, T, ACTION_DIM>(action_diff);
         components.action_cost *= components.action_cost;
         components.action_rate_cost = action_rate_cost(state, action);
+        // time-to-target study: computed only when one of its options is on, in a function
+        // of its own, so recipes without it keep exactly the same arithmetic (2026-11-22)
+        if(params.time != 0 || params.power != 0 || params.speed_limit != 0 || env.mission.pos_cap > 0){
+            time_to_target_terms(device, env, state, components);
+        }
         // gentle touchdown: penalize sinking fast close to the floor (mission episodes only)
         T landing_cost = 0;
         if(state.floor_z > -50 && state.position[2] - state.floor_z < (T)0.1 && state.linear_velocity[2] < 0){
             landing_cost = state.linear_velocity[2] * state.linear_velocity[2];
         }
         components.weighted_cost = params.position * components.position_cost + params.orientation * components.orientation_cost + params.linear_velocity * components.linear_vel_cost + params.angular_velocity * components.angular_vel_cost + params.linear_acceleration * components.linear_acc_cost + params.angular_acceleration * components.angular_acc_cost + params.action * components.action_cost + params.action_rate * components.action_rate_cost + params.landing_speed * landing_cost;
+        // time-to-target terms, only added when weighted (older recipes reproduce exactly)
+        if(params.time != 0) components.weighted_cost += params.time * components.time_cost;
+        if(params.power != 0) components.weighted_cost += params.power * components.power_cost;
+        if(params.speed_limit != 0) components.weighted_cost += params.speed_limit * components.speed_cost;
         // zig-zag (only added when weighted, so recipes without it reproduce exactly)
         components.zigzag_cost = zigzag_cost(state, action);
         if(params.zigzag != 0){

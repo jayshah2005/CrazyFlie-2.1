@@ -516,9 +516,102 @@ int run_landing(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng
     return 0;
 }
 
+
+// Waypoint episodes (Mission episode type 9, the time-to-target study, sampled as in training
+// with this run's L2F_* settings, forced to 100%): per leg (the jump, then the second move)
+// the time from the target's move to arrival (within L2F_ARRIVE_POS m and slower than
+// L2F_ARRIVE_SPEED m/s), the overshoot past the target along the leg, the error over the
+// last 0.3 s of the leg, and over the episode the peak speed and the mean rotor power above
+// hover (sum (rpm / rpm_max)^3 - hover).
+template <typename ACTOR, typename BUFFER, typename RNG>
+int run_waypoint(DEVICE& dev, ACTOR& actor, BUFFER& buffer, TI episodes, RNG& rng){
+    ENVIRONMENT env;
+    env.parameters = PENV::parameters;
+    env.parameters.mdp.reward = PENV::target_reward_function;
+    apply_eval_noise(env);
+    env.mission.enabled = true;
+    env.mission.p_takeoff = env.mission.p_land = env.mission.p_circle = env.mission.p_line = 0;
+    env.mission.p_eight = env.mission.p_fast_circle = env.mission.p_p2p = env.mission.p_gust = 0;
+    env.mission.p_waypoint = 1;
+    rlt::malloc(dev, env);
+    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::OBSERVATION_DIM>> observation;
+    rlt::MatrixDynamic<rlt::matrix::Specification<T, TI, 1, ENVIRONMENT::ACTION_DIM>> action;
+    rlt::malloc(dev, observation);
+    rlt::malloc(dev, action);
+    const T dt = env.parameters.integration.dt;
+    const auto& m = env.mission;
+    TI crashed = 0, legs = 0, arrived = 0;
+    T t_sum = 0, over_sum = 0, final_sum = 0, final_n = 0, vmax_sum = 0, power_sum = 0, power_n = 0, dist_sum = 0;
+    for(TI e = 0; e < episodes; e++){
+        typename ENVIRONMENT::State s, next;
+        rlt::sample_initial_state(dev, env, s, rng);
+        const T t_leg[2] = {s.traj[3], s.traj[4]};
+        // leg directions (unit) and lengths: 0 -> d, then d -> traj[5] d
+        T d[3], len0 = 0;
+        for(TI i = 0; i < 3; i++){ d[i] = s.traj[i]; len0 += d[i] * d[i]; }
+        len0 = std::sqrt(len0);
+        const T len1 = std::abs(1 - s.traj[5]) * len0;
+        T dir[2][3];
+        for(TI i = 0; i < 3; i++){
+            dir[0][i] = d[i] / (len0 + (T)1e-9);
+            dir[1][i] = (s.traj[5] - 1) * d[i] / (len1 + (T)1e-9);
+        }
+        T t_arrive[2] = {-1, -1}, over[2] = {0, 0}, fin[2] = {0, 0}, fin_n[2] = {0, 0}, vmax = 0;
+        bool alive = true;
+        for(TI step = 0; step < CONFIG::ENVIRONMENT_STEP_LIMIT; step++){
+            rlt::observe(dev, env, s, observation, rng);
+            rlt::evaluate(dev, actor, observation, action, buffer);
+            rlt::clamp(dev, action, (T)-1, (T)1);
+            rlt::step(dev, env, s, action, next, rng);
+            s = next;
+            if(rlt::terminated(dev, env, s, rng)){ alive = false; break; }
+            const T t = s.traj_t;
+            const TI leg = t >= t_leg[1] ? 1 : (t >= t_leg[0] ? 0 : 2);
+            T p2 = 0, v2 = 0, along = 0;
+            for(TI i = 0; i < 3; i++){
+                p2 += s.position[i] * s.position[i];
+                v2 += s.linear_velocity[i] * s.linear_velocity[i];
+            }
+            vmax = std::max(vmax, std::sqrt(v2));
+            const T hover = std::sqrt(env.parameters.dynamics.mass * 9.81 / 4 / env.parameters.dynamics.thrust_constants[2]) / env.parameters.dynamics.action_limit.max;
+            T pw = 0;
+            for(TI r = 0; r < 4; r++){ const T rho = s.rpm[r] / env.parameters.dynamics.action_limit.max; pw += rho * rho * rho; }
+            power_sum += pw - 4 * hover * hover * hover; power_n++;
+            if(leg < 2){
+                for(TI i = 0; i < 3; i++){ along += s.position[i] * dir[leg][i]; }  // > 0: past the target
+                if(t_arrive[leg] < 0 && p2 < m.arrive_pos * m.arrive_pos && v2 < m.arrive_speed * m.arrive_speed){
+                    t_arrive[leg] = t - t_leg[leg];
+                }
+                over[leg] = std::max(over[leg], along);
+                const T t_end = leg == 0 ? t_leg[1] : CONFIG::ENVIRONMENT_STEP_LIMIT * dt;
+                if(t >= t_end - (T)0.3){ fin[leg] += std::sqrt(p2); fin_n[leg]++; }
+            }
+        }
+        if(!alive){ crashed++; continue; }
+        vmax_sum += vmax;
+        for(TI l = 0; l < 2; l++){
+            legs++;
+            dist_sum += l == 0 ? len0 : len1;
+            if(t_arrive[l] >= 0){ arrived++; t_sum += t_arrive[l]; }
+            over_sum += over[l];
+            if(fin_n[l] > 0){ final_sum += fin[l] / fin_n[l]; final_n++; }
+        }
+    }
+    rlt::free(dev, observation);
+    rlt::free(dev, action);
+    const TI ok = episodes - crashed;
+    std::printf("waypoint episodes %d: crashed %d; legs %d (mean %.2f m), arrived %d (%.0f%%)\n", (int)episodes, (int)crashed,
+                (int)legs, (double)(legs ? dist_sum / legs : 0), (int)arrived, (double)(legs ? 100.0 * arrived / legs : 0));
+    std::printf("waypoint time to target %.2f s, overshoot %.1f cm, final error %.1f cm, peak speed %.2f m/s, power %.4f\n",
+                (double)(arrived ? t_sum / arrived : -1), (double)(legs ? 100 * over_sum / legs : 0),
+                (double)(final_n ? 100 * final_sum / final_n : 0), (double)(ok ? vmax_sum / ok : 0),
+                (double)(power_n ? power_sum / power_n : 0));
+    return 0;
+}
+
 int main(int argc, char** argv){
     if(argc < 2){
-        std::printf("usage: %s <actor.h5> [episodes] [mission|landing|probe]\n", argv[0]);
+        std::printf("usage: %s <actor.h5> [episodes] [mission|landing|waypoint|probe]\n", argv[0]);
         return 1;
     }
     TI episodes = argc > 2 ? std::atoi(argv[2]) : 200;
@@ -538,6 +631,9 @@ int main(int argc, char** argv){
     }
     if(argc > 3 && std::string(argv[3]) == "landing"){
         return run_landing(dev, actor, buffer, episodes, rng);
+    }
+    if(argc > 3 && std::string(argv[3]) == "waypoint"){
+        return run_waypoint(dev, actor, buffer, episodes, rng);
     }
     if(argc > 3 && std::string(argv[3]) == "probe"){
         // Start from a perfectly hovering drone and fly 5 s. Observation noise

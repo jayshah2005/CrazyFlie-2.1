@@ -23,6 +23,7 @@
 #include <pybind11/stl.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -39,10 +40,11 @@ using RNG = decltype(rlt::random::default_engine(typename DEVICE::SPEC::RANDOM()
 constexpr TI OBS_DIM = ENVIRONMENT::OBSERVATION_DIM;
 constexpr TI OBS_DIM_PRIVILEGED = ENVIRONMENT::OBSERVATION_DIM_PRIVILEGED;
 constexpr TI ACTION_DIM = ENVIRONMENT::ACTION_DIM;
-constexpr TI N_PARTS = 11;
+constexpr TI N_PARTS = 14;
 const std::vector<std::string> PART_NAMES = {
     "survival", "position", "orientation", "linear_velocity", "angular_velocity", "linear_acceleration",
-    "angular_acceleration", "action", "action_rate", "zigzag", "landing_speed"};
+    "angular_acceleration", "action", "action_rate", "zigzag", "landing_speed",
+    "time", "power", "speed_limit"};
 
 // Unweighted reward parts of one transition (the reward is sum_k w_k u_k with w from weights_of).
 template <typename P, typename C>
@@ -63,11 +65,15 @@ void parts_of(const P& p, const C& c, T* u){
     u[8] = -p.scale * c.action_rate_cost;
     u[9] = -p.scale * c.zigzag_cost;
     u[10] = -p.scale * c.landing_cost;
+    u[11] = -p.scale * c.time_cost;
+    u[12] = -p.scale * c.power_cost;
+    u[13] = -p.scale * c.speed_cost;
 }
 template <typename P>
 void weights_of(const P& p, T* w){
     T v[N_PARTS] = {1, p.position, p.orientation, p.linear_velocity, p.angular_velocity, p.linear_acceleration,
-                    p.angular_acceleration, p.action, p.action_rate, p.zigzag, p.landing_speed};
+                    p.angular_acceleration, p.action, p.action_rate, p.zigzag, p.landing_speed,
+                    p.time, p.power, p.speed_limit};
     for(TI k = 0; k < N_PARTS; k++) w[k] = v[k];
 }
 
@@ -78,8 +84,14 @@ class Sim{
 public:
     Sim(TI n_envs, std::uint64_t seed): n(n_envs), envs(n_envs), states(n_envs),
         rng(rlt::random::default_engine(typename DEVICE::SPEC::RANDOM(), (TI)seed)){
+        // weights of the time-to-target terms (0 = off), runtime options like the L2F_* ones
+        auto env_or = [](const char* name){ const char* v = std::getenv(name); return v ? (T)std::atof(v) : (T)0; };
+        const T w_time = env_or("L2F_W_TIME"), w_power = env_or("L2F_W_POWER"), w_speed = env_or("L2F_W_SPEED");
         for(auto& env: envs){
             env.parameters = PENV::parameters;
+            env.parameters.mdp.reward.time = w_time;
+            env.parameters.mdp.reward.power = w_power;
+            env.parameters.mdp.reward.speed_limit = w_speed;
             rlt::malloc(dev, env);
         }
         rlt::malloc(dev, obs);
@@ -162,6 +174,9 @@ public:
                 if(key == "position") r.position = v;
                 else if(key == "linear_velocity") r.linear_velocity = v;
                 else if(key == "action") r.action = v;
+                else if(key == "time") r.time = v;
+                else if(key == "power") r.power = v;
+                else if(key == "speed_limit") r.speed_limit = v;
                 else throw std::runtime_error("set_weights: unknown key " + key);
             }
         }
