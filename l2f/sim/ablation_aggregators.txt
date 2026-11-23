@@ -1,0 +1,28 @@
+# Step 5: TorchJD aggregators on the time 0.5 recipe (ablation_conflict: the 4 groups conflict early
+# (safety, the crash term with ~10x the others' gradient norm, against the rest) and late (precision
+# roughly orthogonal to time, efficiency and safety; about half of the updates opposed)). Every arm is
+# MOO on 4 groups with --total 1, so only the aggregation of the 4 group gradients changes; compare
+# against moo4sum (the same decomposed critic), not TD3.
+# Caution from time_to_target_study.md: UPGrad and DualProj boosted small objectives against the crash
+# term (ungrouped: 100% crashes). ablation.py flags collapsed seeds.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_aggregators.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+# (moo4sum is bit-identical to ablation_conflict's time05_moo4sum, seeds 70-73)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  moo4sum         --moo parts --parts 4 --total 1 --agg sum
+arm  moo4dualproj    --moo parts --parts 4 --total 1 --agg dualproj
+arm  moo4upgrad      --moo parts --parts 4 --total 1 --agg upgrad
+arm  moo4alignedmtl  --moo parts --parts 4 --total 1 --agg aligned_mtl
+arm  moo4svdpga      --moo parts --parts 4 --total 1 --agg svd_pga
+arm  moo4osnmfpga    --moo parts --parts 4 --total 1 --agg osnmf_pga
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5

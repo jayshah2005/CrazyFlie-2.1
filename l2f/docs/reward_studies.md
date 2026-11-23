@@ -21,9 +21,10 @@ time (about 14 min each).
 7. [Study 4: time cost](#7-study-4-time-cost)
 8. [Why the policies settle 9 cm off after a jump](#8-why-the-policies-settle-9-cm-off-after-a-jump)
 9. [Gradient conflict on the time 0.5 recipe](#9-gradient-conflict-on-the-time-05-recipe)
-10. [Lessons](#10-lessons)
-11. [Next steps](#11-next-steps)
-12. [Options added](#12-options-added)
+10. [Study 5: aggregators](#10-study-5-aggregators)
+11. [Lessons](#11-lessons)
+12. [Next steps](#12-next-steps)
+13. [Options added](#13-options-added)
 
 ## 1. Tools
 
@@ -233,7 +234,46 @@ action, action rate, angular acceleration; safety = survival, orientation, landi
   61%; TD3 4.9 cm, 0.8%, 84%), within the spread of TD3 seeds 74-77. Aggregators are compared against
   MOO sum (same decomposed critic), not TD3.
 
-## 10. Lessons
+## 10. Study 5: aggregators
+
+`ablation_aggregators.txt`: the time 0.5 recipe, MOO on 4 groups with `--total 1`, seeds 70-73; only
+the aggregation of the group gradients changes (sum reused from section 9). Mission test plain world
+12 ms; waypoint test 3.5 s legs, 0.3-0.5 m:
+
+| Aggregator | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 5 cm | 10 cm | Final error |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| TD3 (same recipe and seeds) | 4.9 cm | 8.6 cm | 0.8% | 12/36 | 0.124 | 37.5% | 84% | 8.1 cm |
+| sum | 7.4 cm | 11.9 cm | 2.5% | 8/36 | 0.105 | 21.5% | 61% | 10.7 cm |
+| DualProj | 5.7 cm | 11.5 cm | 2.5% | 7/36 | 0.146 | 26.5% | 64% | 10.9 cm |
+| UPGrad | 18.4 cm | 98.6 cm | 50.6% | 1/36 | 0.212 | 2.5% | 17.5% | 15.3 cm |
+| Aligned-MTL | 9.6 cm | 15.6 cm | 13.5% | 4/36 | 0.116 | 14% | 45.5% | 13.6 cm |
+| SVD-PGA | 12.0 cm | 21.0 cm | 14.4% | 0/36 | 0.105 | 5% | 26.5% | 14.8 cm |
+| OS-NMF-PGA | 10.4 cm | 19.5 cm | 13.6% | 3/36 | 0.095 | 8.5% | 35.5% | 13.8 cm |
+
+UPGrad: seeds 71 and 73 collapsed (70% and 82% crashes), s72 44%. All aggregators cost the same per
+step (60k-step check: about 14 s each).
+
+How each weighted the groups (gradient logs; time / precision / efficiency / safety):
+
+| Aggregator | 0-0.8M | 1.4-2.0M |
+| --- | --- | --- |
+| sum | step shares 6 / 8 / 18 / 68% | 8 / 46 / 23 / 22% |
+| DualProj | efficiency weight 2.9, others 1 | all 1 (acts as sum) |
+| UPGrad | efficiency 6.3, safety 1.2 | efficiency 2.5, safety 1.15 |
+| Aligned-MTL, SVD-PGA, OS-NMF-PGA | time x16-36, negative weights on the others | the same |
+
+- The balancing aggregators (Aligned-MTL, SVD-PGA, OS-NMF-PGA) equalize the groups by scale. The
+  groups differ in natural scale (time's gradient about 10x smaller than safety's), so the step goes
+  to time and precision and safety get negative weights: the policy is pushed against crash
+  avoidance (13-14% crashes).
+- UPGrad boosts the small group in conflict with the crash term (efficiency, early) and breaks crash
+  avoidance, as in the time-to-target study.
+- DualProj changes the step only while gradients oppose (early); better circle than sum (5.7 against
+  7.4 cm; seeds 5.1-7.7 against 5.0-9.4), same crashes, slightly better waypoints, 40% more jitter.
+- **No MOO arm beats plain TD3** on this task. Even sum, whose actor step equals TD3's, trains worse:
+  the decomposed critic is the first gap to close.
+
+## 11. Lessons
 
 - **Gate every reward change with `reward_check.py`**, with the final weights. It found the
   free-flight crash incentive and the waypoint leg cost in seconds.
@@ -249,14 +289,13 @@ action, action rate, angular acceleration; safety = survival, orientation, landi
 - **Check what a test measures**: the 5 cm arrival and the "9 cm offset" were mostly the 1.5-2.5 s
   legs and uneven motors, not the policies.
 
-## 11. Next steps
+## 12. Next steps
 
-1. Aggregators on the time 0.5 recipe, against MOO sum: DualProj, UPGrad, Aligned-MTL, SVD-PGA,
-   OS-NMF-PGA (4 seeds each), with per-seed collapse checks; projection aggregators boosted the small
-   objectives against the crash term in the time-to-target study.
-2. More seeds for any difference that decides something.
+1. Confirm DualProj against sum with seeds 74-77.
+2. Close the gap between MOO sum and TD3 (the decomposed critic: critic size, the `--total` weight).
+3. More seeds for any difference that decides something.
 
-## 12. Options added
+## 13. Options added
 
 All off by default; with none set, earlier recipes reproduce bit for bit (simulator checked against
 the previous build over 64,000 steps, training checked at 100k and 200k steps).
