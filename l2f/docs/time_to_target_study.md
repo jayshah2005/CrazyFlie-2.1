@@ -5,6 +5,8 @@ the time-to-target multi-objective (MOO) work on branch `feat/moo`. No policy fr
 is good enough to fly. The main finding is a defect in the waypoint reward (section 5): flying a
 waypoint leg costs more than crashing, so every method learned to crash.
 
+Follow-up (2026-11-23, one change at a time with a reward check first): [reward_studies.md](reward_studies.md).
+
 All training ran on the lab computer (14 cores, Linux, PyTorch trainer `l2f/py/train.py`, build
 `build_py_E_ttt`). Study scripts and diagnostics are in `~/l2f-runs/` on the lab computer, and
 outputs are in `~/crazyflie/l2f/learning_to_fly/compare_ttt*` and `compare_obj` (section 8).

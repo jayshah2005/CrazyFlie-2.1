@@ -1,0 +1,27 @@
+# Ablation D (option A): waypoints with rewards that are known to work. Base: crash penalty 400
+# (ablation_progress winner). One change per arm: the Huber position cap alone, then the
+# waypoint episodes with it.
+# Gate (reward_check.py with the crash400 policies, crash 400 + Huber 0.2): jumps 0.3-0.8 m fail
+# for 3 of 4 policies (3-19% of waypoint states where crashing pays more), 0.3-0.6 m for 2 of 4,
+# 0.3-0.5 m pass for 3 of 4 (0.4-2.7%; s73 5.4%). So: jumps 0.3-0.5 m, second leg 0.5-1x the
+# first (L2F_WAYPOINT_S_MIN/MAX 0 / 0.5), no time cost; re-gate with the trained policies before
+# growing the jumps.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_waypoint.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+# (the crash400 arm is bit-identical to ablation_progress' crash400 arm, seeds 70-73)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+
+arm  crash400       L2F_CRASH_PENALTY_OVERRIDE=400
+arm  huber          L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2
+arm  huber_wp05     L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5
+
+# mission tests in both worlds, as before
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+# waypoint tests (every arm): the trained range, and larger jumps to see how far it carries
+wtest wp05    L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5
+wtest wp08    L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5

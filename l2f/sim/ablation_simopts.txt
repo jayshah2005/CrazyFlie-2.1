@@ -1,0 +1,19 @@
+# Ablation (a), l2f/docs/time_to_target_study.md section 7.4: what do the sim-to-real options
+# of the time-to-target study cost the mission policy on their own (no waypoints, no new
+# reward terms)? Plain TD3, old (truth) observation path, old3's recipe, 2M steps.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_simopts.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 8
+
+# old3's runtime options (policies/2026-11-22_old3_moosum3_s40_1800k/run.txt; train.py adds
+# its own defaults: mission ramp 800k, glitches 0.3%, randomization scale 0.3)
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+
+# the sim-to-real options of runs 4-6 and the objective study: drag U(0, 0.03) N s/m, motor
+# time constant 0.045-0.09 s (replaces the relative L2F_DR_MOTOR_TAU), gain wander std 0.03
+arm  base
+arm  simopts  L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+
+# every run is tested in both worlds
+test plain
+test simopts  L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03

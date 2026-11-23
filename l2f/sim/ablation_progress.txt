@@ -1,0 +1,20 @@
+# Ablation C: does the progress reward and/or a larger crash penalty remove the crash incentive
+# in the mission mix (reward_check.py: free flight from random states, 8-22% of states where
+# crashing pays more; base seed 71 of ablation_simopts collapsed) without costing precision?
+# Plain TD3, old (truth) observation path, old3's recipe + the sim-to-real options, 2M steps.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_progress.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+# (the simopts arm is bit-identical to ablation_simopts' simopts arm, seeds 70-73)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+
+arm  simopts
+arm  prog20         L2F_PROGRESS_K=20
+arm  crash400       L2F_CRASH_PENALTY_OVERRIDE=400
+arm  prog20crash400 L2F_PROGRESS_K=20 L2F_CRASH_PENALTY_OVERRIDE=400
+
+# the reward does not change the tests; both worlds as in ablation_simopts
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
