@@ -50,13 +50,17 @@ EVAL_ENV = {'L2F_MISSION_H': '0.75', 'L2F_MISSION_R': '0.6', 'L2F_MISSION_P': '1
 HARD_ENV = {f'L2F_P_{k}': '0.1' for k in ('TAKEOFF', 'LAND', 'CIRCLE', 'LINE', 'EIGHT', 'FAST_CIRCLE', 'P2P', 'GUST')}
 
 
-def make_agent(args, cfg, info):
+def make_agent(args, cfg, info, weights=None):
     """TD3, or the multi-objective version for --moo."""
     dims = (info['obs_dim'], info['obs_dim_privileged'], info['action_dim'])
     if not args.moo:
         return TD3(cfg, *dims)
+    objectives = None
+    if args.parts == 0 and weights is not None:
+        # ungrouped: every reward part that is weighted now or by the weight curriculum later
+        objectives = [n for n, w in zip(info['part_names'], weights) if w != 0 or n in cfg.weight_caps]
     return MooTD3(cfg, *dims, agg=args.agg, parts=args.parts, tasks=args.tasks if args.moo == 'tasks' else 0,
-                  total=args.total, norm=args.norm)
+                  total=args.total, norm=args.norm, objectives=objectives)
 
 
 def run_tag(args):
@@ -90,7 +94,7 @@ def train(args, extra_env):
     torch.set_num_threads(1)  # 64-unit networks: threads cost more than they save
     rng = np.random.default_rng(args.seed)
     sim = l2f_sim.Sim(1, args.seed)
-    agent = make_agent(args, cfg, info)
+    agent = make_agent(args, cfg, info, sim.weights())
     buf = ReplayBuffer(cfg.replay_cap, info['obs_dim'], info['obs_dim_privileged'], info['action_dim'],
                        len(info['part_names']))
     names = info['part_names']
@@ -191,9 +195,10 @@ def main():
     parser.add_argument('--evaluate-run', type=Path, help='only score the checkpoints of this run folder')
     parser.add_argument('--moo', choices=['parts', 'tasks'], help='multi-objective TD3 (moo.py): framing A or B')
     parser.add_argument('--agg', default='sum', choices=AGGREGATORS, help='TorchJD aggregator (--moo)')
-    parser.add_argument('--parts', type=int, default=8, choices=[1, 3, 4, 8], help='--moo parts: 8 objectives, 3 groups '
-                        '(tracking, smoothness, safety), or 1 (all merged: the MOO code path on the scalar reward, '
-                        'must match TD3)')
+    parser.add_argument('--parts', type=int, default=8, choices=[0, 1, 3, 4, 8], help='--moo parts: 8 objectives, 3 groups '
+                        '(tracking, smoothness, safety), 4 groups (time, precision, efficiency, safety), 0 (ungrouped: one '
+                        'objective per weighted reward part) or 1 (all merged: the MOO code path on the scalar '
+                        'reward, must match TD3)')
     parser.add_argument('--tasks', type=int, default=5, choices=[5, 9], help='--moo tasks: episode types')
     parser.add_argument('--total', type=float, help='--moo parts: critic loss on the total error too')
     parser.add_argument('--norm', action='store_true', help='--moo parts: outputs scaled to O(1)')

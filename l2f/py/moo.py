@@ -61,13 +61,24 @@ def make_aggregator(name, m):
     return makers[name]()
 
 
-def group_parts(part_names, weights, k):
+def group_parts(part_names, weights, k, objectives=None):
     """(U, W): unweighted grouping U (n_parts x k) and group weights W (k) with W_j U_ij = w_i
     for every part i in group j: a group with
     one weighted part takes that part's weight; one with several (rate and zig-zag both on)
     holds the weighted sum with group weight 1. k = 1: one group of all parts, weight 1;
     k = 3: GROUPS3."""
     w = np.asarray(weights, np.float64)
+    if objectives is not None:
+        # ungrouped (parts=0): one objective per listed reward part, with that part's weight
+        U = np.zeros((len(part_names), len(objectives)))
+        W = np.zeros(len(objectives))
+        for j, name in enumerate(objectives):
+            i = part_names.index(name)
+            U[i, j], W[j] = 1.0, w[i]
+        unlisted = [n for i, n in enumerate(part_names) if n not in objectives and w[i] != 0]
+        if unlisted:
+            raise ValueError(f'reward parts {unlisted} have a weight but no objective')
+        return U.astype(np.float32), W.astype(np.float32)
     if k == 1:
         return w[:, None].astype(np.float32), np.ones(1, np.float32)
     group_of = {3: GROUP3_OF, 4: GROUP4_OF}.get(k, GROUP_OF)
@@ -91,9 +102,13 @@ class MooTD3(TD3):
     """TD3 whose actor step is a TorchJD aggregation of per-objective gradients."""
 
     def __init__(self, cfg, obs_dim, obs_dim_p, act_dim, agg='sum', parts=8, tasks=0, total=None, norm=False,
-                 log_every=50):
+                 log_every=50, objectives=None):
         self.tasks = tasks
-        k = 1 if tasks else parts
+        # parts=0: ungrouped, one objective per reward part in `objectives` (added 2026-11-23)
+        self.objectives = list(objectives) if parts == 0 and not tasks else None
+        if parts == 0 and not tasks and not self.objectives:
+            raise ValueError('parts=0 needs the list of reward parts (objectives)')
+        k = 1 if tasks else (len(self.objectives) if self.objectives else parts)
         if norm and k == 1:
             raise ValueError('norm needs several parts')
         super().__init__(cfg, obs_dim, obs_dim_p, act_dim, n_out=k)
@@ -107,11 +122,12 @@ class MooTD3(TD3):
         self.group_weights = np.ones(k, np.float32)
         self.log_every, self.updates, self.rows = log_every, 0, []
         self.share_rng = np.random.default_rng(54321)
-        self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k]
+        self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else \
+            (self.objectives or {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k])
 
     def reward_matrix(self, part_names, weights):
         """R for the critic outputs (see td3.py); also sets the value factors f."""
-        U, W = group_parts(part_names, weights, self.k)
+        U, W = group_parts(part_names, weights, self.k, self.objectives)
         self.group_weights = W
         if self.norm:
             self.factors = torch.from_numpy(W * self.scale)
