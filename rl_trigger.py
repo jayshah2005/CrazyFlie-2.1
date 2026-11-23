@@ -861,9 +861,11 @@ if __name__ == '__main__':
                         help='mission: number of circles (default 1)')
     parser.add_argument('--climb-rate', type=float, default=0.25,
                         help='mission: take-off climb speed in m/s (default 0.25)')
-    parser.add_argument('--ki', type=float, default=1.0,
-                        help='mission: outer integrator gain in 1/s that cancels the '
-                             'policy\'s steady offset (0 = off, default 1)')
+    parser.add_argument('--ki', type=float, default=0.0,
+                        help='mission: outer integrator gain in 1/s that shifts the target to '
+                             'cancel a steady offset (default 0 = off). Only for policies without '
+                             'the position-error integral input: variant E has one, and stacking '
+                             'both made circles grow each lap (2026-11-22: 15 cm, 50 cm, 1 m)')
     parser.add_argument('--land-vbat', type=float, default=3.45,
                         help='mission: land automatically if the battery stays below this '
                              'voltage under load for 0.5 s (default 3.45 V; brownout ~3.4 V)')
