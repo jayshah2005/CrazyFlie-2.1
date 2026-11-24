@@ -61,7 +61,7 @@ def make_agent(args, cfg, info, weights=None):
         objectives = [n for n, w in zip(info['part_names'], weights) if w != 0 or n in cfg.weight_caps]
     return MooTD3(cfg, *dims, agg=args.agg, parts=args.parts, tasks=args.tasks if args.moo == 'tasks' else 0,
                   total=args.total, norm=args.norm, objectives=objectives, grouping=args.grouping,
-                  agg_start=args.agg_start)
+                  agg_start=args.agg_start, head_scale=args.head_scale)
 
 
 def run_tag(args):
@@ -69,7 +69,7 @@ def run_tag(args):
     tag = f'py_{args.variant}'
     if args.moo == 'parts':
         tag += f'_moo{args.parts}{"r" if args.grouping == "regroup" else ""}_{args.agg}' + (f'_tot{args.total:g}' if args.total is not None else '') + \
-            ('_norm' if args.norm else '') + (f'_from{args.agg_start // 1000}k' if args.agg_start else '')
+            ('_norm' if args.norm else '') + (f'_from{args.agg_start // 1000}k' if args.agg_start else '') + ('_hs' if args.head_scale else '')
     elif args.moo == 'tasks':
         tag += f'_tasks{args.tasks}_{args.agg}'
     if args.hard:
@@ -205,6 +205,9 @@ def main():
     parser.add_argument('--evaluate-run', type=Path, help='only score the checkpoints of this run folder')
     parser.add_argument('--moo', choices=['parts', 'tasks'], help='multi-objective TD3 (moo.py): framing A or B')
     parser.add_argument('--agg', default='sum', choices=AGGREGATORS, help='TorchJD aggregator (--moo)')
+    parser.add_argument('--head-scale', action='store_true',
+                        help='--moo parts: critic outputs x 1/k and initial output layer x sqrt(k), so the summed '
+                        'value has TD3\'s step size and starting spread')
     parser.add_argument('--agg-start', type=int, default=0,
                         help='--moo: the plain sum until this step, then --agg (0: --agg from the start)')
     parser.add_argument('--parts', type=int, default=8, choices=[0, 1, 3, 4, 5, 8], help='--moo parts: 8 objectives, 3 groups '

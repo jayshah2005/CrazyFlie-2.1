@@ -70,10 +70,12 @@ class Critic(MLP):
 
     def __init__(self, obs_dim_privileged, action_dim=4, hidden=64, n_out=1):
         super().__init__(obs_dim_privileged + action_dim, n_out, hidden, output_tanh=False)
+        self.out_scale = 1.0  # MooTD3 head_scale: the outputs are multiplied by this
 
     def forward(self, obs_privileged, action):
         """Value of `action` in the critic's (noise-free) observation."""
-        return super().forward(torch.cat([obs_privileged, action], dim=-1))
+        q = super().forward(torch.cat([obs_privileged, action], dim=-1))
+        return q if self.out_scale == 1.0 else q * self.out_scale
 
 
 def make_optimizer(module, lr=1e-3, weight_decay=1e-4, eps=1e-8):

@@ -111,7 +111,7 @@ class MooTD3(TD3):
     """TD3 whose actor step is a TorchJD aggregation of per-objective gradients."""
 
     def __init__(self, cfg, obs_dim, obs_dim_p, act_dim, agg='sum', parts=8, tasks=0, total=None, norm=False,
-                 log_every=50, objectives=None, grouping='default', agg_start=0):
+                 log_every=50, objectives=None, grouping='default', agg_start=0, head_scale=False):
         self.tasks = tasks
         if grouping == 'regroup' and parts not in REGROUP_OF:
             raise ValueError('--grouping regroup needs parts 4 or 5')
@@ -125,6 +125,22 @@ class MooTD3(TD3):
             raise ValueError('norm needs several parts')
         super().__init__(cfg, obs_dim, obs_dim_p, act_dim, n_out=k)
         self.k, self.n_obj = k, (tasks or k)
+        # head_scale (k > 1): the total value is the sum of k output heads. When it is wrong every
+        # head gets the same correction and Adam moves each about as far as TD3 moves its one head,
+        # so the sum moves about k times as far per update, and k random heads start with sqrt(k)
+        # times the spread. Outputs x 1/k and initial output-layer weights and biases x sqrt(k) give
+        # the sum TD3's step and starting spread (ablation_moo2: MOO sum trails TD3 even with
+        # --total 0; 2026-11-23).
+        self.head_scale = head_scale and k > 1
+        if self.head_scale:
+            with torch.no_grad():
+                for c in self.critics:
+                    c.layers[-1].weight.mul_(k ** 0.5)
+                    c.layers[-1].bias.mul_(k ** 0.5)
+            for c, ct in zip(self.critics, self.critic_targets):
+                ct.load_state_dict(c.state_dict())
+            for c in self.critics + self.critic_targets:
+                c.out_scale = 1.0 / k
         self.agg_name = agg
         if agg == 'task_share' and not tasks:
             raise ValueError('task_share needs tasks')
