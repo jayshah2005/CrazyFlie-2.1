@@ -1,0 +1,33 @@
+# MOO round 2 on the time 0.5 recipe (ablation_aggregators: no MOO arm beat TD3; DualProj the only one
+# at or above sum). Three questions:
+#  1. Is DualProj's lead over sum real? 8 seeds each (70-73 reused from ablation_aggregators).
+#  2. Why does even MOO sum train worse than TD3? Its actor step equals TD3's in expectation; the
+#     critic loss differs: (sum_k e_k)^2 + total * sum_k e_k^2 with --total 1, against (sum e)^2 for
+#     TD3. --total 0 keeps only the total-error loss (left: 4 output heads instead of 1); 0.1 between.
+#  3. Does the aggregator help late? It acts mostly during the curriculum ramp (DualProj changed 83% of
+#     the updates before 0.8M, 17% after 1.4M; UPGrad boosted safety and efficiency throughout).
+#     --agg-start 1200000: the plain sum until the ramp (0.8M) and the weight caps (~1.2M) are done.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_moo2.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 8
+# (td3 = ablation_time's huber_wp05_time05, seeds 70-77; moo4sum and moo4dualproj seeds 70-73 =
+# ablation_aggregators'). Run this file with --seeds 70 71 72 73 and ablation_moo2_confirm.txt with
+# --seeds 70-77 into the same folder: the new arms get 4 seeds, the confirmation arms 8.
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3
+arm  moo4sum                  --moo parts --parts 4 --total 1 --agg sum
+arm  moo4dualproj             --moo parts --parts 4 --total 1 --agg dualproj
+arm  moo4sum_tot0             --moo parts --parts 4 --total 0 --agg sum
+arm  moo4sum_tot01            --moo parts --parts 4 --total 0.1 --agg sum
+arm  moo4dualproj_from1200k   --moo parts --parts 4 --total 1 --agg dualproj --agg-start 1200000
+arm  moo4upgrad_from1200k     --moo parts --parts 4 --total 1 --agg upgrad --agg-start 1200000
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5

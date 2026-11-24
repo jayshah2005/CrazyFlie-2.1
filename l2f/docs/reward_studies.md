@@ -1,5 +1,7 @@
 # Reward studies after the time-to-target work (2026-11-23)
 
+Summary and explanation of all findings: [moo_findings.md](moo_findings.md).
+
 Follow-up to [time_to_target_study.md](time_to_target_study.md), which found that in waypoint
 episodes crashing cost less than flying. This round went back to the mission recipe and changed one
 thing at a time, with a reward check before each training study.
@@ -22,9 +24,10 @@ time (about 14 min each).
 8. [Why the policies settle 9 cm off after a jump](#8-why-the-policies-settle-9-cm-off-after-a-jump)
 9. [Gradient conflict on the time 0.5 recipe](#9-gradient-conflict-on-the-time-05-recipe)
 10. [Study 5: aggregators](#10-study-5-aggregators)
-11. [Lessons](#11-lessons)
-12. [Next steps](#12-next-steps)
-13. [Options added](#13-options-added)
+11. [Study 6: DualProj on 8 seeds, the critic loss, delayed aggregators](#11-study-6-dualproj-on-8-seeds-the-critic-loss-delayed-aggregators)
+12. [Lessons](#12-lessons)
+13. [Next steps](#13-next-steps)
+14. [Options added](#14-options-added)
 
 ## 1. Tools
 
@@ -273,7 +276,37 @@ How each weighted the groups (gradient logs; time / precision / efficiency / saf
 - **No MOO arm beats plain TD3** on this task. Even sum, whose actor step equals TD3's, trains worse:
   the decomposed critic is the first gap to close.
 
-## 11. Lessons
+## 11. Study 6: DualProj on 8 seeds, the critic loss, delayed aggregators
+
+`ablation_moo2.txt` (new arms, seeds 70-73) and `ablation_moo2_confirm.txt` (TD3, sum, DualProj,
+seeds 70-77), the time 0.5 recipe. Mission plain world 12 ms; waypoints 3.5 s legs, 0.3-0.5 m.
+
+| Arm | Seeds | Circle | Crashed | Crash-free checkpoints | 5 cm | 10 cm | Final error |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| TD3 | 8 | 6.0 cm | 1.4% | 18/72 | 30.0% | 79.5% | 8.9 cm |
+| MOO sum | 8 | 6.8 cm | 2.9% | 18/72 | 23.0% | 63.0% | 10.8 cm |
+| MOO DualProj | 8 | 6.4 cm | 6.6% | 19/72 | 22.5% | 60.0% | 11.2 cm |
+| MOO sum `--total 0` | 4 | 7.4 cm | 3.1% | 6/36 | 21.5% | 67.5% | 10.8 cm |
+| MOO sum `--total 0.1` | 4 | 6.7 cm | 3.5% | 6/36 | 21.5% | 65.0% | 10.9 cm |
+| DualProj from 1.2M (`--agg-start 1200000`) | 4 | 7.3 cm | 5.4% | 11/36 | 21.5% | 59.0% | 10.6 cm |
+| UPGrad from 1.2M | 4 | 7.3 cm | 2.5% | 10/36 | 22.5% | 60.5% | 10.4 cm |
+
+(4-seed references, seeds 70-73: TD3 4.9 cm / 0.8% / 84%; MOO sum 7.4 cm / 2.5% / 61%; UPGrad from
+the start 18.4 cm / 50.6%.)
+
+- **DualProj's 4-seed lead was seed noise:** over 8 seeds its circle is close to sum's and it crashes
+  more (seeds 74, 75, 77: 10-18%).
+- **The per-group critic loss is not why MOO sum trails TD3:** `--total 0` (the total-value loss
+  only) is no better. Remaining difference: the 4 output heads (hypothesis in
+  [moo_findings.md](moo_findings.md), section 10; not tested yet).
+- **Starting late prevents UPGrad's collapse** (2.5% crashes against 50.6%) but adds nothing; DualProj
+  started late is no better.
+- `--agg-start` checks: the default gives DualProj's earlier run exactly; a start beyond the run gives
+  sum's run exactly; the log switches from sum to the aggregator at the chosen step.
+
+Why the aggregators do not help, in full: [moo_findings.md](moo_findings.md), section 9.
+
+## 12. Lessons
 
 - **Gate every reward change with `reward_check.py`**, with the final weights. It found the
   free-flight crash incentive and the waypoint leg cost in seconds.
@@ -289,13 +322,12 @@ How each weighted the groups (gradient logs; time / precision / efficiency / saf
 - **Check what a test measures**: the 5 cm arrival and the "9 cm offset" were mostly the 1.5-2.5 s
   legs and uneven motors, not the policies.
 
-## 12. Next steps
+## 13. Next steps
 
-1. Confirm DualProj against sum with seeds 74-77.
-2. Close the gap between MOO sum and TD3 (the decomposed critic: critic size, the `--total` weight).
-3. More seeds for any difference that decides something.
+See [moo_findings.md](moo_findings.md), section 13. First: test the 4-head hypothesis for the gap
+between MOO sum and TD3, then repeat sum against DualProj on the fixed critic.
 
-## 13. Options added
+## 14. Options added
 
 All off by default; with none set, earlier recipes reproduce bit for bit (simulator checked against
 the previous build over 64,000 steps, training checked at 100k and 200k steps).
@@ -306,6 +338,7 @@ the previous build over 64,000 steps, training checked at 100k and 200k steps).
 | `L2F_CRASH_PENALTY_OVERRIDE=P` | Crash penalty P instead of the build's `-DL2F_CRASH_PENALTY` (Python binding) |
 | `L2F_WAYPOINT_S_MIN`, `L2F_WAYPOINT_S_MAX` (-1, 0.5) | Range of the second waypoint leg: it goes to s x the jump |
 | `L2F_EVAL_LEG_S` (test only) | Waypoint test: both legs last this long; the episode runs past the 5 s step limit |
+| `train.py --agg-start STEP` | MOO: the plain sum until STEP, then `--agg` (0, the default: `--agg` from the start) |
 | `L2F_EVAL_RESET_INTEGRAL` (test only) | Waypoint test diagnostic: zero the position-error integral whenever the target moves |
 
 The waypoint test also prints arrival within 10 cm with its time, and the signed final error along
