@@ -111,7 +111,7 @@ class MooTD3(TD3):
     """TD3 whose actor step is a TorchJD aggregation of per-objective gradients."""
 
     def __init__(self, cfg, obs_dim, obs_dim_p, act_dim, agg='sum', parts=8, tasks=0, total=None, norm=False,
-                 log_every=50, objectives=None, grouping='default'):
+                 log_every=50, objectives=None, grouping='default', agg_start=0):
         self.tasks = tasks
         if grouping == 'regroup' and parts not in REGROUP_OF:
             raise ValueError('--grouping regroup needs parts 4 or 5')
@@ -129,6 +129,10 @@ class MooTD3(TD3):
         if agg == 'task_share' and not tasks:
             raise ValueError('task_share needs tasks')
         self.aggregator = None if agg == 'task_share' else make_aggregator(agg, self.n_obj)
+        # agg_start > 0: the plain sum until that step, then `agg` (the aggregators act mostly during
+        # the curriculum ramp, when the crash term dominates; ablation_aggregators, 2026-11-23)
+        self.agg_start = agg_start
+        self.warmup_aggregator = aggregation.Sum() if agg_start > 0 else None
         self.total, self.norm = total, norm
         self.scale = np.ones(k, np.float32)
         self.group_weights = np.ones(k, np.float32)
@@ -196,12 +200,15 @@ class MooTD3(TD3):
         self.updates += 1
         log_now = self.updates % self.log_every == 0
         aggregator = aggregation.Constant(self.task_share_weights(buf)) if self.aggregator is None else self.aggregator
+        warmup = step < self.agg_start
+        if warmup:
+            aggregator = self.warmup_aggregator
         weights = jac_to_grad(params, aggregator, retain_jac=log_now)
         if log_now:
-            self.log_row(step, params, weights)
+            self.log_row(step, params, weights, 'sum' if warmup else self.agg_name)
         self.actor_opt.step()
 
-    def log_row(self, step, params, weights):
+    def log_row(self, step, params, weights, agg_name=None):
         """Per-objective gradient norms, pairwise cosines and the weights; checks J^T w = step."""
         J = torch.cat([p.jac.reshape(self.n_obj, -1) for p in params], dim=1).double()
         for p in params:
@@ -211,7 +218,7 @@ class MooTD3(TD3):
         w = weights.detach().double() if weights is not None else torch.full((self.n_obj,), float('nan'))
         step_vec = torch.cat([p.grad.reshape(-1) for p in params]).double()
         check = float(torch.linalg.norm(J.T @ w - step_vec) / max(float(torch.linalg.norm(step_vec)), 1e-30))
-        row = [step, self.agg_name] + [float(x) for x in norm] + [float(x) for x in w]
+        row = [step, agg_name or self.agg_name] + [float(x) for x in norm] + [float(x) for x in w]
         for a in range(self.n_obj):
             for b in range(a + 1, self.n_obj):
                 row.append(float(G[a, b] / max(float(norm[a] * norm[b]), 1e-30)))
