@@ -14,10 +14,10 @@ written to be read on its own. The detailed record of every study, with all tabl
 4. [Finding 1: the reward paid for crashing](#4-finding-1-the-reward-paid-for-crashing)
 5. [Finding 2: what fixed it, and what did not](#5-finding-2-what-fixed-it-and-what-did-not)
 6. [Finding 3: waypoint training](#6-finding-3-waypoint-training)
-7. [Finding 4: the objectives do conflict](#7-finding-4-the-objectives-do-conflict)
+7. [Finding 4: the measured conflict, mostly a critic artifact](#7-finding-4-the-measured-conflict-mostly-a-critic-artifact)
 8. [Finding 5: no aggregator beats plain summing](#8-finding-5-no-aggregator-beats-plain-summing)
 9. [Why the aggregators do not help](#9-why-the-aggregators-do-not-help)
-10. [Finding 6: MOO sum trains worse than TD3](#10-finding-6-moo-sum-trains-worse-than-td3)
+10. [Finding 6: MOO sum trailed TD3, fixed by head scaling](#10-finding-6-moo-sum-trailed-td3-fixed-by-head-scaling)
 11. [Caveats](#11-caveats)
 12. [What this means for the paper](#12-what-this-means-for-the-paper)
 13. [Open questions and next steps](#13-open-questions-and-next-steps)
@@ -39,13 +39,19 @@ written to be read on its own. The detailed record of every study, with all tabl
 - **Waypoint training is possible but not yet useful.** With crash 400, a Huber position cap, short
   jumps (0.3-0.5 m) and a time cost of 0.5, policies learn waypoints without collapsing. But
   policies trained only on the mission fly waypoints about as well.
-- **The objectives conflict.** Early in training the crash term opposes everything else; late in
-  training precision is roughly perpendicular to time, efficiency and safety.
-- **No aggregator beats plain summing, and MOO itself trails TD3.** Over 6 aggregators, 4-8 seeds
-  each, and two start times, nothing beat MOO sum, and MOO sum is worse than plain TD3.
-- **Why:** the objectives' gradient scales encode the tuned priorities and some aggregators discard
-  them; the main conflict is the healthy one of learning not to crash; the late conflict is a true
-  trade-off that reweighting can only move, not remove; and the MOO baseline starts behind.
+- **No aggregator beats plain summing.** Over 6 aggregators, 4-8 seeds each, and two start times,
+  nothing beat MOO sum.
+- **MOO trailed TD3 because of the critic, and that is fixed.** The decomposed critic sums 4 output
+  heads, which made its value start twice as spread out and move 2.3 times as far per update as
+  TD3's. Scaling the heads (`--head-scale`) brings MOO sum level with TD3 (section 10).
+- **Most of the measured conflict was an artifact of that critic.** With the unscaled critic the
+  summed update hurt some group in 22-47% of updates; with the scaled critic in 6-8%, and every pair
+  of groups agrees on average. The tuned reward leaves little real conflict on this task (section 7).
+- **Why the aggregators did not help:** they were reacting to critic noise and to scale differences
+  the broken critic exaggerated; the balancing aggregators also undo the priorities that the tuned
+  reward weights encode; and with tuned weights the trade-off is already settled.
+- **The right comparison is untuned.** Hand-tuned reward weights are an oracle, not the baseline: MOO
+  should be compared with TD3 on an untuned reward (section 13).
 
 ## 2. Background
 
@@ -197,7 +203,7 @@ The drones overshoot slightly and creep back over several seconds; uneven motors
 integral input is not the cause; it helps (resetting it makes every policy worse). The original
 test's short legs made this look like an offset.
 
-## 7. Finding 4: the objectives do conflict
+## 7. Finding 4: the measured conflict, mostly a critic artifact
 
 MOO sum on the time 0.5 recipe, 4 seeds; cosine between group gradients (negative: they want
 opposite changes):
@@ -218,6 +224,20 @@ opposite changes):
   opposed. Time agrees with efficiency and safety. The trade-off is not "fast against safe" but
   "hold the exact target against everything else".
 
+**Update: most of this conflict came from the critic.** The table above used the unscaled 4-head
+critic (section 10). With the head-scaled critic (7 healthy seeds):
+
+| | Unscaled critic | Head-scaled critic |
+| --- | --- | --- |
+| updates where the summed step hurts some group, 0-0.8M / 1.4-2.0M | 47% / 22% | 8% / 6% |
+| pairwise cosines, 0-0.8M | -0.34 to +0.94 | +0.61 to +0.97 |
+| pairwise cosines, 1.4-2.0M | +0.03 to +0.81 | +0.36 to +0.93 |
+| gradient norms time / precision / efficiency / safety, 0-0.8M | 0.20 / 0.29 / 0.60 / 2.31 | 0.17 / 0.18 / 0.19 / 0.75 |
+
+The noisy, badly scaled group values of the unscaled critic produced opposed gradients and made the
+crash term look 10 times larger than the rest (about 4 times with the fixed critic). With the tuned
+reward, the 4 groups mostly agree on this task.
+
 ## 8. Finding 5: no aggregator beats plain summing
 
 All arms: the time 0.5 recipe, MOO on 4 groups. Mission 12 ms, waypoints 3.5 s legs 0.3-0.5 m.
@@ -237,6 +257,11 @@ All arms: the time 0.5 recipe, MOO on 4 groups. Mission 12 ms, waypoints 3.5 s l
 (4-seed rows compare with MOO sum's 4-seed values: 7.4 cm, 2.5%, 61%.)
 
 ## 9. Why the aggregators do not help
+
+These explanations describe what happened in the runs of section 8, which all used the unscaled
+critic: part of what the aggregators reacted to (the early conflict, the 10x scale gap) was critic
+noise (section 7, update). The mechanisms stand; the premise that the task itself has strong conflict
+does not.
 
 ### 9.1 The groups' scales encode our priorities, and some aggregators discard them
 
@@ -307,7 +332,7 @@ Changing the overall size of the update has little effect; only its direction ma
 that mainly rescale (rather than redirect) therefore change less than their weights suggest, while
 those that redirect (negative weights) change a lot.
 
-## 10. Finding 6: MOO sum trains worse than TD3
+## 10. Finding 6: MOO sum trailed TD3, fixed by head scaling
 
 | Arm | Seeds | Circle | Crashes | 10 cm arrival |
 | --- | --- | --- | --- | --- |
@@ -321,22 +346,48 @@ those that redirect (negative weights) change a lot.
 - MOO sum's actor update is TD3's in expectation; the difference is the critic, which learns 4 group
   values.
 - **Not the per-group critic loss:** removing it (`--total 0`) did not close the gap.
-- **Hypothesis (not yet tested): the 4 output heads.** The total value is the sum of 4 heads. When
-  the total is wrong, all 4 heads get the same correction, and Adam moves each about as far as TD3
-  moves its single head, so the total moves about 4 times as far per update: in effect a 4x learning
-  rate on the critic's output layer. The 4 randomly initialised heads also start with about twice the
-  output spread. Both make the critic noisier, which makes the actor's updates noisier.
-- **Test:** MOO with 1 group (must match TD3), and MOO with 4 groups with the output layer's step
-  scaled by 1/4 and the initial head weights by 1/2.
+- **The cause: the 4 output heads.** The total value is the sum of 4 heads. When the total is wrong,
+  all 4 heads get the same correction, and Adam moves each about as far as TD3 moves its single head,
+  so the total moves further per update; 4 random heads also start more spread out. Measured on 20
+  freshly built critics:
+
+| Critic | Starting spread of the total value | Distance the total moves per update |
+| --- | --- | --- |
+| TD3, 1 head | 0.137 | 0.0285 |
+| MOO, 4 heads | 0.281 (2.1x) | 0.0646 (2.3x) |
+| MOO, 4 heads, `--head-scale` | 0.137 | 0.0266 |
+
+- **The fix (`train.py --head-scale`):** the critic outputs are multiplied by 1/k and the output
+  layer's initial weights and biases by sqrt(k) (k groups), for the critics and their targets. The
+  summed value then starts and moves like TD3's. The group gradients are all scaled by the same 1/k,
+  which Adam cancels in the actor. Off by default; with it off, training is unchanged.
+- **Result** (`ablation_headscale.txt`, `ablation_headscale_confirm.txt`; mission 12 ms plain world,
+  waypoints 3.5 s legs 0.3-0.5 m):
+
+| Arm | Seeds | Circle | Crashes (median of seeds / pooled) | Crash-free checkpoints | 10 cm arrival (time) |
+| --- | --- | --- | --- | --- | --- |
+| TD3 | 8 | 6.0 cm | ~1.0% / 1.4% | 18/72 | 79.5% (1.73 s) |
+| MOO, 1 group | 4 | 5.0 cm (TD3 4.9) | 1.0% (TD3 0.8%) | 9/36 | 84% (as TD3) |
+| MOO sum, unscaled | 8 | 6.8 cm | 2.9% pooled | 18/72 | 63% |
+| MOO sum `--total 0`, head scale | 4 | 6.3 cm | 4.8% pooled | 9/36 | 73.5% |
+| **MOO sum `--total 1`, head scale** | 8 | **5.0 cm** | ~0.9% / 5.6% | **32/72** | 71% (1.52 s) |
+
+  - MOO with 1 group matches TD3 (waypoints identical to the digit): the MOO code path is sound.
+  - Head-scaled MOO sum is level with TD3: better circle, crash-free twice as often, faster arrival;
+    worse with uneven motors (11.2 against 9.7 cm) and at 10 cm arrival. One seed in 8 (s70) failed
+    (39% crashes); the other seven crash 0.4-1.2%. Possibly each group value now learning at a
+    quarter of its former per-head speed; not tested.
+  - **Use `--head-scale` for every MOO run.** All MOO results before it (sections 7-9) used the
+    unscaled critic.
 
 ## 11. Caveats
 
 - **Seed variance is large.** TD3 on this task varies by several cm between seeds. DualProj's 4-seed
   lead disappeared at 8 seeds; time cost 0.5's lead halved. Differences of 1-2 cm or a few percent
   need 8 or more seeds.
-- **The group gradients come from a learned critic.** Part of the measured conflict may be critic
-  error rather than true conflict between objectives. This was not measured on this task (an
-  earlier C++ study found the per-objective gradients consistent across batches).
+- **The group gradients come from a learned critic.** Most of the conflict in sections 7-9 turned out
+  to be an artifact of the unscaled critic (section 7, update). Any conflict measurement needs the
+  head-scaled critic.
 - **One task, one recipe.** These results are for the mission plus 0.3-0.5 m waypoints with this
   reward. They do not show that aggregators are useless in general.
 - **Simulation only.** Nothing here was flown.
@@ -356,9 +407,14 @@ those that redirect (negative weights) change a lot.
 
 ## 13. Open questions and next steps
 
-1. **Close the MOO-TD3 gap** (the 4-head hypothesis, section 10). Then repeat sum against DualProj
-   on the fixed critic.
-2. **A conflict-by-design task** where the right actions are opposite in similar states.
+1. **An untuned comparison.** Hand-tuned weights settle the trade-off before MOO starts, so they are
+   an oracle, not the baseline. Next: the 4 groups normalised to equal size with equal preference, the
+   crash penalty fixed (400) for every arm as the task's definition of failure, gated by the reward
+   check; untuned TD3 as the baseline, every aggregator (PGA included) on the head-scaled critic,
+   tuned TD3 as the oracle. Then preference vectors to trace a Pareto front against a grid of TD3
+   weights.
+2. **A conflict-by-design task** where the right actions are opposite in similar states (target jump
+   against a Lighthouse glitch; later camera tasks, where objectives have no natural common scale).
 3. **Why time cost 0.2 is worse than none** (consistent over 8 seeds).
 4. **Why the progress reward failed** (steady 10-20 cm offset).
 5. **Slow settling after a jump** (3-6 s to get within 5 cm): the real target for a time objective.
@@ -416,6 +472,7 @@ python l2f/py/reward_check.py --build l2f/learning_to_fly/build_py_E_nb200/src -
 | `l2f/sim/ablation_conflict.txt` | gradient conflict (MOO sum) |
 | `l2f/sim/ablation_aggregators.txt` | 6 aggregators |
 | `l2f/sim/ablation_moo2.txt`, `ablation_moo2_confirm.txt` | DualProj on 8 seeds, the critic loss, delayed aggregators |
+| `l2f/sim/ablation_headscale.txt`, `ablation_headscale_confirm.txt` | the 4-head critic: MOO with 1 group, head scaling |
 
 Raw outputs (`l2f/learning_to_fly/ablation_*`) and checkpoints are not in git; they are on the Mac
 that ran them. Gradient logs: `logs/train_moo_*.csv` (per-group norms, pairwise cosines, aggregator
@@ -434,6 +491,7 @@ weights every 50 actor updates).
 | Aligned-MTL, SVD-PGA, OS-NMF-PGA | rescale the groups so each contributes equally |
 | `--total` | weight of the per-group critic loss next to the total-value loss |
 | `--agg-start` | plain sum until this training step, then the aggregator |
+| `--head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k): the summed value starts and moves like TD3's |
 | crash-better | share of states where crashing at once would pay more than flying on |
 | free flight | training episodes that start from a random state, often tilted and away from the target |
 | Huber cap | position cost quadratic near the target and linear beyond 0.2 m |

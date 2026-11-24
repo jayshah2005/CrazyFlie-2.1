@@ -1,0 +1,29 @@
+# Seeds 74-77 for ablation_headscale.txt: head-scaled MOO sum (seed 70 crashed 39% while 71-73 matched
+# or beat TD3) against TD3, 8 seeds each. Run with --seeds 70 71 72 73 74 75 76 77 into the same
+# output folder (td3 seeds 74-77 are ablation_moo2's runs).
+
+# Why does MOO sum train worse than TD3 (ablation_moo2: 6.8 against 6.0 cm, 2.9 against 1.4% crashes,
+# 8 seeds; --total 0 did not help)? Hypothesis: the critic's total value is the sum of 4 output heads,
+# which (measured, 20 fresh critics) starts with 2.1x TD3's spread and moves 2.3x as far per update.
+# --head-scale multiplies the outputs by 1/4 and the initial output layer by 2: the sum then starts
+# and moves like TD3's (0.137 / 0.0266 against TD3's 0.137 / 0.0285).
+#  - moo1sum: MOO with one group, the whole MOO code path on a 1-head critic; should match TD3.
+#  - moo4sum_tot0_hs: head scaling with the total-value loss only (against moo4sum_tot0).
+#  - moo4sum_hs: head scaling with the standard MOO critic loss (--total 1; against moo4sum).
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_headscale.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+# (td3, moo4sum and moo4sum_tot0 are ablation_moo2's runs, seeds 70-73)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3
+arm  moo4sum_hs        --moo parts --parts 4 --total 1 --agg sum --head-scale
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5

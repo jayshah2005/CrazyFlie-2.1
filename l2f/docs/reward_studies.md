@@ -25,9 +25,10 @@ time (about 14 min each).
 9. [Gradient conflict on the time 0.5 recipe](#9-gradient-conflict-on-the-time-05-recipe)
 10. [Study 5: aggregators](#10-study-5-aggregators)
 11. [Study 6: DualProj on 8 seeds, the critic loss, delayed aggregators](#11-study-6-dualproj-on-8-seeds-the-critic-loss-delayed-aggregators)
-12. [Lessons](#12-lessons)
-13. [Next steps](#13-next-steps)
-14. [Options added](#14-options-added)
+12. [Study 7: the 4-head critic](#12-study-7-the-4-head-critic)
+13. [Lessons](#13-lessons)
+14. [Next steps](#14-next-steps)
+15. [Options added](#15-options-added)
 
 ## 1. Tools
 
@@ -306,7 +307,29 @@ the start 18.4 cm / 50.6%.)
 
 Why the aggregators do not help, in full: [moo_findings.md](moo_findings.md), section 9.
 
-## 12. Lessons
+## 12. Study 7: the 4-head critic
+
+`ablation_headscale.txt` (seeds 70-73) and `ablation_headscale_confirm.txt` (seeds 74-77), the time
+0.5 recipe. The MOO critic's total value is the sum of 4 output heads; on 20 fresh critics it starts
+with 2.1x TD3's spread and moves 2.3x as far per update. `--head-scale` (outputs x 1/4, initial output
+layer x 2) gives 0.137 / 0.0266 against TD3's 0.137 / 0.0285.
+
+| Arm | Seeds | Circle | Crashed | Crash-free checkpoints | 5 cm | 10 cm (time) |
+| --- | --- | --- | --- | --- | --- | --- |
+| TD3 | 8 | 6.0 cm | 1.4% | 18/72 | 30.0% | 79.5% (1.73 s) |
+| MOO, 1 group (`--parts 1`) | 4 | 5.0 cm | 1.0% | 9/36 | 37.5% | 84.0% (TD3 seeds 70-73: the same) |
+| MOO sum `--total 0` + head scale | 4 | 6.3 cm | 4.8% | 9/36 | 26.0% | 73.5% |
+| MOO sum `--total 1` + head scale | 8 | 5.0 cm | 5.6% (s70 39%; others 0.4-1.2%) | 32/72 | 31.0% | 71.0% (1.52 s) |
+
+- MOO with 1 group matches TD3: the MOO code path is sound; the gap came from the 4 heads.
+- Head-scaled MOO sum is level with TD3 (better circle and crash-free checkpoints, faster arrival;
+  worse with uneven motors, 11.2 against 9.7 cm, and at 10 cm arrival); one seed in 8 failed.
+- With the head-scaled critic the summed update hurts some group in 6-8% of updates (22-47% unscaled)
+  and every pair of groups agrees on average: most of the conflict of sections 9-11 was the critic's.
+- `test_td3.py` reports PyTorch against rl_tools differing by 1.9e-4 after 1000 rounds (tolerance
+  1e-4), with and without this change: drift on the Mac (Accelerate), not caused by it.
+
+## 13. Lessons
 
 - **Gate every reward change with `reward_check.py`**, with the final weights. It found the
   free-flight crash incentive and the waypoint leg cost in seconds.
@@ -322,12 +345,13 @@ Why the aggregators do not help, in full: [moo_findings.md](moo_findings.md), se
 - **Check what a test measures**: the 5 cm arrival and the "9 cm offset" were mostly the 1.5-2.5 s
   legs and uneven motors, not the policies.
 
-## 13. Next steps
+## 14. Next steps
 
-See [moo_findings.md](moo_findings.md), section 13. First: test the 4-head hypothesis for the gap
-between MOO sum and TD3, then repeat sum against DualProj on the fixed critic.
+See [moo_findings.md](moo_findings.md), section 13: an untuned comparison (equal, normalised groups,
+crash penalty fixed at 400, gated by the reward check; untuned TD3 as the baseline, tuned TD3 as the
+oracle), on the head-scaled critic.
 
-## 14. Options added
+## 15. Options added
 
 All off by default; with none set, earlier recipes reproduce bit for bit (simulator checked against
 the previous build over 64,000 steps, training checked at 100k and 200k steps).
@@ -338,6 +362,7 @@ the previous build over 64,000 steps, training checked at 100k and 200k steps).
 | `L2F_CRASH_PENALTY_OVERRIDE=P` | Crash penalty P instead of the build's `-DL2F_CRASH_PENALTY` (Python binding) |
 | `L2F_WAYPOINT_S_MIN`, `L2F_WAYPOINT_S_MAX` (-1, 0.5) | Range of the second waypoint leg: it goes to s x the jump |
 | `L2F_EVAL_LEG_S` (test only) | Waypoint test: both legs last this long; the episode runs past the 5 s step limit |
+| `train.py --head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k) (k groups): the summed value starts and moves like TD3's |
 | `train.py --agg-start STEP` | MOO: the plain sum until STEP, then `--agg` (0, the default: `--agg` from the start) |
 | `L2F_EVAL_RESET_INTEGRAL` (test only) | Waypoint test diagnostic: zero the position-error integral whenever the target moves |
 
