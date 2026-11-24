@@ -56,6 +56,25 @@ TASK_NAMES = ['free_flight', 'takeoff', 'landing', 'circle', 'line', 'eight', 'f
 AGGREGATORS = ['sum', 'mean', 'upgrad', 'aligned_mtl', 'dualproj', 'pcgrad', 'mgda', 'svd_pga', 'osnmf_pga', 'task_share']
 
 
+def part_factors(group_scale, part_names):
+    """Per-part weight factors from a group scale "time=a,precision=b,efficiency=c,safety=d" (4 groups,
+    GROUP4_OF); survival (the crash penalty) and parts outside the 4 groups keep factor 1. Empty: all 1.
+    Used for the untuned comparison: each group scaled to the same average cost per step."""
+    f = np.ones(len(part_names))
+    if not group_scale:
+        return f
+    scale = {}
+    for item in group_scale.split(','):
+        key, _, val = item.partition('=')
+        if key not in GROUPS4 or not val:
+            raise ValueError(f'group scale {group_scale!r}: give {"=x,".join(GROUPS4)}=x')
+        scale[key] = float(val)
+    for i, n in enumerate(part_names):
+        if n != 'survival' and n in GROUP4_OF:
+            f[i] = scale.get(GROUPS4[GROUP4_OF[n]], 1.0)
+    return f
+
+
 def make_aggregator(name, m):
     """TorchJD aggregator `name` for m objectives (preference vectors all ones)."""
     ones = torch.ones(m)

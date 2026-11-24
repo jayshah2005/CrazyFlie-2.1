@@ -32,7 +32,7 @@ sys.path.insert(0, str(ROOT))  # run_log
 sys.path.insert(0, str(HERE))
 import run_log  # noqa: E402
 from export import save_actor_h5  # noqa: E402
-from moo import AGGREGATORS, MooTD3  # noqa: E402
+from moo import AGGREGATORS, MooTD3, part_factors  # noqa: E402
 from td3 import TD3, ReplayBuffer, TD3Config  # noqa: E402
 
 log = run_log.setup(__file__)
@@ -74,6 +74,8 @@ def run_tag(args):
         tag += f'_tasks{args.tasks}_{args.agg}'
     if args.hard:
         tag += '_hard'
+    if args.group_scale:
+        tag += '_gs'
     return tag + f'_s{args.seed}'
 
 
@@ -101,7 +103,11 @@ def train(args, extra_env):
     # recipes would no longer reproduce bit for bit.
     keep = [i for i, (n, w) in enumerate(zip(info['part_names'], sim.weights())) if n != 'progress' or w != 0]
     info = {**info, 'part_names': [info['part_names'][i] for i in keep]}
-    weights_now = lambda: np.asarray(sim.weights())[keep]
+    # --group-scale: per-part factors on the weights the agent learns from (the weight curriculum
+    # still reads and writes the simulator's own weights)
+    factors = part_factors(args.group_scale, info['part_names']).astype(np.float32)
+    raw_weights = lambda: np.asarray(sim.weights())[keep]
+    weights_now = lambda: raw_weights() * factors
     agent = make_agent(args, cfg, info, weights_now())
     buf = ReplayBuffer(cfg.replay_cap, info['obs_dim'], info['obs_dim_privileged'], info['action_dim'],
                        len(info['part_names']))
@@ -127,7 +133,7 @@ def train(args, extra_env):
             if waypoint_ramp > 0:  # B: the waypoint jumps grow on their own (slower) schedule
                 sim.set_waypoint_progress(min(1.0, t / waypoint_ramp))
         if weight_curriculum and t != 0 and t % 100_000 == 0 and t != cfg.steps - 1:
-            w = weights_now()  # indexed like names (weight_index)
+            w = raw_weights()  # indexed like names (weight_index); the curriculum works on the raw weights
             sim.set_weights({k: min(cap, float(w[weight_index[k]]) * f) for k, (f, cap) in cfg.weight_caps.items()})
         if t % 100_000 == 0 and t >= 500_000:
             agent.decay_noise()
@@ -205,6 +211,9 @@ def main():
     parser.add_argument('--evaluate-run', type=Path, help='only score the checkpoints of this run folder')
     parser.add_argument('--moo', choices=['parts', 'tasks'], help='multi-objective TD3 (moo.py): framing A or B')
     parser.add_argument('--agg', default='sum', choices=AGGREGATORS, help='TorchJD aggregator (--moo)')
+    parser.add_argument('--group-scale', default='',
+                        help='factors on the reward groups, "time=a,precision=b,efficiency=c,safety=d" (the crash '
+                        'penalty is not scaled); reward_check.py prints the factors that equalise the groups')
     parser.add_argument('--head-scale', action='store_true',
                         help='--moo parts: critic outputs x 1/k and initial output layer x sqrt(k), so the summed '
                         'value has TD3\'s step size and starting spread')

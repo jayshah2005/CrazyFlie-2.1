@@ -60,6 +60,7 @@ sys.path.insert(0, str(HERE))
 import run_log  # noqa: E402
 from export import load_actor_h5  # noqa: E402
 from networks import Actor  # noqa: E402
+from moo import GROUP4_OF, GROUPS4, part_factors  # noqa: E402
 from td3 import TD3Config  # noqa: E402
 
 log = run_log.setup(__file__)
@@ -178,6 +179,8 @@ def main() -> None:
     ap.add_argument('--envs', type=int, default=64, help='environments stepped together')
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--crash-penalty', type=float, default=200, help='P, if no crash is seen (else measured)')
+    ap.add_argument('--group-scale', default='',
+                    help='factors on the reward groups, as train.py --group-scale (the crash penalty unscaled)')
     ap.add_argument('--initial-weights', action='store_true',
                     help='keep the starting weights instead of the final ones (for comparison only)')
     a = ap.parse_args()
@@ -186,10 +189,12 @@ def main() -> None:
     env['L2F_MOTOR_GAIN'] = str(MOTOR_GAIN if a.variant != 'I1' else 0)
     env['L2F_MOTOR_OFFSET'] = str(MOTOR_OFFSET if a.variant != 'I1' else 0)
     env.update(kv.split('=', 1) for kv in a.env)
-    if a.candidate and float(env.get('L2F_PROGRESS_K', 0)) != 0:
+    # only huber and progress candidates recompute the position cost from d^2
+    reshapes = [c for c in a.candidate if 'huber=' in c or 'progress=' in c]
+    if reshapes and float(env.get('L2F_PROGRESS_K', 0)) != 0:
         raise SystemExit('candidates need the plain position cost: roll out without L2F_PROGRESS_K '
                          '(score it as --candidate progress=K)')
-    if a.candidate and float(env.get('L2F_POS_CAP', 0)) > 0:
+    if reshapes and float(env.get('L2F_POS_CAP', 0)) > 0:
         raise SystemExit('candidates need the plain position cost: roll out without L2F_POS_CAP '
                          '(score the cap as --candidate huber=C)')
     os.environ.update(env)  # read when the Sim is created
@@ -256,7 +261,7 @@ def main() -> None:
     spread = float(np.percentile(scale_samples, 99) - np.percentile(scale_samples, 1)) if scale_samples else float('nan')
     log.info('%d episodes; crash penalty P = %g (%s); gamma %g; position cost = %.4g x w x d^2 (spread %.2g)',
              len(episodes), P, 'measured' if penalties else 'assumed', gamma, scale, spread)
-    if a.candidate and not (spread < 1e-3 * scale):
+    if reshapes and not (spread < 1e-3 * scale):
         raise SystemExit('the recorded position part is not scale x d^2: cannot score candidates')
 
     bad = [f'{names[k]} ({sign_bad[k]} steps, up to +{sign_worst[k]:.3g})' for k in range(1, len(names)) if sign_bad[k]]
@@ -264,6 +269,34 @@ def main() -> None:
         log.error('SIGN CHECK FAILED: these parts paid a reward on ordinary steps: %s', '; '.join(bad))
     else:
         log.info('sign check OK: every part except survival and progress is a cost on every ordinary step')
+
+    # --group-scale: the weighted parts and the reward of ordinary steps rescaled per group
+    factors = part_factors(a.group_scale, names)
+    if a.group_scale:
+        for e in episodes:
+            e.parts = e.parts * factors
+            n_ok = len(e.reward) - (e.end != 'survived')  # the last step of a crash or landing keeps its reward
+            e.reward = e.reward.copy()
+            e.reward[:n_ok] = e.parts[:n_ok].sum(1)
+        log.info('group scale %s: part factors %s', a.group_scale,
+                 ', '.join(f'{n} {f:g}' for n, f in zip(names, factors) if f != 1 and w[names.index(n)]))
+
+    # mean cost per step of the 4 MOO groups (ordinary steps, all episode types): the factors that
+    # give every group the same mean cost, with the same total, are the untuned group scale
+    group_cost = np.zeros(len(GROUPS4))
+    n_steps = 0
+    for e in episodes:
+        n_ok = len(e.reward) - (e.end != 'survived')
+        for k, n in enumerate(names):
+            if n != 'survival' and n in GROUP4_OF:
+                group_cost[GROUP4_OF[n]] += -e.parts[:n_ok, k].sum()
+        n_steps += n_ok
+    group_cost /= max(n_steps, 1)
+    eq = group_cost.sum() / len(GROUPS4) / np.where(group_cost > 0, group_cost, np.nan)
+    log.info('mean cost per step by group: %s (total %.3f)',
+             ', '.join(f'{g} {c:.4f}' for g, c in zip(GROUPS4, group_cost)), group_cost.sum())
+    log.info('equal-share group scale (same total): --group-scale %s',
+             ','.join(f'{g}={x:.4g}' for g, x in zip(GROUPS4, eq)))
 
     # the reward as built, in detail
     built = analyze(episodes, lambda e: e.reward, P, k_built, gamma)
