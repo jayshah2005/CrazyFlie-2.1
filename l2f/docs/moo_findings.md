@@ -18,12 +18,13 @@ written to be read on its own. The detailed record of every study, with all tabl
 8. [Finding 5: no aggregator beats plain summing](#8-finding-5-no-aggregator-beats-plain-summing)
 9. [Why the aggregators do not help](#9-why-the-aggregators-do-not-help)
 10. [Finding 6: MOO sum trailed TD3, fixed by head scaling](#10-finding-6-moo-sum-trailed-td3-fixed-by-head-scaling)
-11. [Caveats](#11-caveats)
-12. [What this means for the paper](#12-what-this-means-for-the-paper)
-13. [Open questions and next steps](#13-open-questions-and-next-steps)
-14. [Lessons about the process](#14-lessons-about-the-process)
-15. [Reproducing the results](#15-reproducing-the-results)
-16. [Glossary](#16-glossary)
+11. [Finding 7: untuned, the aggregators still do not help](#11-finding-7-untuned-the-aggregators-still-do-not-help)
+12. [Caveats](#12-caveats)
+13. [What this means for the paper](#13-what-this-means-for-the-paper)
+14. [Open questions and next steps](#14-open-questions-and-next-steps)
+15. [Lessons about the process](#15-lessons-about-the-process)
+16. [Reproducing the results](#16-reproducing-the-results)
+17. [Glossary](#17-glossary)
 
 ---
 
@@ -50,8 +51,17 @@ written to be read on its own. The detailed record of every study, with all tabl
 - **Why the aggregators did not help:** they were reacting to critic noise and to scale differences
   the broken critic exaggerated; the balancing aggregators also undo the priorities that the tuned
   reward weights encode; and with tuned weights the trade-off is already settled.
-- **The right comparison is untuned.** Hand-tuned reward weights are an oracle, not the baseline: MOO
-  should be compared with TD3 on an untuned reward (section 13).
+- **Untuned, the aggregators still do not help (section 11).** With no hand-picked group weights
+  (each group given an equal share of the cost, crash penalty 600), untuned TD3 is much worse than
+  tuned TD3 (10.1 against 4.9 cm, 6.0 against 0.8% crashes). No aggregator closes that gap: the
+  groups still barely conflict (their gradients point the same way, cosine +0.98 early), so DualProj
+  and UPGrad leave every weight at 1 and equal MOO sum, which is about untuned TD3. The balancing
+  aggregators (Aligned-MTL, SVD-PGA, OS-NMF-PGA) get worse (11-21% crashes): with near-parallel
+  gradients they amplify noise, with weights of +-100 to +-270 of alternating sign.
+- **The untuned reward's problem is priorities, not conflict.** Aggregators resolve conflicts
+  between objectives; they cannot choose better priorities. Ordinary flight objectives do not
+  produce gradient conflict, tuned or not. Next: tasks with genuine interference, and preference
+  vectors for the trade-off (section 14).
 
 ## 2. Background
 
@@ -380,7 +390,77 @@ those that redirect (negative weights) change a lot.
   - **Use `--head-scale` for every MOO run.** All MOO results before it (sections 7-9) used the
     unscaled critic.
 
-## 11. Caveats
+## 11. Finding 7: untuned, the aggregators still do not help
+
+Hand-tuned reward weights settle the trade-off before MOO starts, so they are an oracle, not the
+baseline. This study removed them.
+
+### The untuned reward
+
+- **Equal shares.** `train.py --group-scale` multiplies each group's weights so that every group has
+  the same mean cost per step, with the same total as the tuned reward. `reward_check.py` measures
+  the group costs and prints the factors. Measured with 4 trained TD3 policies of the tuned time 0.5
+  recipe (median factors):
+
+| Group | Mean cost per step, tuned | Factor | Untuned final weights |
+| --- | --- | --- | --- |
+| time | 0.13-0.14 | 2.3 | time 1.15 |
+| precision | 0.52-0.73 | 0.53 | position 21.2, velocity 0.53 |
+| efficiency | 0.37-0.60 | 0.68 | action 0.68, action rate 0.68, angular acceleration 0.000136 |
+| safety (crash excluded) | 0.03-0.11 | 7.3 | tilt 36.5, landing speed 36.5 |
+
+  The tuned reward gives precision and efficiency about 85% of the cost; the untuned one gives every
+  group 25%. The relative weights inside each group are kept (a remaining hand-chosen part).
+- **The crash penalty is the task's definition of failure, not a trade-off weight.** It is fixed for
+  every arm at the smallest value that passes the reward check under this scale: 400 failed (free
+  flight 7-8% of states for 3 of 4 policies; the boosted tilt cost makes recovering from tilted
+  starts expensive), 500 passed with up to 2.7%, **600** with at most 0.8% in any episode type.
+- **Task:** the time 0.5 recipe (mission plus 0.3-0.5 m waypoints, Huber 0.2, time cost, sim
+  options). MOO arms use the head-scaled critic and `--total 1`.
+
+### Results (`ablation_untuned.txt`, seeds 70-73; mission 12 ms plain world, waypoints 3.5 s legs 0.3-0.5 m)
+
+| Arm | Circle | Crashes | Crash-free checkpoints | Jitter | 10 cm arrival | Final error |
+| --- | --- | --- | --- | --- | --- | --- |
+| **TD3, untuned** (baseline) | 10.1 cm | 6.0% | 0/36 | 0.148 | 29% | 17.2 cm |
+| MOO sum | 9.6 cm | 7.5% | 0/36 | 0.136 | 36% | 15.8 cm |
+| DualProj | 9.3 cm | 8.2% | 0/36 | 0.140 | 39% | 15.2 cm |
+| UPGrad | 8.8 cm | 8.1% | 0/36 | 0.154 | 38% | 15.4 cm |
+| Aligned-MTL | 12.8 cm | 11.1% | 0/36 | 0.142 | 15% | 20.6 cm |
+| SVD-PGA | 15.8 cm | 17.3% | 0/36 | 0.127 | 12% | 20.9 cm |
+| OS-NMF-PGA | 19.5 cm | 20.9% | 0/36 | 0.144 | 2% | 25.9 cm |
+| *tuned TD3 (crash 400; reference)* | *4.9 cm* | *0.8%* | *12/36* | *0.124* | *84%* | *8.1 cm* |
+
+### What the gradient logs show
+
+| Arm | Summed step hurts a group (0-0.8M / 1.4-2.0M) | Lowest pair cosine | Median weights time / precision / efficiency / safety |
+| --- | --- | --- | --- |
+| sum | 0% / 4% | +0.98 / +0.31 | 1 / 1 / 1 / 1 |
+| DualProj | 0% / 4% | +0.98 / +0.33 | 1 / 1 / 1 / 1 |
+| UPGrad | 0% / 5% | +0.98 / +0.30 | 1 / 1 / 1 / 1 |
+| Aligned-MTL | 0% / 4% | +0.99 / +0.67 | 0.07 / -0.00 / 0.08 / -0.06 |
+| SVD-PGA | 0% / 0% | +0.99 / +0.95 | 151 / -143 / 77 / -53 |
+| OS-NMF-PGA | 0% / 1% | +0.99 / +0.81 | 106 / -121 / 67 / -32 |
+
+- **Hand-tuning was worth a lot:** untuned TD3 doubles the circle error, crashes about 7 times as
+  often, never has a crash-free checkpoint and reaches a third as many waypoints. Likely cause:
+  equal shares halve precision's weight and multiply the tilt cost by 7.3; a quadrotor must tilt to
+  move, so the policy tracks sluggishly.
+- **The groups still do not conflict.** Their gradients are nearly parallel early (+0.98) and agree
+  late; the summed step hurts a group in at most 5% of updates. DualProj and UPGrad, which act only
+  on conflict, kept every weight at 1: they are MOO sum. MOO sum's small differences from untuned TD3
+  (better circle and waypoints, slightly more crashes) are within seed noise; all three MOO arms share
+  seed 72's high crash rate (14-15%).
+- **Aggregators resolve conflicts; they cannot choose priorities.** With equal shares, every group
+  agrees on how to improve the (poor) reward. Nothing in gradient aggregation moves the policy to a
+  better trade-off; that needs stated priorities (preference vectors) or tuning.
+- **Balancing aggregators are unstable when objectives are aligned.** When the group gradients are
+  nearly parallel, their differences are mostly noise. Aligned-MTL, SVD-PGA and OS-NMF-PGA equalise
+  the groups by amplifying those differences: the PGA variants used weights of +-100 to +-270 with
+  alternating signs, so the update is built mostly from noise (11-21% crashes). This is a different
+  failure from the tuned case (section 9.1, discarding deliberate scales).
+
+## 12. Caveats
 
 - **Seed variance is large.** TD3 on this task varies by several cm between seeds. DualProj's 4-seed
   lead disappeared at 8 seeds; time cost 0.5's lead halved. Differences of 1-2 cm or a few percent
@@ -392,7 +472,7 @@ those that redirect (negative weights) change a lot.
   reward. They do not show that aggregators are useless in general.
 - **Simulation only.** Nothing here was flown.
 
-## 12. What this means for the paper
+## 13. What this means for the paper
 
 - **A clear, explained negative result.** On a task with a carefully tuned scalar reward:
   - scale-normalising aggregators fail because the scales encode priorities;
@@ -400,19 +480,23 @@ those that redirect (negative weights) change a lot.
     failure but adds nothing;
   - the most conservative aggregator cannot beat a tuned sum when the conflict is a real trade-off;
   - the decomposed critic must match TD3 before any aggregator comparison is fair.
-- **Where aggregators could still matter:** objectives with arbitrary scales and no tuned weights;
-  genuine interference through shared parameters (situations that need opposite actions in similar
-  states); a task designed with that conflict, for example a real target jump against a Lighthouse
-  glitch of the same size.
+- **Untuned (section 11):** aggregation does not replace reward tuning on this task. The flight
+  objectives do not conflict at the gradient level, tuned or untuned, so conflict-resolving
+  aggregators reduce to the sum; balancing aggregators (PGA included) become unstable when the
+  objectives are aligned.
+- **Where aggregators could still matter:** genuine interference through shared parameters
+  (situations that need opposite actions in similar states), for example a real target jump against
+  a Lighthouse glitch of the same size, or camera tasks whose objectives have no natural common
+  scale. Run a conflict check (one sum run with the head-scaled critic) before any aggregator study.
+- **Stating priorities:** preference vectors are MOO's tool for choosing the trade-off; comparing
+  them with a grid of TD3 weights (the Pareto front) is the experiment that tests MOO's claim to
+  replace tuning.
 
-## 13. Open questions and next steps
+## 14. Open questions and next steps
 
-1. **An untuned comparison.** Hand-tuned weights settle the trade-off before MOO starts, so they are
-   an oracle, not the baseline. Next: the 4 groups normalised to equal size with equal preference, the
-   crash penalty fixed (400) for every arm as the task's definition of failure, gated by the reward
-   check; untuned TD3 as the baseline, every aggregator (PGA included) on the head-scaled critic,
-   tuned TD3 as the oracle. Then preference vectors to trace a Pareto front against a grid of TD3
-   weights.
+1. **Done: the untuned comparison** (section 11). Follow-ups: preference vectors against a grid of TD3
+   weights (the Pareto front); a fully untuned variant (every reward term equalised, not just the
+   groups).
 2. **A conflict-by-design task** where the right actions are opposite in similar states (target jump
    against a Lighthouse glitch; later camera tasks, where objectives have no natural common scale).
 3. **Why time cost 0.2 is worse than none** (consistent over 8 seeds).
@@ -421,7 +505,7 @@ those that redirect (negative weights) change a lot.
 6. **The free-flight crash incentive** is reduced but not gone (3-7% of states for policies trained
    with crash 400).
 
-## 14. Lessons about the process
+## 15. Lessons about the process
 
 - **Change one thing at a time** against a reference, and test every arm under the same conditions.
 - **Gate reward changes with the reward check**, with the final weights. It finds crash incentives in
@@ -435,7 +519,7 @@ those that redirect (negative weights) change a lot.
 - **Check analysis tools against the real code.** A missing weight in the candidate scoring made two
   rewards look 40 times cheaper until the C++ reward disagreed.
 
-## 15. Reproducing the results
+## 16. Reproducing the results
 
 Build (old observation path):
 
@@ -473,12 +557,13 @@ python l2f/py/reward_check.py --build l2f/learning_to_fly/build_py_E_nb200/src -
 | `l2f/sim/ablation_aggregators.txt` | 6 aggregators |
 | `l2f/sim/ablation_moo2.txt`, `ablation_moo2_confirm.txt` | DualProj on 8 seeds, the critic loss, delayed aggregators |
 | `l2f/sim/ablation_headscale.txt`, `ablation_headscale_confirm.txt` | the 4-head critic: MOO with 1 group, head scaling |
+| `l2f/sim/ablation_untuned.txt` | the untuned comparison: TD3 and 6 aggregators, equal group shares, crash 600 |
 
 Raw outputs (`l2f/learning_to_fly/ablation_*`) and checkpoints are not in git; they are on the Mac
 that ran them. Gradient logs: `logs/train_moo_*.csv` (per-group norms, pairwise cosines, aggregator
 weights every 50 actor updates).
 
-## 16. Glossary
+## 17. Glossary
 
 | Term | Meaning |
 | --- | --- |
@@ -491,6 +576,7 @@ weights every 50 actor updates).
 | Aligned-MTL, SVD-PGA, OS-NMF-PGA | rescale the groups so each contributes equally |
 | `--total` | weight of the per-group critic loss next to the total-value loss |
 | `--agg-start` | plain sum until this training step, then the aggregator |
+| `--group-scale` | factors on the reward groups' weights; equal shares = the untuned reward |
 | `--head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k): the summed value starts and moves like TD3's |
 | crash-better | share of states where crashing at once would pay more than flying on |
 | free flight | training episodes that start from a random state, often tilted and away from the target |

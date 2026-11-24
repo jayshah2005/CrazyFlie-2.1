@@ -26,9 +26,10 @@ time (about 14 min each).
 10. [Study 5: aggregators](#10-study-5-aggregators)
 11. [Study 6: DualProj on 8 seeds, the critic loss, delayed aggregators](#11-study-6-dualproj-on-8-seeds-the-critic-loss-delayed-aggregators)
 12. [Study 7: the 4-head critic](#12-study-7-the-4-head-critic)
-13. [Lessons](#13-lessons)
-14. [Next steps](#14-next-steps)
-15. [Options added](#15-options-added)
+13. [Study 8: untuned reward](#13-study-8-untuned-reward)
+14. [Lessons](#14-lessons)
+15. [Next steps](#15-next-steps)
+16. [Options added](#16-options-added)
 
 ## 1. Tools
 
@@ -329,7 +330,38 @@ layer x 2) gives 0.137 / 0.0266 against TD3's 0.137 / 0.0285.
 - `test_td3.py` reports PyTorch against rl_tools differing by 1.9e-4 after 1000 rounds (tolerance
   1e-4), with and without this change: drift on the Mac (Accelerate), not caused by it.
 
-## 13. Lessons
+## 13. Study 8: untuned reward
+
+`ablation_untuned.txt`, seeds 70-73. Hand-tuned group weights replaced by equal shares
+(`--group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3`: each group the same mean cost
+per step, same total as the tuned reward; medians over 4 trained TD3 policies, from
+`reward_check.py`'s "equal-share group scale"). Crash penalty 600 for every arm (gate under this
+scale: 400 fails in free flight, 7-8% for 3 of 4 policies; 500 up to 2.7%; 600 at most 0.8%). Time
+0.5 task; MOO arms head-scaled with `--total 1`. Mission plain world 12 ms; waypoints 3.5 s legs,
+0.3-0.5 m.
+
+| Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 5 cm | 10 cm | Final error |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| TD3 | 10.1 cm | 15.5 cm | 6.0% | 0/36 | 0.148 | 8.0% | 29.0% | 17.2 cm |
+| MOO sum | 9.6 cm | 15.0 cm | 7.5% | 0/36 | 0.136 | 10.0% | 36.0% | 15.8 cm |
+| DualProj | 9.3 cm | 15.0 cm | 8.2% | 0/36 | 0.140 | 9.5% | 39.0% | 15.2 cm |
+| UPGrad | 8.8 cm | 14.9 cm | 8.1% | 0/36 | 0.154 | 8.5% | 38.0% | 15.4 cm |
+| Aligned-MTL | 12.8 cm | 19.9 cm | 11.1% | 0/36 | 0.142 | 1.0% | 15.0% | 20.6 cm |
+| SVD-PGA | 15.8 cm | 25.4 cm | 17.3% | 0/36 | 0.127 | 1.5% | 12.0% | 20.9 cm |
+| OS-NMF-PGA | 19.5 cm | 25.4 cm | 20.9% | 0/36 | 0.144 | 0.0% | 2.0% | 25.9 cm |
+
+Per seed (circle / crashed): TD3 8.9-10.6 cm / 4.8-7.3%; sum, DualProj and UPGrad 6.8-11.8 cm,
+4.7-15.1% (seed 72 13.7-15.1% in all three); SVD-PGA seeds 72-73 and OS-NMF-PGA seeds 71 and 73 at
+19-38%.
+
+- Untuned TD3 is far behind tuned TD3 (4.9 cm, 0.8%, 84% within 10 cm on these seeds).
+- The groups barely conflict (summed step hurts a group in 0-5% of updates; pair cosines +0.98
+  early): DualProj and UPGrad keep every weight at 1 and equal MOO sum.
+- Balancing aggregators amplify the noise between near-parallel gradients (PGA weights +-100 to
+  +-270, alternating signs) and get worse. Full discussion: [moo_findings.md](moo_findings.md),
+  section 11.
+
+## 14. Lessons
 
 - **Gate every reward change with `reward_check.py`**, with the final weights. It found the
   free-flight crash incentive and the waypoint leg cost in seconds.
@@ -345,13 +377,12 @@ layer x 2) gives 0.137 / 0.0266 against TD3's 0.137 / 0.0285.
 - **Check what a test measures**: the 5 cm arrival and the "9 cm offset" were mostly the 1.5-2.5 s
   legs and uneven motors, not the policies.
 
-## 14. Next steps
+## 15. Next steps
 
-See [moo_findings.md](moo_findings.md), section 13: an untuned comparison (equal, normalised groups,
-crash penalty fixed at 400, gated by the reward check; untuned TD3 as the baseline, tuned TD3 as the
-oracle), on the head-scaled critic.
+See [moo_findings.md](moo_findings.md), section 14: a task with genuine interference (with a conflict
+check before any aggregator study), and preference vectors against a grid of TD3 weights.
 
-## 15. Options added
+## 16. Options added
 
 All off by default; with none set, earlier recipes reproduce bit for bit (simulator checked against
 the previous build over 64,000 steps, training checked at 100k and 200k steps).
@@ -362,6 +393,8 @@ the previous build over 64,000 steps, training checked at 100k and 200k steps).
 | `L2F_CRASH_PENALTY_OVERRIDE=P` | Crash penalty P instead of the build's `-DL2F_CRASH_PENALTY` (Python binding) |
 | `L2F_WAYPOINT_S_MIN`, `L2F_WAYPOINT_S_MAX` (-1, 0.5) | Range of the second waypoint leg: it goes to s x the jump |
 | `L2F_EVAL_LEG_S` (test only) | Waypoint test: both legs last this long; the episode runs past the 5 s step limit |
+| `train.py --group-scale time=a,precision=b,efficiency=c,safety=d` | factors on the reward groups' weights as the agent sees them (the crash penalty and the weight curriculum unchanged); equal shares = the untuned reward |
+| `reward_check.py --group-scale ...` | the same factors in the reward check; it also prints each group's mean cost per step and the equal-share factors, and `crash=` candidates now work with the Huber cap on |
 | `train.py --head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k) (k groups): the summed value starts and moves like TD3's |
 | `train.py --agg-start STEP` | MOO: the plain sum until STEP, then `--agg` (0, the default: `--agg` from the start) |
 | `L2F_EVAL_RESET_INTEGRAL` (test only) | Waypoint test diagnostic: zero the position-error integral whenever the target moves |

@@ -1,0 +1,32 @@
+# Untuned comparison (moo_findings.md, section 13): hand-tuned reward weights settle the trade-off
+# before MOO starts, so they are an oracle, not the baseline. Here no group gets a hand-picked weight:
+# --group-scale gives each of the 4 groups (time, precision, efficiency, safety without the crash
+# term) the same mean cost per step, with the same total as the tuned reward (factors: medians over 4
+# trained TD3 policies of the tuned time 0.5 recipe, reward_check.py "equal-share group scale"; the
+# relative weights inside each group are kept). The crash penalty is fixed for every arm as the task's
+# definition of failure: 600, the smallest that passed the reward check under this scale (400: free
+# flight 7-8% FAIL for 3 of 4 policies; 600: at most 0.8% in any episode type).
+# Task: the time 0.5 recipe (mission + 0.3-0.5 m waypoints at 20%, Huber 0.2, time cost, sim options).
+# Baseline: TD3 on the untuned reward. MOO arms: head-scaled critic (--head-scale), --total 1; only the
+# aggregator changes. No tuned TD3 in this study.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_untuned.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 12
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=600 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3              --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+arm  moo4sum          --moo parts --parts 4 --total 1 --head-scale --agg sum --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+arm  moo4dualproj     --moo parts --parts 4 --total 1 --head-scale --agg dualproj --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+arm  moo4upgrad       --moo parts --parts 4 --total 1 --head-scale --agg upgrad --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+arm  moo4alignedmtl   --moo parts --parts 4 --total 1 --head-scale --agg aligned_mtl --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+arm  moo4svdpga       --moo parts --parts 4 --total 1 --head-scale --agg svd_pga --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+arm  moo4osnmfpga     --moo parts --parts 4 --total 1 --head-scale --agg osnmf_pga --group-scale time=2.3,precision=0.53,efficiency=0.68,safety=7.3
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
