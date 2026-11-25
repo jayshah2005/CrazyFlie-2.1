@@ -416,22 +416,29 @@ All MOO arms `--split-critic --total 1`. Mission plain world 12 ms; waypoints 3.
 | SVD-PGA | 4.7 cm | 10.6 cm | 1.7% | 5/36 | 0.098 | 84.5 / 77.5% |
 | OS-NMF-PGA | 4.5 cm | 10.5 cm | 2.5% | 8/36 | 0.078 | 75.0 / 69.0% |
 
-8 seeds:
+8 seeds (every arm; DualProj, UPGrad and Aligned-MTL seeds 74-77 run with `ablation_split_agg.txt
+--seeds 70 ... 77`):
 
 | Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm 0.5 / 0.8 m (time) |
 | --- | --- | --- | --- | --- | --- | --- |
 | td3 (variant E) | 6.0 cm | 9.7 cm | 1.4% | 18/72 | 0.121 | 79.5 / 69.0% (1.73 s) |
 | sum | 5.0 cm | 11.2 cm | 4.5% | 7/72 | 0.065 | 78.0 / 71.5% (1.55 s) |
+| DualProj | 5.3 cm | 11.3 cm | 3.9% | 9/72 | 0.066 | 77.0 / 68.0% (1.60 s) |
+| UPGrad | 5.0 cm | 10.1 cm | 2.7% | 7/72 | 0.069 | 84.0 / 76.5% (1.54 s) |
+| Aligned-MTL | 5.0 cm | 10.4 cm | 2.4% | 17/72 | 0.079 | 82.5 / 76.0% (1.48 s) |
 | SVD-PGA | 4.9 cm | 10.4 cm | 1.7% | 14/72 | 0.106 | 83.5 / 76.0% (1.53 s) |
 | OS-NMF-PGA | 4.5 cm | 10.2 cm | 2.5% | 16/72 | 0.081 | 79.5 / 73.0% (1.48 s) |
 
-Per seed (70-77), crashed: td3 0.5, 0.6, 1.9, 0.3, 4.1, 1.2, 0.8, 2.3; sum 2.0, 3.1, 4.9, 3.0, 1.6,
-9.7, 9.7, 1.9; SVD-PGA 1.2, 3.4, 1.0, 1.2, 1.3, 1.4, 2.0, 1.9; OS-NMF-PGA 1.4, 3.8, 2.8, 1.9, 1.7, 2.7,
-2.8, 2.7. Circle: td3 4.3-8.8 cm, SVD-PGA 4.1-5.7 cm. With the simulator options at 6 ms: td3 6.3 cm /
-10.3 cm / 1.3%, SVD-PGA 4.8 / 10.6 / 1.2%.
+Crashed per seed (70-77): td3 0.5, 0.6, 1.9, 0.3, 4.1, 1.2, 0.8, 2.3; sum 2.0, 3.1, 4.9, 3.0, 1.6,
+9.7, 9.7, 1.9; DualProj 2.2, 12.6, 2.6, 2.2, 3.1, 3.9, 1.2, 3.5; UPGrad 4.1, 2.5, 3.6, 4.8, 1.6, 1.8,
+2.1, 1.1; Aligned-MTL 5.7, 1.9, 1.7, 1.3, 2.1, 2.1, 2.4, 2.4; SVD-PGA 1.2, 3.4, 1.0, 1.2, 1.3, 1.4, 2.0, 1.9;
+OS-NMF-PGA 1.4, 3.8, 2.8, 1.9, 1.7, 2.7, 2.8, 2.7. Circle: td3 4.3-8.8 cm, SVD-PGA 4.1-5.7 cm. With the simulator options at 6 ms: td3
+6.3 cm / 10.3 cm / 1.3%, SVD-PGA 4.8 / 10.6 / 1.2%.
 
-- SVD-PGA beats sum on the same critic (crashes 1.7 against 4.5%, worst seed 3.4 against 9.7%).
-- Against variant E: better circle and waypoints, level crashes and uneven motors. Its weights put
+- Every reweighting aggregator beats sum on the same critic (crashes 1.7-2.7% against 4.5%); DualProj
+  (weights about 1) does not. UPGrad and Aligned-MTL improved from 4 to 8 seeds. SVD-PGA crashes least
+  and is steadiest (worst seed 3.4%); UPGrad reaches the most waypoints.
+- SVD-PGA against variant E: better circle and waypoints, level crashes and uneven motors. Its weights put
   about 6% of the step on efficiency (sum 24%); DualProj's median weights are exactly 1.
 - Full discussion: [moo_findings.md](moo_findings.md), section 13.
 

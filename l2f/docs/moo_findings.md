@@ -22,7 +22,7 @@ written to be read on its own. The detailed record of every study, with all tabl
 10. [Finding 6: MOO sum trailed TD3, fixed by head scaling](#10-finding-6-moo-sum-trailed-td3-fixed-by-head-scaling)
 11. [Finding 7: untuned, the aggregators still do not help](#11-finding-7-untuned-the-aggregators-still-do-not-help)
 12. [Finding 8: the shared critic collapsed the groups; separate critics fix it](#12-finding-8-the-shared-critic-collapsed-the-groups-separate-critics-fix-it)
-13. [Finding 9: with separate critics, SVD-PGA beats sum and matches variant E](#13-finding-9-with-separate-critics-svd-pga-beats-sum-and-matches-variant-e)
+13. [Finding 9: with separate critics, the aggregators beat sum and SVD-PGA matches variant E](#13-finding-9-with-separate-critics-the-aggregators-beat-sum-and-svd-pga-matches-variant-e)
 14. [Caveats](#14-caveats)
 15. [What this means for the paper](#15-what-this-means-for-the-paper)
 16. [Open questions and next steps](#16-open-questions-and-next-steps)
@@ -52,7 +52,8 @@ written to be read on its own. The detailed record of every study, with all tabl
   - **Separate critics per group (`--split-critic`)** learn distinct, well-fitted group values (R²
     0.98-1.00) and show real conflict: precision against efficiency in 82% of updates, precision
     against safety 76%, time against precision 68%.
-  - **On that critic, 8 seeds:** SVD-PGA crashes 1.7% against the sum's 4.5%, and against variant E
+  - **On that critic, 8 seeds:** every reweighting aggregator crashes less than the sum (1.7-2.7%
+    against 4.5%); SVD-PGA crashes least, and against variant E
     tracks the circle better (4.9 against 6.0 cm), reaches more waypoints (83.5 / 76 against 79.5 /
     69% within 10 cm), and is level on crashes (1.7 against 1.4%) and uneven motors (10.4 against
     9.7 cm). It gets there by giving smoothing (efficiency) only 6% of the step.
@@ -556,7 +557,7 @@ tracking costs motor effort (precision-efficiency), and holding the target fight
 a cosine near 0, not to consistently negative values; the snapshot shows distinct, well-fitted group
 values. **This is the first setup in which the aggregators have real conflict to resolve.**
 
-## 13. Finding 9: with separate critics, SVD-PGA beats sum and matches variant E
+## 13. Finding 9: with separate critics, the aggregators beat sum and SVD-PGA matches variant E
 
 All arms: separate critics, `--total 1`, the time 0.5 recipe with E's tuned weights. Mission test
 12 ms plain world; waypoints 3.5 s legs, 0.3-0.5 m and 0.5-0.8 m jumps.
@@ -575,22 +576,30 @@ All arms: separate critics, `--total 1`, the time 0.5 recipe with E's tuned weig
 
 No seed collapsed in any arm. DualProj's median weights are exactly 1 (it mostly takes the sum).
 
-### 8 seeds (`ablation_split_agg_confirm.txt`, seeds 70-77)
+### 8 seeds (`ablation_split_agg.txt` and `_confirm.txt`, seeds 70-77, every arm)
 
 | Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm arrival 0.5 / 0.8 m (time) |
 | --- | --- | --- | --- | --- | --- | --- |
 | **td3 (variant E)** | 6.0 cm | **9.7 cm** | **1.4%** | **18/72** | 0.121 | 79.5 / 69.0% (1.73 s) |
 | sum | 5.0 cm | 11.2 cm | 4.5% | 7/72 | **0.065** | 78.0 / 71.5% (1.55 s) |
-| **SVD-PGA** | 4.9 cm | 10.4 cm | 1.7% | 14/72 | 0.106 | **83.5 / 76.0%** (1.53 s) |
+| DualProj | 5.3 cm | 11.3 cm | 3.9% | 9/72 | 0.066 | 77.0 / 68.0% (1.60 s) |
+| UPGrad | 5.0 cm | 10.1 cm | 2.7% | 7/72 | 0.069 | **84.0 / 76.5%** (1.54 s) |
+| Aligned-MTL | 5.0 cm | 10.4 cm | 2.4% | 17/72 | 0.079 | 82.5 / 76.0% (**1.48 s**) |
+| **SVD-PGA** | 4.9 cm | 10.4 cm | 1.7% | 14/72 | 0.106 | 83.5 / 76.0% (1.53 s) |
 | OS-NMF-PGA | **4.5 cm** | 10.2 cm | 2.5% | 16/72 | 0.081 | 79.5 / 73.0% (**1.48 s**) |
 
 Crashed per seed (70-77): td3 0.5, 0.6, 1.9, 0.3, **4.1**, 1.2, 0.8, 2.3; sum 2.0, 3.1, 4.9, 3.0, 1.6,
-**9.7, 9.7**, 1.9; SVD-PGA 1.2, 3.4, 1.0, 1.2, 1.3, 1.4, 2.0, 1.9. With the simulator options at 6 ms
+**9.7, 9.7**, 1.9; DualProj 2.2, **12.6**, 2.6, 2.2, 3.1, 3.9, 1.2, 3.5; UPGrad 4.1, 2.5, 3.6, 4.8, 1.6, 1.8,
+2.1, 1.1; Aligned-MTL 5.7, 1.9, 1.7, 1.3, 2.1, 2.1, 2.4, 2.4; SVD-PGA 1.2, 3.4, 1.0, 1.2, 1.3, 1.4, 2.0, 1.9;
+OS-NMF-PGA 1.4, 3.8, 2.8, 1.9, 1.7, 2.7, 2.8, 2.7. With the simulator options at 6 ms
 the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 against 6.3 cm).
 
-- **The aggregator beats the sum on the same critic and reward:** SVD-PGA crashes 1.7% against 4.5%
-  (worst seed 3.4% against 9.7%) and tracks uneven motors better (10.4 against 11.2 cm). Only the
-  aggregator differs.
+- **The aggregators beat the sum on the same critic and reward:** every aggregator that reweights the
+  groups crashes less than the sum (SVD-PGA 1.7%, Aligned-MTL 2.4%, OS-NMF-PGA 2.5%, UPGrad 2.7%,
+  against 4.5%) and tracks uneven motors better (10.1-10.4 against 11.2 cm). Only the aggregator
+  differs. DualProj, whose weights stay at 1, is the exception (3.9%, one seed at 12.6%). On seeds 70-73
+  UPGrad looked no better than the sum (3.8 against 3.3%) and Aligned-MTL only slightly better; both
+  improved on 74-77: 4 seeds misled again. SVD-PGA is the steadiest (worst seed 3.4%); UPGrad reaches the most waypoints (84.0 / 76.5%).
 - **Against variant E, SVD-PGA is better on the circle (4.9 against 6.0 cm) and at waypoints (83.5 /
   76 against 79.5 / 69%, 0.2 s faster), level on crashes (1.7 against 1.4%; within seed spread) and
   uneven motors (10.4 against 9.7 cm), and mixed on smoothness (jitter 0.106 against 0.121 at 12 ms,
@@ -622,7 +631,7 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
   conflict (head-scaled: the groups collapse into one value) or distort the total (unscaled). Check
   the critic itself (group-value correlations, fit per group) before trusting a conflict
   measurement; use separate critics (section 12).
-- **The PGA result is 8 seeds and medians,** not a significance test. The circle and waypoint gaps
+- **The aggregator results are 8 seeds and medians,** not a significance test. The circle and waypoint gaps
   exceed the seed spread; crashes and uneven motors do not.
 - **One task, one recipe.** These results are for the mission plus 0.3-0.5 m waypoints with this
   reward. They do not show that aggregators are useless in general.
@@ -633,7 +642,7 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
 - **The positive result (sections 12-13).** A shared multi-output critic hides the conflict between
   objectives; one critic per objective reveals it (60-80% of updates opposed in most pairs). With
   that conflict visible, the PGA aggregators beat linear scalarization on the same critic and reward
-  (crashes 1.7% against 4.5%) and match or beat the hand-tuned variant E (better circle and
+  (crashes 1.7-2.7% against 4.5% for every reweighting aggregator), and SVD-PGA matches or beats the hand-tuned variant E (better circle and
   waypoints, level crashes), with rougher motor commands than the sum.
 - **The earlier negative results below were measured with the shared critic** and are kept as the
   record of how the problem was found. On a task with a carefully tuned scalar reward:
@@ -723,7 +732,7 @@ python l2f/py/reward_check.py --build l2f/learning_to_fly/build_py_E_nb200/src -
 | `l2f/sim/ablation_headscale.txt`, `ablation_headscale_confirm.txt` | the 4-head critic: MOO with 1 group, head scaling |
 | `l2f/sim/ablation_untuned.txt` | the untuned comparison: TD3 and 6 aggregators, equal group shares, crash 600 |
 | `l2f/sim/ablation_split.txt` | separate critics per group (`--split-critic`), `--total 0` and `1` |
-| `l2f/sim/ablation_split_agg.txt`, `ablation_split_agg_confirm.txt` | 5 aggregators on separate critics; SVD-PGA, OS-NMF-PGA and sum on 8 seeds |
+| `l2f/sim/ablation_split_agg.txt`, `ablation_split_agg_confirm.txt` | 5 aggregators and sum on separate critics, 8 seeds each (run `ablation_split_agg.txt` with `--seeds 70 ... 77`) |
 
 Raw outputs (`l2f/learning_to_fly/ablation_*`) and checkpoints are not in git; they are on the Mac
 that ran them. Gradient logs: `logs/train_moo_*.csv` (per-group norms, pairwise cosines, aggregator

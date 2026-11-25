@@ -1,0 +1,33 @@
+# script: study_export.py
+# generated_at: 2026-11-25T01:37:27-05:00
+arm,test,circle_cm,uneven_cm,crashed_pct,jitter,crash_free_checkpoints,arrive5_pct,arrive5_s,arrive10_pct,arrive10_s,overshoot_cm,final_error_cm,peak_speed
+td3,plain_6ms,5.0,8.6,0.8,0.080,17/36,,,,,,,
+moo4sum,plain_6ms,7.8,12.0,2.4,0.082,10/36,,,,,,,
+moo4sum_hs,plain_6ms,5.0,11.1,10.0,0.091,22/36,,,,,,,
+moo4sum_tot0_split,plain_6ms,7.5,11.4,1.8,0.087,7/36,,,,,,,
+moo4sum_split,plain_6ms,4.9,11.3,3.2,0.061,2/36,,,,,,,
+td3,plain_12ms,4.9,8.6,0.8,0.124,12/36,,,,,,,
+moo4sum,plain_12ms,7.4,11.9,2.5,0.105,8/36,,,,,,,
+moo4sum_hs,plain_12ms,4.9,11.1,10.1,0.121,20/36,,,,,,,
+moo4sum_tot0_split,plain_12ms,7.4,11.4,1.9,0.114,6/36,,,,,,,
+moo4sum_split,plain_12ms,4.9,11.3,3.3,0.065,2/36,,,,,,,
+td3,simopts_6ms,5.0,9.1,0.8,0.083,18/36,,,,,,,
+moo4sum,simopts_6ms,7.9,12.3,2.5,0.085,9/36,,,,,,,
+moo4sum_hs,simopts_6ms,4.8,11.2,10.1,0.094,15/36,,,,,,,
+moo4sum_tot0_split,simopts_6ms,7.5,11.6,1.7,0.089,5/36,,,,,,,
+moo4sum_split,simopts_6ms,4.8,12.6,3.3,0.064,3/36,,,,,,,
+td3,simopts_12ms,4.9,9.3,0.8,0.126,13/36,,,,,,,
+moo4sum,simopts_12ms,7.5,11.9,2.5,0.107,9/36,,,,,,,
+moo4sum_hs,simopts_12ms,4.7,11.2,10.3,0.125,15/36,,,,,,,
+moo4sum_tot0_split,simopts_12ms,7.3,11.5,1.8,0.117,3/36,,,,,,,
+moo4sum_split,simopts_12ms,4.8,12.6,3.3,0.069,4/36,,,,,,,
+td3,wp05L,,,0.0,,,37.5,1.74,84.0,1.67,9.4,8.1,0.71
+moo4sum,wp05L,,,0.0,,,21.5,1.76,61.0,1.60,8.9,10.7,0.80
+moo4sum_hs,wp05L,,,0.0,,,36.0,1.62,75.0,1.42,7.5,8.4,0.74
+moo4sum_tot0_split,wp05L,,,0.0,,,21.5,1.96,66.5,1.85,11.3,10.2,0.76
+moo4sum_split,wp05L,,,0.0,,,32.0,1.64,78.0,1.56,8.0,9.2,0.70
+td3,wp08L,,,0.0,,,26.5,1.94,73.5,1.94,13.1,9.6,0.95
+moo4sum,wp08L,,,0.0,,,18.0,1.83,54.0,1.79,11.4,11.8,1.08
+moo4sum_hs,wp08L,,,0.0,,,29.0,1.67,69.5,1.58,9.8,9.7,0.98
+moo4sum_tot0_split,wp08L,,,0.0,,,15.5,2.05,56.5,2.12,15.2,12.0,1.00
+moo4sum_split,wp08L,,,0.0,,,27.0,1.84,71.0,1.68,10.6,9.8,0.94
