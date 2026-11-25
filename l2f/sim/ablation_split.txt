@@ -1,0 +1,30 @@
+# Separate critic per group (2026-11-24). Critic snapshots (seed 70, 1,024 states) showed that the
+# shared 4-head critic with --head-scale collapses the 4 group values into copies of one (value
+# correlation 0.99-1.00 at 200k), so the aggregators saw near-parallel gradients; without head
+# scaling the group values are distinct but the summed value moves 2.3x TD3's step and MOO sum trails
+# TD3. --split-critic gives each group its own 64-64 network: no shared features to collapse, and
+# with --total 0 every network is an ordinary single-output TD3 critic on its own group.
+# Baseline to beat: td3 = the original variant E (TD3, E's tuned reward) on this recipe.
+#  - moo4sum_tot0_split: split critics, each learns only its own group target.
+#  - moo4sum_split: split critics with the standard MOO loss (--total 1; couples the networks
+#    through the total-value error).
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_split.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 8
+# (td3, moo4sum, moo4sum_hs are copied from ablation_headscale_20261123, seeds 70-73)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3
+arm  moo4sum              --moo parts --parts 4 --total 1 --agg sum
+arm  moo4sum_hs           --moo parts --parts 4 --total 1 --agg sum --head-scale
+arm  moo4sum_tot0_split   --moo parts --parts 4 --total 0 --agg sum --split-critic
+arm  moo4sum_split        --moo parts --parts 4 --total 1 --agg sum --split-critic
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5

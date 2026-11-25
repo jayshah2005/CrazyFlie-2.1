@@ -78,6 +78,21 @@ class Critic(MLP):
         return q if self.out_scale == 1.0 else q * self.out_scale
 
 
+class SplitCritic(nn.Module):
+    """k separate critics (critic obs, action) -> 64 -> 64 -> 1, one per reward group, stacked into
+    (batch, k) values: no shared hidden layers, so one group's error cannot reshape another group's
+    features (MooTD3 --split-critic; the shared 4-head critic with head scaling collapsed the group
+    values into copies of one, 2026-11-24 snapshots)."""
+
+    def __init__(self, obs_dim_privileged, action_dim=4, hidden=64, n_out=1):
+        super().__init__()
+        self.nets = nn.ModuleList([Critic(obs_dim_privileged, action_dim, hidden, 1) for _ in range(n_out)])
+
+    def forward(self, obs_privileged, action):
+        """Values of `action`, one column per group."""
+        return torch.cat([net(obs_privileged, action) for net in self.nets], dim=-1)
+
+
 def make_optimizer(module, lr=1e-3, weight_decay=1e-4, eps=1e-8):
     """rl_tools' Adam for `module` (see the module docstring): AdamW with the decoupled decay
     wd / (2 lr) on weight tensors only."""

@@ -26,6 +26,7 @@ import torch
 from torchjd import aggregation
 from torchjd.autojac import backward, jac_to_grad
 
+from networks import SplitCritic, make_optimizer
 from td3 import TD3
 
 OBJECTIVES = ['survival', 'position', 'orientation', 'linear_velocity', 'action', 'smoothing',
@@ -130,7 +131,7 @@ class MooTD3(TD3):
     """TD3 whose actor step is a TorchJD aggregation of per-objective gradients."""
 
     def __init__(self, cfg, obs_dim, obs_dim_p, act_dim, agg='sum', parts=8, tasks=0, total=None, norm=False,
-                 log_every=50, objectives=None, grouping='default', agg_start=0, head_scale=False):
+                 log_every=50, objectives=None, grouping='default', agg_start=0, head_scale=False, split_critic=False):
         self.tasks = tasks
         if grouping == 'regroup' and parts not in REGROUP_OF:
             raise ValueError('--grouping regroup needs parts 4 or 5')
@@ -151,6 +152,17 @@ class MooTD3(TD3):
         # the sum TD3's step and starting spread (ablation_moo2: MOO sum trails TD3 even with
         # --total 0; 2026-11-23).
         self.head_scale = head_scale and k > 1
+        # split_critic (k > 1): one separate critic network per group instead of k heads on shared
+        # hidden layers. Replaces the critics TD3 built (the actor's initialization is unchanged).
+        self.split_critic = split_critic and k > 1
+        if self.split_critic:
+            if self.head_scale:
+                raise ValueError('--split-critic and --head-scale do not combine')
+            self.critics = [SplitCritic(obs_dim_p, act_dim, cfg.hidden, k) for _ in range(2)]
+            self.critic_targets = [SplitCritic(obs_dim_p, act_dim, cfg.hidden, k) for _ in range(2)]
+            for c, ct in zip(self.critics, self.critic_targets):
+                ct.load_state_dict(c.state_dict())
+            self.critic_opts = [make_optimizer(c) for c in self.critics]
         if self.head_scale:
             with torch.no_grad():
                 for c in self.critics:
