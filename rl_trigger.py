@@ -317,8 +317,17 @@ class Telemetry:
         log.info('Battery: %.2f V -> %.2f V', self.rows[0][6], self.rows[-1][6])
 
 
-def start_telemetry(scf, tele):
-    """Start the state, policy and motor log blocks that feed `tele`."""
+def start_telemetry(scf, tele, slow=False):
+    """Start the state, policy and motor log blocks that feed `tele`.
+
+    slow (--slow-telemetry): the analysis-only blocks (attitude, motors, Lighthouse status,
+    rotor-speed inputs) every 40 ms and the gyro every 20 ms instead of 20 / 10 ms; state and
+    policy stay at 20 ms. About 40% fewer log packets: on 2026-11-25 the log stream stopped
+    mid-flight twice (a corrupted packet, then no telemetry) while the radio link stayed up."""
+    global GYRO_PERIOD_MS
+    extra_ms = 40 if slow else 20
+    if slow:
+        GYRO_PERIOD_MS = 20
     a = LogConfig(name='L2FState', period_in_ms=20)
     for name in ('stateEstimate.x', 'stateEstimate.y', 'stateEstimate.z',
                  'stateEstimate.yaw', 'pm.vbat'):
@@ -330,22 +339,22 @@ def start_telemetry(scf, tele):
     for name in ('rltm.m1', 'rltm.m2', 'rltm.m3', 'rltm.m4'):
         b.add_variable(name, 'uint16_t')
     b.add_variable('supervisor.info', 'uint16_t')  # arming check (wait_armed)
-    c = LogConfig(name='L2FAttitude', period_in_ms=20)
+    c = LogConfig(name='L2FAttitude', period_in_ms=extra_ms)
     for name in EXTRA[:2]:
         c.add_variable(name, 'float')
     g = LogConfig(name='L2FGyro', period_in_ms=GYRO_PERIOD_MS)  # every sample counts for saturation
     for name in GYRO_VARS:
         g.add_variable(name, 'float')
-    d = LogConfig(name='L2FMotors', period_in_ms=20)
+    d = LogConfig(name='L2FMotors', period_in_ms=extra_ms)
     for name in EXTRA[5:]:
         d.add_variable(name, 'uint16_t')
-    e = LogConfig(name='L2FLighthouse', period_in_ms=20)
+    e = LogConfig(name='L2FLighthouse', period_in_ms=extra_ms)
     toc = scf.cf.log.toc
     if toc.get_element_by_complete_name('lighthouse.status') is not None:
         e.add_variable('lighthouse.status', 'uint8_t')
         e.add_variable('lighthouse.bsReceive', 'uint16_t')
         e.add_variable('lighthouse.bsActive', 'uint16_t')
-    f = LogConfig(name='L2FRpmInput', period_in_ms=20)
+    f = LogConfig(name='L2FRpmInput', period_in_ms=extra_ms)
     if toc.get_element_by_complete_name('rltr.r1') is not None:
         for name in RPM_IN_VARS:
             f.add_variable(name, 'float')
@@ -649,6 +658,8 @@ def fly_mission(scf, args, pose, tele):
     last_cmd = None      # last commanded target offset (m)
     rows_seen = [-1, time.time()]  # telemetry sample count and when it last grew
     blind = False                  # telemetry lost: the automatic landing runs on the clock
+    log_restart_at = None          # when the log blocks were last restarted after a stall
+    log_restarts = 0
     low_vbat_since = None
     # Outer integrator (--ki): the policy has no integral action and holds a
     # steady offset (~10 cm in simulation), so shift the commanded target to
@@ -677,9 +688,31 @@ def fly_mission(scf, args, pose, tele):
         # downlink dropped). Do NOT stop sending: if our packets still get through,
         # stopping would cut the motors in the air (2026-11-04 1 m flight). Land
         # instead, timed by the clock since there is no height any more.
+        # Before that, try once per stall to restart the log blocks: on 2026-11-25 the log
+        # stream stopped mid-flight in 3 of 6 waypoint flights while the radio link (console
+        # messages) stayed up. The drone flies without telemetry (policy and estimate run on
+        # board), so a short gap is harmless; land only if the restart brings nothing back.
         if len(tele.rows) != rows_seen[0]:
+            if log_restart_at is not None:
+                log.warning('Telemetry back %.2f s after the log restart (gap %.2f s); the mission '
+                            'continues.', now - log_restart_at, now - rows_seen[1])
+                log_restart_at = None
             rows_seen[0], rows_seen[1] = len(tele.rows), now
-        elif now - rows_seen[1] > 0.5 and not blind:
+        elif (now - rows_seen[1] > 0.3 and log_restart_at is None and not blind
+              and log_restarts < 3):
+            log_restart_at = now
+            log_restarts += 1
+            log.warning('No telemetry for %.2f s at %.2f m: restarting the log blocks (%d of 3).',
+                        now - rows_seen[1], height, log_restarts)
+            for conf in list(scf.cf.log.log_blocks):
+                try:
+                    conf.stop()
+                    conf.added = False  # start() re-creates it (cflib accepts "already exists")
+                    conf.start()
+                except Exception as exc:  # noqa: BLE001 - keep the control loop alive
+                    log.warning('log block %s restart failed: %s', conf.name, exc)
+        elif (now - rows_seen[1] > 0.5 and not blind
+              and (log_restart_at is None or now - log_restart_at > 0.5)):
             blind = True
             if last_cmd is None or height < args.cut_height:
                 log.error('No telemetry for %.1f s on the floor: stopping.', now - rows_seen[1])
@@ -862,7 +895,7 @@ def main(args):
         cf = scf.cf
         tele = Telemetry()
         tele.flow = FlowSwitch(cf, args.flow_off_below)
-        confs = start_telemetry(scf, tele)
+        confs = start_telemetry(scf, tele, slow=args.slow_telemetry)
         watch_console(cf)
 
         # Emergency-stop watchdog: the firmware cuts the motors if these
@@ -956,6 +989,10 @@ if __name__ == '__main__':
                         help='s per figure-eight loop (paper: 15 / 5.5 / 3.5)')
     parser.add_argument('--max-yaw-deg', type=float, default=15.0,
                         help='refuse to fly if |yaw| is larger than this')
+    parser.add_argument('--slow-telemetry', action='store_true',
+                        help='log attitude, motors, Lighthouse status and rotor-speed inputs every 40 ms '
+                             'and the gyro every 20 ms (state and policy stay at 20 ms): about 40%% fewer '
+                             'log packets, against mid-flight telemetry drop-outs')
     parser.add_argument('--min-vbat', type=float, default=3.8,
                         help='refuse to fly below this battery voltage')
     parser.add_argument('--flow-off-below', type=float, default=0.0,
