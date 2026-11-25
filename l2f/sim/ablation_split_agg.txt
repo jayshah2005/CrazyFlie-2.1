@@ -1,0 +1,28 @@
+# Aggregators on split critics (2026-11-24). ablation_split: with one critic network per group the
+# group gradients conflict in most actor updates (last 0.6M steps: precision-efficiency 82% of
+# updates opposed, precision-safety 76%, time-precision 68%), unlike the shared critic. MOO sum with
+# split critics (--total 1) matched variant E on the circle (4.8 vs 5.0 cm) but crashed more (3.3 vs
+# 0.8%). Can an aggregator turn the conflict into a better policy than the sum?
+# Baseline to beat: td3 = the original variant E (TD3, E's tuned reward) on this recipe.
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_split_agg.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 72 73 --jobs 10
+# (td3 and moo4sum_split are copied from ablation_split_20261124)
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3
+arm  moo4sum_split             --moo parts --parts 4 --total 1 --agg sum --split-critic
+arm  moo4dualproj_split        --moo parts --parts 4 --total 1 --agg dualproj --split-critic
+arm  moo4upgrad_split          --moo parts --parts 4 --total 1 --agg upgrad --split-critic
+arm  moo4alignedmtl_split      --moo parts --parts 4 --total 1 --agg aligned_mtl --split-critic
+arm  moo4svdpga_split          --moo parts --parts 4 --total 1 --agg svd_pga --split-critic
+arm  moo4osnmfpga_split        --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
