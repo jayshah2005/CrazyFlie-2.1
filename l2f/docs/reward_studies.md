@@ -27,9 +27,11 @@ time (about 14 min each).
 11. [Study 6: DualProj on 8 seeds, the critic loss, delayed aggregators](#11-study-6-dualproj-on-8-seeds-the-critic-loss-delayed-aggregators)
 12. [Study 7: the 4-head critic](#12-study-7-the-4-head-critic)
 13. [Study 8: untuned reward](#13-study-8-untuned-reward)
-14. [Lessons](#14-lessons)
-15. [Next steps](#15-next-steps)
-16. [Options added](#16-options-added)
+14. [Study 9: separate critics per group](#14-study-9-separate-critics-per-group)
+15. [Study 10: aggregators on separate critics](#15-study-10-aggregators-on-separate-critics)
+16. [Lessons](#16-lessons)
+17. [Next steps](#17-next-steps)
+18. [Options added](#18-options-added)
 
 ## 1. Tools
 
@@ -327,6 +329,8 @@ layer x 2) gives 0.137 / 0.0266 against TD3's 0.137 / 0.0285.
   worse with uneven motors, 11.2 against 9.7 cm, and at 10 cm arrival); one seed in 8 failed.
 - With the head-scaled critic the summed update hurts some group in 6-8% of updates (22-47% unscaled)
   and every pair of groups agrees on average: most of the conflict of sections 9-11 was the critic's.
+  **Corrected in Study 9:** the head-scaled critic's groups collapsed into one value, which hid the
+  conflict; it was not an artifact of the unscaled critic.
 - `test_td3.py` reports PyTorch against rl_tools differing by 1.9e-4 after 1000 rounds (tolerance
   1e-4), with and without this change: drift on the Mac (Accelerate), not caused by it.
 
@@ -360,8 +364,78 @@ Per seed (circle / crashed): TD3 8.9-10.6 cm / 4.8-7.3%; sum, DualProj and UPGra
 - Balancing aggregators amplify the noise between near-parallel gradients (PGA weights +-100 to
   +-270, alternating signs) and get worse. Full discussion: [moo_findings.md](moo_findings.md),
   section 11.
+- **Correction:** this study used the head-scaled critic, which collapsed the groups (Study 9); the
+  near-parallel gradients came from it. To be repeated with separate critics.
 
-## 14. Lessons
+## 14. Study 9: separate critics per group
+
+The baseline from here on is the original variant E, the `td3` arm (TD3, E's tuned reward).
+
+Before this study the critic itself was measured (seed 70 rerun with snapshots at 200k and 1.2M
+steps, 1,024 buffer states, logs identical to the study runs). The head-scaled 4-output critic's
+group values were copies of one value (correlation +0.99 to +1.00 at 200k; +1.00 throughout with
+the untuned reward, safety fit R² 0.49), while the groups' per-step rewards are nearly uncorrelated
+(-0.39 to +0.16). Head scaling makes each output learn at a quarter of its speed while the shared
+layers learn at full speed. Full table: [moo_findings.md](moo_findings.md), section 12.
+
+`ablation_split.txt`, seeds 70-73, the time 0.5 recipe. `--split-critic`: 4 separate 64-64 critic
+networks per twin, one per group. td3, moo4sum and moo4sum_hs copied from
+`ablation_headscale_20261123`. Mission plain world 12 ms; waypoints 3.5 s legs.
+
+| Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm 0.5 / 0.8 m |
+| --- | --- | --- | --- | --- | --- | --- |
+| td3 (variant E) | 4.9 cm | 8.6 cm | 0.8% | 12/36 | 0.124 | 84.0 / 73.5% |
+| moo4sum (shared, unscaled) | 7.4 cm | 11.9 cm | 2.5% | 8/36 | 0.105 | 61.0 / 54.0% |
+| moo4sum_hs (shared, head-scaled) | 4.9 cm | 11.1 cm | 10.1% | 20/36 | 0.121 | 75.0 / 69.5% |
+| moo4sum_tot0_split | 7.4 cm | 11.4 cm | 1.9% | 6/36 | 0.114 | 66.5 / 56.5% |
+| moo4sum_split (`--total 1`) | 4.9 cm | 11.3 cm | 3.3% | 2/36 | 0.065 | 78.0 / 71.0% |
+
+- Snapshot of the split critic (seed 70): group-value correlations +0.29 to +0.68 at 1.2M (top
+  share 0.859), fit R² 0.98-1.00 for every group: distinct and well fitted.
+- Share of actor updates with opposed group gradients, last 0.6M steps (split / shared unscaled /
+  shared head-scaled): precision-efficiency 82 / 47 / 2%, precision-safety 76 / 46 / 16%,
+  time-precision 68 / 38 / 1%, time-safety 57 / 2 / 10%, efficiency-safety 43 / 17 / 41%,
+  time-efficiency 39 / 6 / 15%.
+- `--total 0` is worse (the summed value is less accurate); keep `--total 1`.
+
+## 15. Study 10: aggregators on separate critics
+
+`ablation_split_agg.txt` (seeds 70-73, 5 aggregators) and `ablation_split_agg_confirm.txt` (seeds
+74-77 for sum, SVD-PGA and OS-NMF-PGA; td3 seeds 74-77 copied from `ablation_headscale_20261123`).
+All MOO arms `--split-critic --total 1`. Mission plain world 12 ms; waypoints 3.5 s legs.
+
+4 seeds:
+
+| Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm 0.5 / 0.8 m |
+| --- | --- | --- | --- | --- | --- | --- |
+| td3 (variant E) | 4.9 cm | 8.6 cm | 0.8% | 12/36 | 0.124 | 84.0 / 73.5% |
+| sum | 4.9 cm | 11.3 cm | 3.3% | 2/36 | 0.065 | 78.0 / 71.0% |
+| DualProj | 5.7 cm | 11.3 cm | 4.9% | 4/36 | 0.068 | 76.5 / 65.5% |
+| UPGrad | 5.1 cm | 11.2 cm | 3.8% | 1/36 | 0.067 | 82.0 / 71.5% |
+| Aligned-MTL | 5.0 cm | 10.6 cm | 2.6% | 5/36 | 0.073 | 80.5 / 70.0% |
+| SVD-PGA | 4.7 cm | 10.6 cm | 1.7% | 5/36 | 0.098 | 84.5 / 77.5% |
+| OS-NMF-PGA | 4.5 cm | 10.5 cm | 2.5% | 8/36 | 0.078 | 75.0 / 69.0% |
+
+8 seeds:
+
+| Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm 0.5 / 0.8 m (time) |
+| --- | --- | --- | --- | --- | --- | --- |
+| td3 (variant E) | 6.0 cm | 9.7 cm | 1.4% | 18/72 | 0.121 | 79.5 / 69.0% (1.73 s) |
+| sum | 5.0 cm | 11.2 cm | 4.5% | 7/72 | 0.065 | 78.0 / 71.5% (1.55 s) |
+| SVD-PGA | 4.9 cm | 10.4 cm | 1.7% | 14/72 | 0.106 | 83.5 / 76.0% (1.53 s) |
+| OS-NMF-PGA | 4.5 cm | 10.2 cm | 2.5% | 16/72 | 0.081 | 79.5 / 73.0% (1.48 s) |
+
+Per seed (70-77), crashed: td3 0.5, 0.6, 1.9, 0.3, 4.1, 1.2, 0.8, 2.3; sum 2.0, 3.1, 4.9, 3.0, 1.6,
+9.7, 9.7, 1.9; SVD-PGA 1.2, 3.4, 1.0, 1.2, 1.3, 1.4, 2.0, 1.9; OS-NMF-PGA 1.4, 3.8, 2.8, 1.9, 1.7, 2.7,
+2.8, 2.7. Circle: td3 4.3-8.8 cm, SVD-PGA 4.1-5.7 cm. With the simulator options at 6 ms: td3 6.3 cm /
+10.3 cm / 1.3%, SVD-PGA 4.8 / 10.6 / 1.2%.
+
+- SVD-PGA beats sum on the same critic (crashes 1.7 against 4.5%, worst seed 3.4 against 9.7%).
+- Against variant E: better circle and waypoints, level crashes and uneven motors. Its weights put
+  about 6% of the step on efficiency (sum 24%); DualProj's median weights are exactly 1.
+- Full discussion: [moo_findings.md](moo_findings.md), section 13.
+
+## 16. Lessons
 
 - **Gate every reward change with `reward_check.py`**, with the final weights. It found the
   free-flight crash incentive and the waypoint leg cost in seconds.
@@ -374,15 +448,16 @@ Per seed (circle / crashed): TD3 8.9-10.6 cm / 4.8-7.3%; sum, DualProj and UPGra
   column in the replay buffer changed float32 rounding and the runs (fixed in `train.py`).
 - **Four seeds are not enough** for differences of 1-2 cm or a few percent: time 0.5's lead halved
   when seeds 74-77 were added.
+- **Measure the critic, not only the gradients**: the head-scaled critic's groups looked aligned because its 4 values were copies of one.
 - **Check what a test measures**: the 5 cm arrival and the "9 cm offset" were mostly the 1.5-2.5 s
   legs and uneven motors, not the policies.
 
-## 15. Next steps
+## 17. Next steps
 
-See [moo_findings.md](moo_findings.md), section 14: a task with genuine interference (with a conflict
-check before any aggregator study), and preference vectors against a grid of TD3 weights.
+See [moo_findings.md](moo_findings.md), section 16: the untuned comparison repeated with separate
+critics, a task with genuine interference, and preference vectors against a grid of TD3 weights.
 
-## 16. Options added
+## 18. Options added
 
 All off by default; with none set, earlier recipes reproduce bit for bit (simulator checked against
 the previous build over 64,000 steps, training checked at 100k and 200k steps).
@@ -396,6 +471,7 @@ the previous build over 64,000 steps, training checked at 100k and 200k steps).
 | `train.py --group-scale time=a,precision=b,efficiency=c,safety=d` | factors on the reward groups' weights as the agent sees them (the crash penalty and the weight curriculum unchanged); equal shares = the untuned reward |
 | `reward_check.py --group-scale ...` | the same factors in the reward check; it also prints each group's mean cost per step and the equal-share factors, and `crash=` candidates now work with the Huber cap on |
 | `train.py --head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k) (k groups): the summed value starts and moves like TD3's |
+| `train.py --split-critic` | MOO: one separate critic network per reward group (no shared hidden layers); does not combine with `--head-scale` |
 | `train.py --agg-start STEP` | MOO: the plain sum until STEP, then `--agg` (0, the default: `--agg` from the start) |
 | `L2F_EVAL_RESET_INTEGRAL` (test only) | Waypoint test diagnostic: zero the position-error integral whenever the target moves |
 

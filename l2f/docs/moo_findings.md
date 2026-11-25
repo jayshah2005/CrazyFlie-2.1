@@ -1,7 +1,9 @@
-# MOO on the drone controller: what we found (2026-11-23)
+# MOO on the drone controller: what we found (2026-11-23, updated 2026-11-25)
 
-This document summarises everything learned in one day of reward and multi-objective (MOO) studies
-on branch `feat/moo`, and explains **why the gradient aggregators do not help on this task**. It is
+This document summarises the reward and multi-objective (MOO) studies on branch `feat/moo`: why
+the gradient aggregators first appeared not to help, how that was traced to the shared MOO critic,
+and how **separate critics per group let SVD-PGA beat the sum and match variant E** (sections
+12-13). It is
 written to be read on its own. The detailed record of every study, with all tables and settings, is
 [reward_studies.md](reward_studies.md); the earlier time-to-target study that started this work is
 [time_to_target_study.md](time_to_target_study.md).
@@ -14,17 +16,19 @@ written to be read on its own. The detailed record of every study, with all tabl
 4. [Finding 1: the reward paid for crashing](#4-finding-1-the-reward-paid-for-crashing)
 5. [Finding 2: what fixed it, and what did not](#5-finding-2-what-fixed-it-and-what-did-not)
 6. [Finding 3: waypoint training](#6-finding-3-waypoint-training)
-7. [Finding 4: the measured conflict, mostly a critic artifact](#7-finding-4-the-measured-conflict-mostly-a-critic-artifact)
+7. [Finding 4: the measured conflict](#7-finding-4-the-measured-conflict)
 8. [Finding 5: no aggregator beats plain summing](#8-finding-5-no-aggregator-beats-plain-summing)
 9. [Why the aggregators do not help](#9-why-the-aggregators-do-not-help)
 10. [Finding 6: MOO sum trailed TD3, fixed by head scaling](#10-finding-6-moo-sum-trailed-td3-fixed-by-head-scaling)
 11. [Finding 7: untuned, the aggregators still do not help](#11-finding-7-untuned-the-aggregators-still-do-not-help)
-12. [Caveats](#12-caveats)
-13. [What this means for the paper](#13-what-this-means-for-the-paper)
-14. [Open questions and next steps](#14-open-questions-and-next-steps)
-15. [Lessons about the process](#15-lessons-about-the-process)
-16. [Reproducing the results](#16-reproducing-the-results)
-17. [Glossary](#17-glossary)
+12. [Finding 8: the shared critic collapsed the groups; separate critics fix it](#12-finding-8-the-shared-critic-collapsed-the-groups-separate-critics-fix-it)
+13. [Finding 9: with separate critics, SVD-PGA beats sum and matches variant E](#13-finding-9-with-separate-critics-svd-pga-beats-sum-and-matches-variant-e)
+14. [Caveats](#14-caveats)
+15. [What this means for the paper](#15-what-this-means-for-the-paper)
+16. [Open questions and next steps](#16-open-questions-and-next-steps)
+17. [Lessons about the process](#17-lessons-about-the-process)
+18. [Reproducing the results](#18-reproducing-the-results)
+19. [Glossary](#19-glossary)
 
 ---
 
@@ -40,28 +44,29 @@ written to be read on its own. The detailed record of every study, with all tabl
 - **Waypoint training is possible but not yet useful.** With crash 400, a Huber position cap, short
   jumps (0.3-0.5 m) and a time cost of 0.5, policies learn waypoints without collapsing. But
   policies trained only on the mission fly waypoints about as well.
-- **No aggregator beats plain summing.** Over 6 aggregators, 4-8 seeds each, and two start times,
-  nothing beat MOO sum.
-- **MOO trailed TD3 because of the critic, and that is fixed.** The decomposed critic sums 4 output
-  heads, which made its value start twice as spread out and move 2.3 times as far per update as
-  TD3's. Scaling the heads (`--head-scale`) brings MOO sum level with TD3 (section 10).
-- **Most of the measured conflict was an artifact of that critic.** With the unscaled critic the
-  summed update hurt some group in 22-47% of updates; with the scaled critic in 6-8%, and every pair
-  of groups agrees on average. The tuned reward leaves little real conflict on this task (section 7).
-- **Why the aggregators did not help:** they were reacting to critic noise and to scale differences
-  the broken critic exaggerated; the balancing aggregators also undo the priorities that the tuned
-  reward weights encode; and with tuned weights the trade-off is already settled.
-- **Untuned, the aggregators still do not help (section 11).** With no hand-picked group weights
-  (each group given an equal share of the cost, crash penalty 600), untuned TD3 is much worse than
-  tuned TD3 (10.1 against 4.9 cm, 6.0 against 0.8% crashes). No aggregator closes that gap: the
-  groups still barely conflict (their gradients point the same way, cosine +0.98 early), so DualProj
-  and UPGrad leave every weight at 1 and equal MOO sum, which is about untuned TD3. The balancing
-  aggregators (Aligned-MTL, SVD-PGA, OS-NMF-PGA) get worse (11-21% crashes): with near-parallel
-  gradients they amplify noise, with weights of +-100 to +-270 of alternating sign.
-- **The untuned reward's problem is priorities, not conflict.** Aggregators resolve conflicts
-  between objectives; they cannot choose better priorities. Ordinary flight objectives do not
-  produce gradient conflict, tuned or not. Next: tasks with genuine interference, and preference
-  vectors for the trade-off (section 14).
+- **Update 2026-11-25, the main result: with one critic per group, PGA beats the sum and matches
+  variant E (sections 12-13).** The baseline is the original variant E (TD3, E's tuned reward).
+  - **The shared 4-output critic hid the conflict.** Measured directly, the head-scaled critic's 4
+    group values were copies of one value (correlation 0.99-1.00); unscaled, the values were
+    distinct but the summed value was unstable. Neither was usable for MOO.
+  - **Separate critics per group (`--split-critic`)** learn distinct, well-fitted group values (R²
+    0.98-1.00) and show real conflict: precision against efficiency in 82% of updates, precision
+    against safety 76%, time against precision 68%.
+  - **On that critic, 8 seeds:** SVD-PGA crashes 1.7% against the sum's 4.5%, and against variant E
+    tracks the circle better (4.9 against 6.0 cm), reaches more waypoints (83.5 / 76 against 79.5 /
+    69% within 10 cm), and is level on crashes (1.7 against 1.4%) and uneven motors (10.4 against
+    9.7 cm). It gets there by giving smoothing (efficiency) only 6% of the step.
+  - **Not yet shown:** that aggregators replace reward tuning (each group still holds E's tuned
+    weights); the untuned test is next.
+- **Earlier results, measured with the shared critic** (kept as the record; see the corrections in
+  sections 7, 11 and 12):
+  - No aggregator beat plain summing (6 aggregators, 4-8 seeds, two start times).
+  - MOO sum trailed TD3: the 4 output heads made the summed value move 2.3 times as far per update.
+    Head scaling (`--head-scale`) fixed the total but, as found later, collapsed the groups.
+  - "Most of the measured conflict was an artifact of the critic" was wrong: head scaling hid it.
+  - Untuned (equal group shares, crash 600), untuned TD3 was much worse than tuned (10.1 against
+    4.9 cm, 6.0 against 0.8% crashes) and no aggregator helped; the gradients looked parallel
+    (+0.98) because of the collapsed critic. To be repeated with separate critics.
 
 ## 2. Background
 
@@ -213,7 +218,7 @@ The drones overshoot slightly and creep back over several seconds; uneven motors
 integral input is not the cause; it helps (resetting it makes every policy worse). The original
 test's short legs made this look like an offset.
 
-## 7. Finding 4: the measured conflict, mostly a critic artifact
+## 7. Finding 4: the measured conflict
 
 MOO sum on the time 0.5 recipe, 4 seeds; cosine between group gradients (negative: they want
 opposite changes):
@@ -247,6 +252,10 @@ critic (section 10). With the head-scaled critic (7 healthy seeds):
 The noisy, badly scaled group values of the unscaled critic produced opposed gradients and made the
 crash term look 10 times larger than the rest (about 4 times with the fixed critic). With the tuned
 reward, the 4 groups mostly agree on this task.
+
+**Correction (2026-11-25): this update was wrong.** The head-scaled critic showed little conflict
+because it collapsed the 4 group values into copies of one (section 12). With separate critics per
+group the conflict is larger than with the unscaled critic (60-80% of updates in most pairs).
 
 ## 8. Finding 5: no aggregator beats plain summing
 
@@ -387,7 +396,8 @@ those that redirect (negative weights) change a lot.
     worse with uneven motors (11.2 against 9.7 cm) and at 10 cm arrival. One seed in 8 (s70) failed
     (39% crashes); the other seven crash 0.4-1.2%. Possibly each group value now learning at a
     quarter of its former per-head speed; not tested.
-  - **Use `--head-scale` for every MOO run.** All MOO results before it (sections 7-9) used the
+  - ~~Use `--head-scale` for every MOO run.~~ **Superseded (section 12):** head scaling collapses
+    the group values; use `--split-critic`. All MOO results before it (sections 7-9) used the
     unscaled critic.
 
 ## 11. Finding 7: untuned, the aggregators still do not help
@@ -460,21 +470,173 @@ baseline. This study removed them.
   alternating signs, so the update is built mostly from noise (11-21% crashes). This is a different
   failure from the tuned case (section 9.1, discarding deliberate scales).
 
-## 12. Caveats
+**Correction (2026-11-25):** this study used the head-scaled shared critic, which turned out to
+collapse the 4 group values into copies of one value (section 12). The near-parallel gradients
+(+0.98) came from that critic, not from the task. The untuned result therefore does not show that
+the groups agree; it needs repeating with separate critics.
+
+## 12. Finding 8: the shared critic collapsed the groups; separate critics fix it
+
+### The baseline
+
+From here on the baseline every MOO arm must beat is **the original variant E**: plain TD3 (one
+critic output) with E's hand-tuned reward, the `td3` arm of every study on the time 0.5 recipe.
+
+### What the critic learned
+
+The critic was measured directly. A copy of the training (seed 70, `train.py` unchanged, results
+identical to the study logs) took 1,024 buffer states at 200k and 1.2M steps and recorded the 4
+group values at the policy's action, their correlations, the share of their variance along one
+direction ("top share"; 1.0 = the 4 values are copies of one), and how well each group fits its own
+TD target (R²; 1.0 = perfect).
+
+| Critic | Step | Correlation between group values | Top share | Fit R² time / precision / efficiency / safety |
+| --- | --- | --- | --- | --- |
+| shared, unscaled | 200k | -0.19 to +0.98 | 0.994 | 0.94 / 0.90 / 0.77 / 1.00 |
+| shared, unscaled | 1.2M | +0.67 to +0.98 | 0.893 | 1.00 / 1.00 / 0.98 / 1.00 |
+| shared, head-scaled | 200k | **+0.99 to +1.00** | 0.996 | 0.80 / 0.80 / 0.81 / 0.73 |
+| shared, head-scaled | 1.2M | +0.78 to +0.98 | 0.946 | 0.87 / 0.78 / 0.77 / 0.91 |
+| shared, head-scaled, untuned reward | 1.2M | **+1.00** | **1.000** | 0.92 / 0.88 / 0.65 / **0.49** |
+| **separate critics** (`--split-critic`) | 200k | -0.77 to +0.53 | 0.994 | 0.84 / 0.93 / 0.95 / 1.00 |
+| **separate critics** | 1.2M | **+0.29 to +0.68** | **0.859** | **0.98 / 1.00 / 0.98 / 0.99** |
+
+The groups' own per-step rewards are nearly uncorrelated (-0.39 to +0.16) in every run, so the
+values have no reason to be copies of each other.
+
+- **Head scaling collapsed the groups.** It divides every output by 4, so each group's own output
+  learns at a quarter of its former speed while the shared hidden layers learn at full speed. The
+  shared features take over and the 4 outputs become scaled copies of one value. The untuned reward
+  (safety x 7.3, crash 600) makes the collapse total. The original variant E has one output, so this
+  cannot happen there; the 4-output critic is our addition (not in the l2f repository).
+- **Neither shared critic was right.** Unscaled: distinct, well-fitted groups but an unstable total
+  (section 10). Head-scaled: a TD3-like total but collapsed groups.
+- **Consequences for earlier sections.** The "update" in section 7 (most conflict was an artifact)
+  is probably wrong: the unscaled critic's conflict was largely real. Sections 10-11's aggregator
+  results ran on collapsed gradients and do not show whether aggregators help.
+
+### The fix: one critic network per group
+
+`train.py --split-critic` replaces each 4-output critic with 4 separate 64-64 networks, one per
+group, with no shared layers. Everything else is TD3 as before: two twins (each now 4 networks),
+target copies with Polyak 0.995, the twin with the smaller summed value supplying all 4 targets
+y_k = r_k + gamma Q'_k (so the summed target equals variant E's), and only twin 1's 4 networks giving
+the actor its 4 gradients. In total 1 actor and 8 critic networks (plus their targets) against
+variant E's 1 actor and 2 critics.
+
+### Result (`ablation_split.txt`, seeds 70-73; mission 12 ms plain world, waypoints 3.5 s legs 0.3-0.5 m)
+
+| Arm | Circle | Uneven motors | Crashed | Jitter | 10 cm arrival 0.5 / 0.8 m |
+| --- | --- | --- | --- | --- | --- |
+| **td3 (variant E, baseline)** | 4.9 cm | **8.6 cm** | **0.8%** | 0.124 | **84 / 74%** |
+| sum, shared unscaled | 7.4 cm | 11.9 cm | 2.5% | 0.105 | 61 / 54% |
+| sum, shared head-scaled | 4.9 cm | 11.1 cm | 10.1% (s70 39%) | 0.121 | 75 / 70% |
+| sum, separate critics, `--total 0` | 7.4 cm | 11.4 cm | 1.9% | 0.114 | 67 / 57% |
+| **sum, separate critics, `--total 1`** | **4.9 cm** | 11.3 cm | 3.3% | **0.065** | 78 / 71% |
+
+With `--total 0` the networks learn only their own groups and the summed value is less accurate;
+`--total 1` stays.
+
+### The real conflict
+
+Share of actor updates in which two groups' gradients point in opposite directions (negative
+cosine), last 0.6M steps, MOO sum:
+
+| Pair | Shared, head-scaled | Shared, unscaled | **Separate critics** |
+| --- | --- | --- | --- |
+| precision-efficiency | 2% | 47% | **82%** (mean cosine -0.41) |
+| precision-safety | 16% | 46% | **76%** (-0.30) |
+| time-precision | 1% | 38% | **68%** (-0.19) |
+| time-safety | 10% | 2% | **57%** (-0.08) |
+| efficiency-safety | 41% | 17% | 43% (+0.08) |
+| time-efficiency | 15% | 6% | 39% (+0.12) |
+
+With separate critics most pairs conflict in most updates, from the start of training to the end:
+tracking costs motor effort (precision-efficiency), and holding the target fights speed
+(time-precision) and caution (precision-safety). Noise from separate networks alone would average to
+a cosine near 0, not to consistently negative values; the snapshot shows distinct, well-fitted group
+values. **This is the first setup in which the aggregators have real conflict to resolve.**
+
+## 13. Finding 9: with separate critics, SVD-PGA beats sum and matches variant E
+
+All arms: separate critics, `--total 1`, the time 0.5 recipe with E's tuned weights. Mission test
+12 ms plain world; waypoints 3.5 s legs, 0.3-0.5 m and 0.5-0.8 m jumps.
+
+### 4 seeds (`ablation_split_agg.txt`, seeds 70-73)
+
+| Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm arrival 0.5 / 0.8 m |
+| --- | --- | --- | --- | --- | --- | --- |
+| **td3 (variant E)** | 4.9 cm | **8.6 cm** | **0.8%** | **12/36** | 0.124 | 84.0 / 73.5% |
+| sum | 4.9 cm | 11.3 cm | 3.3% | 2/36 | **0.065** | 78.0 / 71.0% |
+| DualProj | 5.7 cm | 11.3 cm | 4.9% | 4/36 | 0.068 | 76.5 / 65.5% |
+| UPGrad | 5.1 cm | 11.2 cm | 3.8% | 1/36 | 0.067 | 82.0 / 71.5% |
+| Aligned-MTL | 5.0 cm | 10.6 cm | 2.6% | 5/36 | 0.073 | 80.5 / 70.0% |
+| **SVD-PGA** | 4.7 cm | 10.6 cm | 1.7% | 5/36 | 0.098 | **84.5 / 77.5%** |
+| OS-NMF-PGA | **4.5 cm** | 10.5 cm | 2.5% | 8/36 | 0.078 | 75.0 / 69.0% |
+
+No seed collapsed in any arm. DualProj's median weights are exactly 1 (it mostly takes the sum).
+
+### 8 seeds (`ablation_split_agg_confirm.txt`, seeds 70-77)
+
+| Arm | Circle | Uneven motors | Crashed | Crash-free checkpoints | Jitter | 10 cm arrival 0.5 / 0.8 m (time) |
+| --- | --- | --- | --- | --- | --- | --- |
+| **td3 (variant E)** | 6.0 cm | **9.7 cm** | **1.4%** | **18/72** | 0.121 | 79.5 / 69.0% (1.73 s) |
+| sum | 5.0 cm | 11.2 cm | 4.5% | 7/72 | **0.065** | 78.0 / 71.5% (1.55 s) |
+| **SVD-PGA** | 4.9 cm | 10.4 cm | 1.7% | 14/72 | 0.106 | **83.5 / 76.0%** (1.53 s) |
+| OS-NMF-PGA | **4.5 cm** | 10.2 cm | 2.5% | 16/72 | 0.081 | 79.5 / 73.0% (**1.48 s**) |
+
+Crashed per seed (70-77): td3 0.5, 0.6, 1.9, 0.3, **4.1**, 1.2, 0.8, 2.3; sum 2.0, 3.1, 4.9, 3.0, 1.6,
+**9.7, 9.7**, 1.9; SVD-PGA 1.2, 3.4, 1.0, 1.2, 1.3, 1.4, 2.0, 1.9. With the simulator options at 6 ms
+the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 against 6.3 cm).
+
+- **The aggregator beats the sum on the same critic and reward:** SVD-PGA crashes 1.7% against 4.5%
+  (worst seed 3.4% against 9.7%) and tracks uneven motors better (10.4 against 11.2 cm). Only the
+  aggregator differs.
+- **Against variant E, SVD-PGA is better on the circle (4.9 against 6.0 cm) and at waypoints (83.5 /
+  76 against 79.5 / 69%, 0.2 s faster), level on crashes (1.7 against 1.4%; within seed spread) and
+  uneven motors (10.4 against 9.7 cm), and mixed on smoothness (jitter 0.106 against 0.121 at 12 ms,
+  0.098 against 0.088 with the simulator options at 6 ms; sum is the smoothest, 0.065).** Variant E's lead on seeds 70-73 shrank on 74-77,
+  where TD3 itself did worse (seed 74: 8.8 cm, 4.1%); SVD-PGA is steadier across seeds.
+- **How SVD-PGA gets there.** Over the last 0.6M steps it gives efficiency about 6% of the step
+  (sum: 24%; efficiency's weight is negative in 43% of updates), and time, precision and safety about
+  a quarter each:
+
+| Aggregator | Median weights time / precision / efficiency / safety | Share of the step |
+| --- | --- | --- |
+| DualProj | 1 / 1 / 1 / 1 | 0.16 / 0.36 / 0.24 / 0.21 |
+| UPGrad | 1.46 / 1.84 / 1.22 / 3.75 | 0.17 / 0.32 / 0.22 / 0.29 |
+| Aligned-MTL | 0.55 / 0.38 / 0.16 / 0.95 | 0.27 / 0.28 / 0.15 / 0.30 |
+| SVD-PGA | 0.36 / 0.21 / 0.03 / 0.46 | 0.28 / 0.24 / 0.06 / 0.26 |
+| OS-NMF-PGA | 0.37 / 0.22 / 0.06 / 0.52 | 0.28 / 0.29 / 0.10 / 0.28 |
+
+  The trade-off it found from the conflict (less smoothing, faster and safer flight) was not tuned
+  by hand; it also explains why SVD-PGA is rougher than sum.
+- **Not yet shown:** that the aggregator replaces reward tuning. Each group still holds E's tuned
+  weights inside it. The untuned comparison (section 11) needs repeating with separate critics.
+
+## 14. Caveats
 
 - **Seed variance is large.** TD3 on this task varies by several cm between seeds. DualProj's 4-seed
   lead disappeared at 8 seeds; time cost 0.5's lead halved. Differences of 1-2 cm or a few percent
   need 8 or more seeds.
-- **The group gradients come from a learned critic.** Most of the conflict in sections 7-9 turned out
-  to be an artifact of the unscaled critic (section 7, update). Any conflict measurement needs the
-  head-scaled critic.
+- **The group gradients come from a learned critic.** A shared multi-output critic can hide the
+  conflict (head-scaled: the groups collapse into one value) or distort the total (unscaled). Check
+  the critic itself (group-value correlations, fit per group) before trusting a conflict
+  measurement; use separate critics (section 12).
+- **The PGA result is 8 seeds and medians,** not a significance test. The circle and waypoint gaps
+  exceed the seed spread; crashes and uneven motors do not.
 - **One task, one recipe.** These results are for the mission plus 0.3-0.5 m waypoints with this
   reward. They do not show that aggregators are useless in general.
 - **Simulation only.** Nothing here was flown.
 
-## 13. What this means for the paper
+## 15. What this means for the paper
 
-- **A clear, explained negative result.** On a task with a carefully tuned scalar reward:
+- **The positive result (sections 12-13).** A shared multi-output critic hides the conflict between
+  objectives; one critic per objective reveals it (60-80% of updates opposed in most pairs). With
+  that conflict visible, the PGA aggregators beat linear scalarization on the same critic and reward
+  (crashes 1.7% against 4.5%) and match or beat the hand-tuned variant E (better circle and
+  waypoints, level crashes), with rougher motor commands than the sum.
+- **The earlier negative results below were measured with the shared critic** and are kept as the
+  record of how the problem was found. On a task with a carefully tuned scalar reward:
   - scale-normalising aggregators fail because the scales encode priorities;
   - projection aggregators fail during the safety-learning phase, and delaying them fixes the
     failure but adds nothing;
@@ -492,9 +654,11 @@ baseline. This study removed them.
   them with a grid of TD3 weights (the Pareto front) is the experiment that tests MOO's claim to
   replace tuning.
 
-## 14. Open questions and next steps
+## 16. Open questions and next steps
 
-1. **Done: the untuned comparison** (section 11). Follow-ups: preference vectors against a grid of TD3
+0. **Repeat the untuned comparison with separate critics:** TD3 untuned, sum and SVD-PGA, against
+   variant E. This tests whether the aggregator removes the need for tuning.
+1. **Earlier: the untuned comparison** (section 11, shared head-scaled critic; to be repeated). Follow-ups: preference vectors against a grid of TD3
    weights (the Pareto front); a fully untuned variant (every reward term equalised, not just the
    groups).
 2. **A conflict-by-design task** where the right actions are opposite in similar states (target jump
@@ -505,7 +669,7 @@ baseline. This study removed them.
 6. **The free-flight crash incentive** is reduced but not gone (3-7% of states for policies trained
    with crash 400).
 
-## 15. Lessons about the process
+## 17. Lessons about the process
 
 - **Change one thing at a time** against a reference, and test every arm under the same conditions.
 - **Gate reward changes with the reward check**, with the final weights. It finds crash incentives in
@@ -519,7 +683,7 @@ baseline. This study removed them.
 - **Check analysis tools against the real code.** A missing weight in the candidate scoring made two
   rewards look 40 times cheaper until the C++ reward disagreed.
 
-## 16. Reproducing the results
+## 18. Reproducing the results
 
 Build (old observation path):
 
@@ -558,12 +722,14 @@ python l2f/py/reward_check.py --build l2f/learning_to_fly/build_py_E_nb200/src -
 | `l2f/sim/ablation_moo2.txt`, `ablation_moo2_confirm.txt` | DualProj on 8 seeds, the critic loss, delayed aggregators |
 | `l2f/sim/ablation_headscale.txt`, `ablation_headscale_confirm.txt` | the 4-head critic: MOO with 1 group, head scaling |
 | `l2f/sim/ablation_untuned.txt` | the untuned comparison: TD3 and 6 aggregators, equal group shares, crash 600 |
+| `l2f/sim/ablation_split.txt` | separate critics per group (`--split-critic`), `--total 0` and `1` |
+| `l2f/sim/ablation_split_agg.txt`, `ablation_split_agg_confirm.txt` | 5 aggregators on separate critics; SVD-PGA, OS-NMF-PGA and sum on 8 seeds |
 
 Raw outputs (`l2f/learning_to_fly/ablation_*`) and checkpoints are not in git; they are on the Mac
 that ran them. Gradient logs: `logs/train_moo_*.csv` (per-group norms, pairwise cosines, aggregator
 weights every 50 actor updates).
 
-## 17. Glossary
+## 19. Glossary
 
 | Term | Meaning |
 | --- | --- |
@@ -577,7 +743,9 @@ weights every 50 actor updates).
 | `--total` | weight of the per-group critic loss next to the total-value loss |
 | `--agg-start` | plain sum until this training step, then the aggregator |
 | `--group-scale` | factors on the reward groups' weights; equal shares = the untuned reward |
-| `--head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k): the summed value starts and moves like TD3's |
+| `--head-scale` | MOO critic outputs x 1/k and initial output layer x sqrt(k): the summed value starts and moves like TD3's, but the group values collapse (section 12) |
+| `--split-critic` | one separate critic network per reward group, no shared hidden layers |
+| variant E | the baseline: plain TD3 with E's hand-tuned reward (the `td3` arm) |
 | crash-better | share of states where crashing at once would pay more than flying on |
 | free flight | training episodes that start from a random state, often tilted and away from the target |
 | Huber cap | position cost quadratic near the target and linear beyond 0.2 m |

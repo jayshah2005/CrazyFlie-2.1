@@ -1,0 +1,22 @@
+# Seeds 74-77 for ablation_split_agg.txt (2026-11-25): on seeds 70-73 SVD-PGA on split critics beat
+# MOO sum (crashes 1.4 vs 3.3%, uneven motors 10.6 vs 12.6 cm, 0.8 m waypoints 77.5 vs 71%) and
+# OS-NMF-PGA tracked best; variant E (td3) still led on uneven motors (9.1 cm) and crashes (0.8%).
+# Confirm on 4 more seeds before claiming it.
+# Run with --seeds 70 71 72 73 74 75 76 77 into ablation_split_agg's output folder (seeds 70-73 are
+# done there; td3 seeds 74-77 are copied from ablation_headscale_20261123).
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3
+arm  moo4sum_split             --moo parts --parts 4 --total 1 --agg sum --split-critic
+arm  moo4svdpga_split          --moo parts --parts 4 --total 1 --agg svd_pga --split-critic
+arm  moo4osnmfpga_split        --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
