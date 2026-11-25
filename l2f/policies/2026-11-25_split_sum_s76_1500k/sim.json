@@ -1,0 +1,18 @@
+{
+ "arm": "moo4sum_split",
+ "score": [
+  0,
+  9.1,
+  4.1
+ ],
+ "seed": 76,
+ "step": 1500000,
+ "mission_crash": 0,
+ "wp_crash": 0,
+ "uneven": 9.1,
+ "clean": 4.1,
+ "jitter": 0.059,
+ "wp05_10": 78.0,
+ "wp05_t": 1.41,
+ "wp08_10": 76.0
+}

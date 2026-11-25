@@ -1,0 +1,18 @@
+{
+ "arm": "moo4alignedmtl_split",
+ "score": [
+  0,
+  7.55,
+  3.95
+ ],
+ "seed": 73,
+ "step": 1500000,
+ "mission_crash": 0,
+ "wp_crash": 0,
+ "uneven": 7.5,
+ "clean": 4.0,
+ "jitter": 0.111,
+ "wp05_10": 95.0,
+ "wp05_t": 1.38,
+ "wp08_10": 83.0
+}

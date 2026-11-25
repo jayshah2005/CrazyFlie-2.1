@@ -1,0 +1,18 @@
+{
+ "arm": "moo4upgrad_split",
+ "score": [
+  0,
+  7.7,
+  3.55
+ ],
+ "seed": 77,
+ "step": 1700000,
+ "mission_crash": 0,
+ "wp_crash": 0,
+ "uneven": 7.7,
+ "clean": 3.5,
+ "jitter": 0.064,
+ "wp05_10": 95.0,
+ "wp05_t": 1.36,
+ "wp08_10": 90.0
+}

@@ -1,0 +1,18 @@
+{
+ "arm": "moo4svdpga_split",
+ "score": [
+  0,
+  8.4,
+  3.7
+ ],
+ "seed": 70,
+ "step": 1200000,
+ "mission_crash": 0,
+ "wp_crash": 0,
+ "uneven": 8.4,
+ "clean": 3.7,
+ "jitter": 0.104,
+ "wp05_10": 95.0,
+ "wp05_t": 1.09,
+ "wp08_10": 93.0
+}

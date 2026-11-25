@@ -1,0 +1,18 @@
+{
+ "arm": "moo4dualproj_split",
+ "score": [
+  0,
+  10.05,
+  4.95
+ ],
+ "seed": 77,
+ "step": 1400000,
+ "mission_crash": 0,
+ "wp_crash": 0,
+ "uneven": 10.1,
+ "clean": 4.9,
+ "jitter": 0.046,
+ "wp05_10": 75.0,
+ "wp05_t": 1.25,
+ "wp08_10": 69.0
+}
