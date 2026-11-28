@@ -20,13 +20,23 @@ Options: total (critic loss (sum_k f_k e_k)^2 + total * sum_k e_k^2 per sample i
 sum_k e_k^2) and norm (output k learns u_k / s_k with s_k = RMS(u_k) / (1 - gamma) from 20k
 buffer samples when critic training starts, f_k = w_k s_k). Preference vectors are all ones
 (TorchJD's default is 1/K; the weights are linear in it).
+
+critic_agg (framing A, shared critic only; added 2026-11-25): MOO inside the critic too. The
+critic loss is split into objectives: the total error mean (sum_k f_k e_k)^2 when `total` is set,
+and one per group, total * mean e_k^2 (mean e_k^2 without `total`; left out when total = 0). Their
+gradients on the shared hidden layers are combined by `critic_agg`; the output layer gets their
+plain sum (each head's gradient comes from its own group's error, plus the total term). With
+"sum" the step equals the plain critic loss's. critic_norm: each group's TD error is divided by
+its running RMS (exponential average of mean e_k^2, rate 0.01 per critic update, one per twin),
+so the group losses stay about 1 through training (--norm scales once at critic start and left
+the groups' gradients 1e5 apart, 2026-11-25).
 """
 import numpy as np
 import torch
 from torchjd import aggregation
 from torchjd.autojac import backward, jac_to_grad
 
-from networks import SplitCritic, make_optimizer
+from networks import Critic, SplitCritic, TowerCritic, make_optimizer
 from td3 import TD3
 
 OBJECTIVES = ['survival', 'position', 'orientation', 'linear_velocity', 'action', 'smoothing',
@@ -54,7 +64,8 @@ REGROUP_OF = {4: {'survival': 0, 'position': 1, 'linear_velocity': 1, 'time': 1,
                   'orientation': 3, 'speed_limit': 3, 'landing_speed': 3}}
 REGROUP_OF[5] = {**REGROUP_OF[4], 'energy': 4}
 TASK_NAMES = ['free_flight', 'takeoff', 'landing', 'circle', 'line', 'eight', 'fast_circle', 'p2p', 'gust', 'waypoint']
-AGGREGATORS = ['sum', 'mean', 'upgrad', 'aligned_mtl', 'dualproj', 'pcgrad', 'mgda', 'svd_pga', 'osnmf_pga', 'task_share']
+AGGREGATORS = ['sum', 'mean', 'upgrad', 'aligned_mtl', 'dualproj', 'pcgrad', 'mgda', 'svd_pga', 'osnmf_pga', 'cagrad',
+               'task_share']
 
 
 def part_factors(group_scale, part_names):
@@ -84,7 +95,9 @@ def make_aggregator(name, m):
               'aligned_mtl': lambda: aggregation.AlignedMTL(pref_vector=ones),
               'dualproj': lambda: aggregation.DualProj(pref_vector=ones),
               'pcgrad': aggregation.PCGrad,  # added 2026-11-22 (MOO round 2): stays near the sum
-              'mgda': aggregation.MGDA, 'svd_pga': aggregation.SVDPGA, 'osnmf_pga': aggregation.OSNMFPGA}
+              'mgda': aggregation.MGDA, 'svd_pga': aggregation.SVDPGA, 'osnmf_pga': aggregation.OSNMFPGA,
+              # added 2026-11-27 (critic aggregation): c = 0.5, the CAGrad paper's default; needs cvxpy, clarabel
+              'cagrad': lambda: aggregation.CAGrad(c=0.5)}
     if name not in makers:
         raise ValueError(f'unknown aggregator {name} ({", ".join(AGGREGATORS)})')
     return makers[name]()
@@ -131,7 +144,9 @@ class MooTD3(TD3):
     """TD3 whose actor step is a TorchJD aggregation of per-objective gradients."""
 
     def __init__(self, cfg, obs_dim, obs_dim_p, act_dim, agg='sum', parts=8, tasks=0, total=None, norm=False,
-                 log_every=50, objectives=None, grouping='default', agg_start=0, head_scale=False, split_critic=False):
+                 log_every=50, objectives=None, grouping='default', agg_start=0, head_scale=False, split_critic=False,
+                 critic_agg=None, critic_norm=False, critic_hidden=None, critic_towers=False, critic_norm_by='error',
+                 critic_layer_norm=False, crash_split=None):
         self.tasks = tasks
         if grouping == 'regroup' and parts not in REGROUP_OF:
             raise ValueError('--grouping regroup needs parts 4 or 5')
@@ -158,8 +173,54 @@ class MooTD3(TD3):
         if self.split_critic:
             if self.head_scale:
                 raise ValueError('--split-critic and --head-scale do not combine')
-            self.critics = [SplitCritic(obs_dim_p, act_dim, cfg.hidden, k) for _ in range(2)]
-            self.critic_targets = [SplitCritic(obs_dim_p, act_dim, cfg.hidden, k) for _ in range(2)]
+            # critic_hidden with split_critic: the width of each group's network (narrow split critic,
+            # 2026-11-27: 4 x 32-32 = 8,964 parameters, 1.33x the shared 64-64 critic)
+            width = critic_hidden or cfg.hidden
+            self.critics = [SplitCritic(obs_dim_p, act_dim, width, k) for _ in range(2)]
+            self.critic_targets = [SplitCritic(obs_dim_p, act_dim, width, k) for _ in range(2)]
+            for c, ct in zip(self.critics, self.critic_targets):
+                ct.load_state_dict(c.state_dict())
+            self.critic_opts = [make_optimizer(c) for c in self.critics]
+        # critic_hidden: the shared critic's width (capacity control for the split critic, which has
+        # 3.9x the shared critic's parameters at 64); critic_towers: a partly shared critic
+        self.critic_towers = critic_towers and k > 1
+        if critic_layer_norm and (self.critic_towers or self.head_scale or k == 1):
+            raise ValueError('--critic-layer-norm needs a shared or split critic (not towers or head scaling)')
+        if critic_layer_norm and self.split_critic:
+            from networks import SplitCritic as _SC
+            make_split = lambda: _SC(obs_dim_p, act_dim, cfg.hidden, k)
+            self.critics = [make_split() for _ in range(2)]
+            self.critic_targets = [make_split() for _ in range(2)]
+            for c in self.critics + self.critic_targets:
+                c.nets = torch.nn.ModuleList([Critic(obs_dim_p, act_dim, cfg.hidden, 1, layer_norm=True) for _ in range(k)])
+            for c, ct in zip(self.critics, self.critic_targets):
+                ct.load_state_dict(c.state_dict())
+            self.critic_opts = [make_optimizer(c) for c in self.critics]
+        elif critic_layer_norm:
+            self.critics = [Critic(obs_dim_p, act_dim, critic_hidden or cfg.hidden, k, layer_norm=True) for _ in range(2)]
+            self.critic_targets = [Critic(obs_dim_p, act_dim, critic_hidden or cfg.hidden, k, layer_norm=True) for _ in range(2)]
+            for c, ct in zip(self.critics, self.critic_targets):
+                ct.load_state_dict(c.state_dict())
+            self.critic_opts = [make_optimizer(c) for c in self.critics]
+            critic_hidden = None  # built here
+        # crash_split (2026-11-27): the terminal reward (crash penalty / landing payout, the
+        # 'survival' part) is split across the groups in these shares (summing to 1) instead of all
+        # going to safety, so no cost group gains from ending the episode; the scalar reward is
+        # unchanged (the shares sum to 1)
+        if crash_split is not None:
+            crash_split = np.asarray(crash_split, np.float32)
+            if parts != 4 or len(crash_split) != k or crash_split.min() < 0 or abs(crash_split.sum() - 1) > 1e-6:
+                raise ValueError('--crash-split needs --parts 4 and 4 non-negative shares summing to 1')
+        self.crash_split = crash_split
+        if (critic_hidden and self.head_scale) or (self.critic_towers and (self.split_critic or self.head_scale)):
+            raise ValueError('--critic-hidden / --critic-towers do not combine with --split-critic or --head-scale')
+        if critic_hidden and self.critic_towers:
+            raise ValueError('--critic-hidden and --critic-towers do not combine')
+        if (critic_hidden and not self.split_critic) or self.critic_towers:
+            make = (lambda: TowerCritic(obs_dim_p, act_dim, cfg.hidden, k)) if self.critic_towers else \
+                (lambda: Critic(obs_dim_p, act_dim, critic_hidden, k))
+            self.critics = [make() for _ in range(2)]
+            self.critic_targets = [make() for _ in range(2)]
             for c, ct in zip(self.critics, self.critic_targets):
                 ct.load_state_dict(c.state_dict())
             self.critic_opts = [make_optimizer(c) for c in self.critics]
@@ -181,17 +242,51 @@ class MooTD3(TD3):
         self.agg_start = agg_start
         self.warmup_aggregator = aggregation.Sum() if agg_start > 0 else None
         self.total, self.norm = total, norm
+        # critic_agg: the critic's per-objective gradients on its shared hidden layers are aggregated
+        if critic_agg is not None and (tasks or k == 1 or self.split_critic or self.critic_towers):
+            raise ValueError('--critic-agg needs --moo parts with several groups and a shared critic (no --split-critic)')
+        self.critic_agg = critic_agg
+        self.critic_names = None
+        if critic_agg is not None:
+            groups = [] if total == 0 else self.names_for(k, grouping)
+            self.critic_names = (['total'] if total is not None else []) + groups
+            # one aggregator per twin (some aggregators keep state between steps)
+            self.critic_aggregators = [make_aggregator(critic_agg, len(self.critic_names)) for _ in range(2)]
+        self.critic_updates, self.critic_rows = 0, []
+        if critic_norm and critic_agg is None:
+            raise ValueError('--critic-norm needs --critic-agg')
+        self.critic_norm = critic_norm
+        # critic_norm_by: 'error' divides each group's TD error by the error's running RMS (every
+        # group's loss stays ~1 however well it fits: size-blind, like PGA); 'target' divides it by
+        # the running std of the group's TD targets (common units, error size still counts; PopArt-like)
+        if critic_norm_by not in ('error', 'target'):
+            raise ValueError('critic_norm_by is error or target')
+        self.critic_norm_by = critic_norm_by
+        self.td_ms = [None, None]  # critic_norm: running mean e_k^2 per twin
+        self.t = 0
         self.scale = np.ones(k, np.float32)
         self.group_weights = np.ones(k, np.float32)
         self.log_every, self.updates, self.rows = log_every, 0, []
         self.share_rng = np.random.default_rng(54321)
-        self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else \
-            (self.objectives or (REGROUPS[k] if grouping == 'regroup' else {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k]))
+        self.names = [TASK_NAMES[t] for t in range(tasks)] if tasks else self.names_for(k, grouping)
+
+    def names_for(self, k, grouping):
+        """Names of the k critic outputs (framing A)."""
+        return list(self.objectives or (REGROUPS[k] if grouping == 'regroup' else {8: OBJECTIVES, 4: GROUPS4, 3: GROUPS3, 1: ['total']}[k]))
 
     def reward_matrix(self, part_names, weights):
         """R for the critic outputs (see td3.py); also sets the value factors f."""
         U, W = group_parts(part_names, weights, self.k, self.objectives, self.grouping)
         self.group_weights = W
+        self.part_names = list(part_names)
+        if self.crash_split is not None:
+            if self.norm:
+                raise ValueError('--crash-split does not combine with --norm')
+            R = U * W
+            i = self.part_names.index('survival')
+            R[i, :] = R[i, :].sum() * self.crash_split
+            self.factors = torch.ones(self.k)
+            return R
         if self.norm:
             self.factors = torch.from_numpy(W * self.scale)
             return U / self.scale
@@ -214,6 +309,66 @@ class MooTD3(TD3):
         if self.total is None:
             return torch.mean(e ** 2) * self.k
         return torch.mean((e * self.factors).sum(1) ** 2) + self.total * torch.mean(e ** 2) * self.k
+
+    def critic_objectives(self, q, y, i=0):
+        """critic_agg: the critic loss split into objectives (their sum is critic_loss(q, y) without
+        critic_norm; with it each group's error is divided by a running scale of twin i: the error's
+        RMS, or with critic_norm_by 'target' the std of the group's TD targets)."""
+        e = q - y
+        # the total objective is the error of the real total value (raw errors, real units)
+        losses = [torch.mean((e * self.factors).sum(1) ** 2)] if self.total is not None else []
+        if self.critic_norm:
+            ms = y.detach().var(0) if self.critic_norm_by == 'target' else (e.detach() ** 2).mean(0)
+            self.td_ms[i] = ms if self.td_ms[i] is None else 0.99 * self.td_ms[i] + 0.01 * ms
+            # groups without weighted reward keep their raw (tiny) error: scaling it to 1 would fit noise
+            on = torch.as_tensor(self.group_weights, dtype=e.dtype) > 0
+            e = torch.where(on, e / self.td_ms[i].clamp_min(1e-12).sqrt(), e)
+        w = 1.0 if self.total is None else self.total
+        if w != 0:
+            losses += [w * torch.mean(e[:, j] ** 2) for j in range(self.k)]
+        return losses
+
+    def train_critic(self, i, batch, noise=None):
+        """Without critic_agg as TD3. With it: the shared hidden layers step along the aggregated
+        per-objective gradients, the output layer along their sum."""
+        if self.critic_agg is None:
+            return super().train_critic(i, batch, noise)
+        aggregator = self.critic_aggregators[i]
+        if self.t < self.agg_start:  # --agg-start applies to the critic as well
+            aggregator = self.warmup_aggregator
+        obs_p, act = batch[1], batch[2]
+        y = self.td_target(batch, noise)
+        critic = self.critics[i]
+        losses = self.critic_objectives(critic(obs_p, act), y, i)
+        shared = [p for layer in critic.layers[:-1] for p in layer.parameters()]
+        head = list(critic.layers[-1].parameters())
+        self.critic_opts[i].zero_grad(set_to_none=True)
+        total_loss = sum(losses)
+        head_grads = torch.autograd.grad(total_loss, head, retain_graph=True)
+        backward(losses, inputs=shared)
+        if i == 0:
+            self.critic_updates += 1
+        log_now = i == 0 and self.critic_updates % self.log_every == 0
+        weights = jac_to_grad(shared, aggregator, retain_jac=log_now)
+        for p, g in zip(head, head_grads):
+            p.grad = g
+        if log_now:
+            self.critic_rows.append([self.critic_updates, self.critic_agg]
+                                    + self.gradient_stats(shared, weights, len(losses)) + [float(x.detach()) for x in losses])
+        self.critic_opts[i].step()
+        return float(total_loss.detach())
+
+    def update(self, t, buf, rng, part_names, weights):
+        """TD3's update; remembers the step (the critic aggregator's --agg-start warm-up)."""
+        self.t = t
+        return super().update(t, buf, rng, part_names, weights)
+
+    def critic_log_fields(self):
+        """CSV header for the critic rows (critic 0, shared hidden layers)."""
+        n = self.critic_names
+        return (['critic_update', 'aggregator'] + [f'norm_{x}' for x in n] + [f'weight_{x}' for x in n]
+                + [f'cos_{n[a]}_{n[b]}' for a in range(len(n)) for b in range(a + 1, len(n))]
+                + ['step_norm', 'check_rel_error'] + [f'loss_{x}' for x in n])
 
     def objective_losses(self, buf, rng, reward_matrix):
         """The n_obj actor losses -mean f_k Q1_k, from one batch (parts) or one per task."""
@@ -257,20 +412,25 @@ class MooTD3(TD3):
 
     def log_row(self, step, params, weights, agg_name=None):
         """Per-objective gradient norms, pairwise cosines and the weights; checks J^T w = step."""
-        J = torch.cat([p.jac.reshape(self.n_obj, -1) for p in params], dim=1).double()
+        self.rows.append([step, agg_name or self.agg_name] + self.gradient_stats(params, weights, self.n_obj))
+
+    @staticmethod
+    def gradient_stats(params, weights, m):
+        """Norms, weights, pairwise cosines of the m stored gradient rows (.jac, deleted here), step
+        norm and the relative error of J^T w against the step in .grad."""
+        J = torch.cat([p.jac.reshape(m, -1) for p in params], dim=1).double()
         for p in params:
             del p.jac
         G = J @ J.T
         norm = torch.sqrt(torch.clamp(torch.diag(G), min=0))
-        w = weights.detach().double() if weights is not None else torch.full((self.n_obj,), float('nan'))
+        w = weights.detach().double() if weights is not None else torch.full((m,), float('nan'))
         step_vec = torch.cat([p.grad.reshape(-1) for p in params]).double()
         check = float(torch.linalg.norm(J.T @ w - step_vec) / max(float(torch.linalg.norm(step_vec)), 1e-30))
-        row = [step, agg_name or self.agg_name] + [float(x) for x in norm] + [float(x) for x in w]
-        for a in range(self.n_obj):
-            for b in range(a + 1, self.n_obj):
+        row = [float(x) for x in norm] + [float(x) for x in w]
+        for a in range(m):
+            for b in range(a + 1, m):
                 row.append(float(G[a, b] / max(float(norm[a] * norm[b]), 1e-30)))
-        row += [float(torch.linalg.norm(step_vec)), check]
-        self.rows.append(row)
+        return row + [float(torch.linalg.norm(step_vec)), check]
 
     def log_fields(self):
         """CSV header for the rows of log_row."""

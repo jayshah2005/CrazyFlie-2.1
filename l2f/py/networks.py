@@ -68,13 +68,23 @@ class Actor(MLP):
 class Critic(MLP):
     """(critic obs, action) -> value(s); n_out = 1, or one per reward part (MOO)."""
 
-    def __init__(self, obs_dim_privileged, action_dim=4, hidden=64, n_out=1):
+    def __init__(self, obs_dim_privileged, action_dim=4, hidden=64, n_out=1, layer_norm=False):
         super().__init__(obs_dim_privileged + action_dim, n_out, hidden, output_tanh=False)
         self.out_scale = 1.0  # MooTD3 head_scale: the outputs are multiplied by this
+        # layer_norm (MooTD3 --critic-layer-norm, 2026-11-27): LayerNorm on each hidden layer's
+        # pre-activation, before FAST_TANH, so at most ~1/9 of the units sit in the clipped region
+        # (|x| >= 3, zero gradient); the shared critic had 39% of its layer-2 units dead at 2M
+        self.norms = nn.ModuleList([nn.LayerNorm(hidden), nn.LayerNorm(hidden)]) if layer_norm else None
 
     def forward(self, obs_privileged, action):
         """Value of `action` in the critic's (noise-free) observation."""
-        q = super().forward(torch.cat([obs_privileged, action], dim=-1))
+        x = torch.cat([obs_privileged, action], dim=-1)
+        if self.norms is None:
+            q = super().forward(x)
+        else:
+            x = fast_tanh(self.norms[0](self.layers[0](x)))
+            x = fast_tanh(self.norms[1](self.layers[1](x)))
+            q = self.layers[2](x)
         return q if self.out_scale == 1.0 else q * self.out_scale
 
 
@@ -91,6 +101,24 @@ class SplitCritic(nn.Module):
     def forward(self, obs_privileged, action):
         """Values of `action`, one column per group."""
         return torch.cat([net(obs_privileged, action) for net in self.nets], dim=-1)
+
+
+class TowerCritic(nn.Module):
+    """Partly shared critic: (critic obs, action) -> 64 shared -> per group 64 -> 1, stacked into
+    (batch, k) values. The first layer (common state features) is shared; each group has its own
+    second layer and output, so one group's error cannot reshape the features another group's head
+    reads (MooTD3 --critic-towers; 2026-11-26, between the shared and the split critic)."""
+
+    def __init__(self, obs_dim_privileged, action_dim=4, hidden=64, n_out=1):
+        super().__init__()
+        self.shared = nn.Linear(obs_dim_privileged + action_dim, hidden)
+        self.towers = nn.ModuleList([nn.Linear(hidden, hidden) for _ in range(n_out)])
+        self.heads = nn.ModuleList([nn.Linear(hidden, 1) for _ in range(n_out)])
+
+    def forward(self, obs_privileged, action):
+        """Values of `action`, one column per group."""
+        h = fast_tanh(self.shared(torch.cat([obs_privileged, action], dim=-1)))
+        return torch.cat([head(fast_tanh(tower(h))) for tower, head in zip(self.towers, self.heads)], dim=-1)
 
 
 def make_optimizer(module, lr=1e-3, weight_decay=1e-4, eps=1e-8):

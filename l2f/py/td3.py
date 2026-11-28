@@ -142,9 +142,9 @@ class TD3:
         """Sum over outputs of the batch-mean squared TD error (TD3's MSE for one output)."""
         return torch.mean((q - y) ** 2) * self.n_out
 
-    def train_critic(self, i, batch, noise=None):
-        """One step of critic i towards the target of the twin with the smaller value; noise:
-        the target-smoothing noise (drawn here if None)."""
+    def td_target(self, batch, noise=None):
+        """TD target per output, from the target twin with the smaller summed value; noise: the
+        target-smoothing noise (drawn here if None)."""
         obs, obs_p, act, reward, next_obs, next_obs_p, terminated = batch
         with torch.no_grad():
             if noise is None:
@@ -154,7 +154,13 @@ class TD3:
             q2 = self.critic_targets[1](next_obs_p, next_act)
             pick_1 = ((q1 * self.factors).sum(1) < (q2 * self.factors).sum(1))[:, None]
             q_next = torch.where(pick_1, q1, q2)
-            y = reward + self.cfg.gamma * (1 - terminated[:, None]) * q_next
+            return reward + self.cfg.gamma * (1 - terminated[:, None]) * q_next
+
+    def train_critic(self, i, batch, noise=None):
+        """One step of critic i towards the target of the twin with the smaller value; noise:
+        the target-smoothing noise (drawn here if None)."""
+        obs_p, act = batch[1], batch[2]
+        y = self.td_target(batch, noise)
         loss = self.critic_loss(self.critics[i](obs_p, act), y)
         self.critic_opts[i].zero_grad(set_to_none=True)
         loss.backward()

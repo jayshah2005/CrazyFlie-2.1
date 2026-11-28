@@ -61,7 +61,22 @@ def make_agent(args, cfg, info, weights=None):
         objectives = [n for n, w in zip(info['part_names'], weights) if w != 0 or n in cfg.weight_caps]
     return MooTD3(cfg, *dims, agg=args.agg, parts=args.parts, tasks=args.tasks if args.moo == 'tasks' else 0,
                   total=args.total, norm=args.norm, objectives=objectives, grouping=args.grouping,
-                  agg_start=args.agg_start, head_scale=args.head_scale, split_critic=args.split_critic)
+                  agg_start=args.agg_start, head_scale=args.head_scale, split_critic=args.split_critic,
+                  critic_agg=args.critic_agg, critic_norm=args.critic_norm, critic_hidden=args.critic_hidden,
+                  critic_towers=args.critic_towers, critic_norm_by=args.critic_norm_by,
+                  critic_layer_norm=args.critic_layer_norm, crash_split=crash_split_of(args))
+
+
+def crash_split_of(args):
+    """--crash-split shares in GROUPS4 order, normalised to sum 1 (None if unset)."""
+    if not args.crash_split:
+        return None
+    from moo import GROUPS4
+    given = dict(kv.split('=') for kv in args.crash_split.split(','))
+    if set(given) != set(GROUPS4):
+        raise ValueError(f'--crash-split needs all of {GROUPS4}')
+    v = [float(given[g]) for g in GROUPS4]
+    return [x / sum(v) for x in v]
 
 
 def run_tag(args):
@@ -70,7 +85,9 @@ def run_tag(args):
     if args.moo == 'parts':
         tag += f'_moo{args.parts}{"r" if args.grouping == "regroup" else ""}_{args.agg}' + (f'_tot{args.total:g}' if args.total is not None else '') + \
             ('_norm' if args.norm else '') + (f'_from{args.agg_start // 1000}k' if args.agg_start else '') + ('_hs' if args.head_scale else '') + \
-            ('_split' if args.split_critic else '')
+            ('_split' if args.split_critic else '') + (f'_cagg-{args.critic_agg.replace("_", "")}' if args.critic_agg else '') + (('_cnt' if args.critic_norm_by == 'target' else '_cn') if args.critic_norm else '') + \
+            (f'_ch{args.critic_hidden}' if args.critic_hidden else '') + ('_towers' if args.critic_towers else '') + \
+            ('_ln' if args.critic_layer_norm else '') + ('_csplit' if args.crash_split else '')
     elif args.moo == 'tasks':
         tag += f'_tasks{args.tasks}_{args.agg}'
     if args.hard:
@@ -119,6 +136,8 @@ def train(args, extra_env):
     tag = run_tag(args) + ('' if weight_curriculum else '_uniform') + ('_ss' if info.get('sensor_sim') else '')
     run = L2F / 'checkpoints' / 'multirotor_td3' / (STARTED_AT.strftime('%Y_%m_%d_%H_%M_%S') + f'_{tag}_{os.getpid()}')
     moo_log = run_log.csv_path(f'moo_{tag}_{os.getpid()}', script=__file__, when=STARTED_AT) if args.moo else None
+    critic_log = run_log.csv_path(f'moo_critic_{tag}_{os.getpid()}', script=__file__, when=STARTED_AT) \
+        if args.moo and args.critic_agg else None
     run.mkdir(parents=True, exist_ok=True)
     log.info('run %s: variant %s, seed %d, %d steps, obs %d / critic %d, %s, env %s', run.name, args.variant,
              args.seed, cfg.steps, info['obs_dim'], info['obs_dim_privileged'],
@@ -143,6 +162,9 @@ def train(args, extra_env):
             if moo_log and agent.rows:
                 run_log.write_csv(moo_log, agent.log_fields(), agent.rows, script=__file__,
                                   generated_at=datetime.now().astimezone())
+            if critic_log and agent.critic_rows:
+                run_log.write_csv(critic_log, agent.critic_log_fields(), agent.critic_rows, script=__file__,
+                                  generated_at=datetime.now().astimezone())
         if t % 100_000 == 0 and t:
             log.info('step %d: mean training return %.1f over %d episodes (%.0f s)', t,
                      np.mean(returns[-200:]) if returns else float('nan'), len(returns), time.time() - t0)
@@ -165,6 +187,10 @@ def train(args, extra_env):
         run_log.write_csv(moo_log, agent.log_fields(), agent.rows, script=__file__,
                           generated_at=datetime.now().astimezone())
         log.info('MOO gradient log: %s', moo_log)
+    if critic_log and agent.critic_rows:
+        run_log.write_csv(critic_log, agent.critic_log_fields(), agent.critic_rows, script=__file__,
+                          generated_at=datetime.now().astimezone())
+        log.info('MOO critic gradient log: %s', critic_log)
     return run, env
 
 
@@ -220,6 +246,24 @@ def main():
                         'value has TD3\'s step size and starting spread')
     parser.add_argument('--split-critic', action='store_true',
                         help='--moo parts: one separate critic network per group (no shared hidden layers)')
+    parser.add_argument('--critic-agg', choices=[a for a in AGGREGATORS if a not in ('task_share', 'mean')],
+                        help='--moo parts, shared critic: aggregate the per-group critic-loss gradients on the '
+                        'shared hidden layers with this TorchJD aggregator (sum = the plain critic loss)')
+    parser.add_argument('--critic-norm', action='store_true',
+                        help='--critic-agg: divide each group\'s TD error by its running RMS (losses about 1)')
+    parser.add_argument('--critic-norm-by', default='error', choices=['error', 'target'],
+                        help='--critic-norm: divide by the running RMS of the TD error (error) or the running std '
+                        'of the TD targets (target)')
+    parser.add_argument('--critic-layer-norm', action='store_true',
+                        help='--moo parts: LayerNorm before each critic hidden activation (shared or split critic)')
+    parser.add_argument('--crash-split', default='',
+                        help='--moo parts --parts 4: split the terminal reward (crash penalty) across the groups, '
+                        '"time=a,precision=b,efficiency=c,safety=d" (normalised to sum 1); default: all to safety')
+    parser.add_argument('--critic-hidden', type=int,
+                        help='--moo parts: width of the shared critic\'s hidden layers (default: --hidden, 64)')
+    parser.add_argument('--critic-towers', action='store_true',
+                        help='--moo parts: critic with a shared first layer and a separate second layer and '
+                        'output per group')
     parser.add_argument('--agg-start', type=int, default=0,
                         help='--moo: the plain sum until this step, then --agg (0: --agg from the start)')
     parser.add_argument('--parts', type=int, default=8, choices=[0, 1, 3, 4, 5, 8], help='--moo parts: 8 objectives, 3 groups '
@@ -234,6 +278,9 @@ def main():
     parser.add_argument('--hard', action='store_true', help='the harder episode mix of --tasks 9 (HARD=1)')
     parser.add_argument('--episodes', type=int, default=15, help='evaluation episodes per condition')
     args = parser.parse_args()
+    if (args.critic_agg or args.critic_norm or args.critic_hidden or args.critic_towers or args.critic_layer_norm
+            or args.crash_split) and args.moo != 'parts':
+        parser.error('the --critic-* options and --crash-split need --moo parts')
     extra = dict(kv.split('=', 1) for kv in args.env)
     if args.evaluate_run:
         evaluate(args.evaluate_run, Path(args.build) / 'evaluate_robustness', args.episodes, extra)
