@@ -42,6 +42,27 @@ Per-seed medians, Mann-Whitney test, Holm correction over 48 comparisons per bas
 - With 8 seeds the 95% interval on circle error is about +-2 cm, so 1-2 cm differences cannot be
   shown.
 
+## Done: shared critic vs separate critics (2026-11-25..27)
+
+Results: `moo_findings.md` sections 14-15; literature and novelty:
+`reports/Shared critic collapse and reward design.md` (with its update section).
+
+- No fix makes a shared critic work (40+ arms: MOO inside the critic with 7 aggregators, 3
+  normalisations, no total term, wider, towers, LayerNorm, crash penalty split across groups).
+  Its group values collapse (0.89-0.99 vs a true Monte Carlo return correlation of -0.19..+0.19).
+- Separate critics work at half the shared critic's size: 16-16 per group (3,460 parameters) matches
+  64-64 (26,116) over 8 seeds; 8-8 is too small.
+
+### Next (left for later, 2026-11-27)
+
+1. Reviewer controls: variant E with a critic of matched size (8 seeds); the SAC-D recipe (trunk
+   gradients / 4, CAGrad in the critic, twin min on the total) on the shared critic.
+2. Re-run the aggregator comparison (sum, SVD-PGA, OS-NMF-PGA, UPGrad, Aligned-MTL, DualProj, plus
+   PCGrad and CAGrad) on the 16-wide split critic, 8 seeds - the paper-1 setup.
+3. Real flights of a 16-wide split-critic policy against variant E.
+4. Before submission: read Fan et al. 2025 (SAC multi-head critic), the IROS 2026 role-based reward
+   decomposition paper, and TOPPO's off-policy appendix (novelty check gaps).
+
 ## Later: a fuller drone evaluation (not decided)
 
 Modelled on the experiments of Eschmann et al., "Learning to Fly in Seconds" (RA-L 2024,

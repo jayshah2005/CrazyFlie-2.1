@@ -104,3 +104,30 @@ Each experiment is a 2-seed screen of about 30-45 minutes, compared with variant
 | 7 | Crash-probability cost critic (BCE, γ_C = 0.99) plus a PID-Lagrangian top-up over the base −400 penalty, with dense groups only in the shared reward critic | Crash as a constraint, with variant E as the frozen-multiplier special case | Crash rate holds at the target even with per-group normalisation in the reward critic |
 
 The SAC-D recipe (trunk gradients divided by 4, CAGrad c = 0.5, composite twin min) is not ranked, because CAGrad alone already gave 12.3 % crashes with collapsed values. It should still be run once as the literature baseline that reviewers will expect.
+
+## Update after experiments (27 November 2026)
+
+Four of the ranked experiments, and a width sweep, were run after this report was written (2 seeds
+unless noted, OS-NMF-PGA actor, simopts 6 ms; our measurements). Two predictions failed; the
+architectural conclusion held and got stronger. Details: `l2f/docs/moo_findings.md` sections 14-15.
+
+| Experiment | Prediction above | Result |
+| --- | --- | --- |
+| 1. Crash split, shared critic without the total term | crashes near 4.5% | **Failed:** 33.8% (vs 39% without the split); with target normalisation + sum 21.1% (vs 28%) |
+| Crash split with the total term kept (not in the list) | - | collapse worse (0.97-1.00 vs a true -0.11..+0.26), 17.8% crashes; on the split critic 4.0% (vs 2.4%) |
+| 2. Narrow split critic, 4 x 32-32 | matches 64-wide | **Confirmed, 8 seeds:** 4.8 cm, 2.4% crashes vs 4.5 cm, 2.3%; no significant difference on any metric |
+| Width sweep, 8 seeds | - | **16-16 (3,460 parameters, 0.51x the shared critic) still matches 64-64** (no significant difference); 8-8 degrades (jitter 0.157, 6.6% crashes) |
+| 4. LayerNorm before FAST_TANH | saturation <= 11%, srank up | **Only early:** 0 dead units at 120k, 42% at 2M (the LN gain grew); 16.3% crashes, circle 19.1 cm |
+| Crash split + LayerNorm | - | 23.9% crashes; the two do not add up |
+
+Corrections to the text above:
+- The per-objective termination bias is real but secondary: pricing the crash into every group
+  helped only slightly. The total-value term's main benefit is more likely that it keeps the summed
+  value as accurate as variant E's critic (which also picks the twin for the TD target), not that it
+  is "the only channel" carrying crash information.
+- Splitting the crash penalty does not "make explicit what the total term does": in a shared trunk it
+  adds the same large, rare signal to every head and increases the collapse.
+- LayerNorm with a learnable gain does not cap FAST_TANH saturation over a full run; a frozen gain or
+  a non-saturating critic activation would be needed, untested.
+- The strongest result is architectural and capacity-independent: a shared critic at the split
+  critic's size collapses, while separate critics at half the shared critic's size work.

@@ -23,12 +23,14 @@ written to be read on its own. The detailed record of every study, with all tabl
 11. [Finding 7: untuned, the aggregators still do not help](#11-finding-7-untuned-the-aggregators-still-do-not-help)
 12. [Finding 8: the shared critic collapsed the groups; separate critics fix it](#12-finding-8-the-shared-critic-collapsed-the-groups-separate-critics-fix-it)
 13. [Finding 9: with separate critics, the aggregators beat sum and SVD-PGA matches variant E](#13-finding-9-with-separate-critics-the-aggregators-beat-sum-and-svd-pga-matches-variant-e)
-14. [Caveats](#14-caveats)
-15. [What this means for the paper](#15-what-this-means-for-the-paper)
-16. [Open questions and next steps](#16-open-questions-and-next-steps)
-17. [Lessons about the process](#17-lessons-about-the-process)
-18. [Reproducing the results](#18-reproducing-the-results)
-19. [Glossary](#19-glossary)
+14. [Finding 10: no fix makes a shared critic work](#14-finding-10-no-fix-makes-a-shared-critic-work-2026-11-2527)
+15. [Finding 11: separate critics work at half the shared critic's size](#15-finding-11-separate-critics-work-at-half-the-shared-critics-size)
+16. [Caveats](#16-caveats)
+17. [What this means for the paper](#17-what-this-means-for-the-paper)
+18. [Open questions and next steps](#18-open-questions-and-next-steps)
+19. [Lessons about the process](#19-lessons-about-the-process)
+20. [Reproducing the results](#20-reproducing-the-results)
+21. [Glossary](#21-glossary)
 
 ---
 
@@ -622,7 +624,87 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
 - **Not yet shown:** that the aggregator replaces reward tuning. Each group still holds E's tuned
   weights inside it. The untuned comparison (section 11) needs repeating with separate critics.
 
-## 14. Caveats
+## 14. Finding 10: no fix makes a shared critic work (2026-11-25..27)
+
+Question: can a shared critic (one 64-64 trunk, 4 group heads) be repaired, so that separate
+networks are not needed? Over 40 arms, 2 seeds each unless noted, OS-NMF-PGA or SVD-PGA in the actor,
+the same recipe as section 13; studies `l2f/sim/ablation_shared_cagg.txt` and
+`l2f/sim/ablation_critic_arch.txt`, outputs in `l2f/learning_to_fly/ablation_shared_cagg_20261125`
+and `ablation_critic_arch_20261126`. References (simopts, 6 ms): variant E 5.2 cm circle, 0.6%
+crashes; split critic 4.5 cm, 2.4%; plain shared critic 9.1 cm, 4.5%.
+
+### The collapse is real
+
+Seed 70 at 2M (`critic_snapshot.py`, Monte Carlo returns along the stored trajectories):
+
+| Critic | Group-value correlation | True (Monte Carlo) return correlation | Dead layer-2 units | Feature srank |
+| --- | --- | --- | --- | --- |
+| Shared (with total term) | 0.89..0.99 | -0.19..+0.19 | 39% | 11 / 64 |
+| Split | 0.48..0.72 | -0.06..+0.22 | 18% | 38 / 5 / 13 / 3 per network |
+
+The per-step rewards are nearly uncorrelated and so are the true group returns; the shared critic's
+near-copies are an estimation error, and its TD targets inherit them (consistent with TD rank collapse,
+Kumar et al. 2021, Lyle et al. 2021). A collapsed critic gives near-parallel actor gradients (mean
+cosine +0.72..+0.81); OS-NMF-PGA then gives time weights of 21-35 and negative weights to the other groups.
+
+### What was tried (crashes, simopts 6 ms)
+
+| Approach | Arms | Result |
+| --- | --- | --- |
+| MOO inside the critic (`--critic-agg`): UPGrad, SVD-PGA, OS-NMF-PGA, Aligned-MTL, PCGrad, CAGrad; total term on/off; head scaling | 17 | all worse: 8-95%; PGA worst (scale-blind, starves safety); CAGrad best tracking (7.1 cm) but 12%; `--critic-agg sum` flies like the plain critic (no bug) |
+| Normalisation: `--norm` (once, reward RMS), `--critic-norm` (running TD-error RMS), `--critic-norm-by target` (running target std) | 12 | `--norm` flipped the gradient gap (55% with sum); the other two fixed the collapse (distinct values, R^2 0.97-0.99) but crashed 18-56% |
+| No total-value term | 2 | shared 39%, split 41.5%: the term is essential for both critics |
+| Wider shared critic, 142 units (25,990 parameters, the split critic's size) | 1 | still collapses (0.75-0.97), 6.6% |
+| Towers: shared first layer, per-group second layer (19,204), 6 seeds | 1 | 7.0 cm, 8.9% on seeds 72-75; seed 71 learned to crash |
+| LayerNorm before FAST_TANH (`--critic-layer-norm`) | 1 | no dead units at 120k, 42% at 2M (gain grew); 16% crashes, 19 cm |
+| Crash penalty split across groups (`--crash-split`, shares from the groups' future costs) | 4 | with total term: collapse 0.97-1.00, 18%; without it 34% (vs 39%); with target normalisation 21% (vs 28%); split critic 4.0% (vs 2.4%) |
+
+### Why
+
+- Safety's crash penalty makes its critic gradients 100-3000x the time group's, so it shapes the
+  shared features; the other heads can only read those features, and bootstrapping pulls them into copies.
+- Every rebalancing that stops safety dominating (aggregation, normalisation, LayerNorm) degrades the
+  crash value and its action-slope, and the policy crashes. Accurate values (R^2 0.99) do not imply
+  accurate action-gradients (Silver et al. 2014; MAGE, D'Oro and Jaskowski 2020).
+- The total-value term keeps the summed value accurate; without it both critics crash ~40%. It also
+  gives every head the same push from the total error, which helps the shared heads collapse.
+- Time, precision and efficiency are pure costs, so each gains from a crash (per-objective termination
+  bias); fixing that in the reward helped only a little.
+
+Literature, novelty and wording: `reports/Shared critic collapse and reward design.md` (and its
+"Update after experiments" section). The near-copy value collapse of separately supervised reward
+heads in an off-policy TD critic, its effect on actor-side aggregators and the parameter-matched
+control appear unreported; cite TOPPO (Li et al. 2026, gradient co-linearity) and MultiCriticAL
+(Mysore et al. 2022, separate beats multi-head critics, not parameter-matched).
+
+## 15. Finding 11: separate critics work at half the shared critic's size
+
+Split critic with narrower networks (`--split-critic --critic-hidden W`), OS-NMF-PGA, total term,
+8 seeds (70-77), simopts 6 ms. Significance: `l2f/docs/results/critic_arch/stats_narrow_*.csv` and
+`stats_width_simopts_6ms.csv` (per-seed medians, Mann-Whitney, Holm).
+
+| Critic | Parameters | vs shared (6,724) | Circle | Uneven | Crashed | 10 cm arrival 0.5 / 0.8 m | Jitter |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Variant E (scalar critic) | 6,529 | 0.97x | 6.3 cm | 10.3 cm | **1.3%** | 79.5 / 69% | 0.088 |
+| Split 64-64 | 26,116 | 3.9x | **4.5 cm** | 10.4 cm | 2.3% | 79.5 / 73% | 0.080 |
+| Split 32-32 | 8,964 | 1.33x | 4.8 cm | 10.7 cm | 2.4% | 76.5 / 70% | 0.082 |
+| Split 24-24 | 5,956 | 0.89x | 5.5 cm | 11.3 cm | 4.0% | 71 / 64% | 0.079 |
+| **Split 16-16** | **3,460** | **0.51x** | 5.0 cm | **10.2 cm** | 3.3% (median per seed 1.75%) | 79 / **73.5%** | **0.078** |
+
+(8-8, 1,476 parameters, 2 seeds: jitter 0.157, 6.6% crashes, worse waypoints - too small.)
+
+- 32 and 16 do not differ significantly from 64 on any metric; 24 is worse on waypoint arrival
+  (p 0.016 uncorrected, not after Holm) - with 16 better than 24, this is seed noise, not a trend.
+- Against variant E (64-wide split): faster waypoint arrival (0.5 m: 1.45 vs 1.71 s; 0.8 m: 1.59 vs
+  1.96 s) and smoother motors on the 12 ms test (jitter 0.085 vs 0.118) survive Holm; better circle
+  and slightly more crashes are not significant at 8 seeds.
+- So it is the sharing, not the size: a shared critic at the split critic's size collapses, while
+  separate critics at half the shared critic's size work. The deployed actor is the same 6,084
+  parameters in every case.
+- Still to run: variant E with a critic of matched size, and the SAC-D recipe on the shared critic
+  (reviewer controls); the aggregator comparison on the 16-wide split critic.
+
+## 16. Caveats
 
 - **Seed variance is large.** TD3 on this task varies by several cm between seeds. DualProj's 4-seed
   lead disappeared at 8 seeds; time cost 0.5's lead halved. Differences of 1-2 cm or a few percent
@@ -637,7 +719,7 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
   reward. They do not show that aggregators are useless in general.
 - **Simulation only.** Nothing here was flown.
 
-## 15. What this means for the paper
+## 17. What this means for the paper
 
 - **The positive result (sections 12-13).** A shared multi-output critic hides the conflict between
   objectives; one critic per objective reveals it (60-80% of updates opposed in most pairs). With
@@ -663,7 +745,7 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
   them with a grid of TD3 weights (the Pareto front) is the experiment that tests MOO's claim to
   replace tuning.
 
-## 16. Open questions and next steps
+## 18. Open questions and next steps
 
 0. **Repeat the untuned comparison with separate critics:** TD3 untuned, sum and SVD-PGA, against
    variant E. This tests whether the aggregator removes the need for tuning.
@@ -678,7 +760,7 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
 6. **The free-flight crash incentive** is reduced but not gone (3-7% of states for policies trained
    with crash 400).
 
-## 17. Lessons about the process
+## 19. Lessons about the process
 
 - **Change one thing at a time** against a reference, and test every arm under the same conditions.
 - **Gate reward changes with the reward check**, with the final weights. It finds crash incentives in
@@ -692,7 +774,7 @@ the picture is the same (SVD-PGA 1.2% crashes against td3 1.3%, circle 4.8 again
 - **Check analysis tools against the real code.** A missing weight in the candidate scoring made two
   rewards look 40 times cheaper until the C++ reward disagreed.
 
-## 18. Reproducing the results
+## 20. Reproducing the results
 
 Build (old observation path):
 
@@ -738,7 +820,7 @@ Raw outputs (`l2f/learning_to_fly/ablation_*`) and checkpoints are not in git; t
 that ran them. Gradient logs: `logs/train_moo_*.csv` (per-group norms, pairwise cosines, aggregator
 weights every 50 actor updates).
 
-## 19. Glossary
+## 21. Glossary
 
 | Term | Meaning |
 | --- | --- |
