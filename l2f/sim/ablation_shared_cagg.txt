@@ -1,0 +1,61 @@
+# MOO inside a shared critic (2026-11-25), step 1 screen. The shared 4-head critic collapsed (head
+# scaled: group values 0.99-1.00 correlated) or moved the total 2.3x TD3's step (unscaled); separate
+# critics per group fixed it (moo_findings.md sections 12-13). Here the critic stays shared and its
+# per-group loss gradients on the shared hidden layers are combined by an aggregator (--critic-agg;
+# sum = the plain shared critic, checked to float precision). Questions: does an aggregator stop the
+# collapse, does the total-value objective help (--total 1 = an extra objective; no --total = groups
+# only), does head scaling help? The actor aggregator is fixed at SVD-PGA (best split-critic crash rate).
+# Baseline to beat: td3 = the original variant E. td3, moo4svdpga_split and moo4osnmfpga_split are
+# copied from ablation_split_agg_20261124 (same recipe, seeds).
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_shared_cagg.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 --jobs 12 \
+#        --out l2f/learning_to_fly/ablation_shared_cagg_20261125
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+# references
+arm  td3
+arm  moo4svdpga_split               --moo parts --parts 4 --total 1 --agg svd_pga --split-critic
+arm  moo4osnmfpga_split             --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic
+arm  moo4svdpga                     --moo parts --parts 4 --total 1 --agg svd_pga
+arm  moo4svdpga_hs                  --moo parts --parts 4 --total 1 --agg svd_pga --head-scale
+# critic aggregator, total-value objective on (5 critic objectives)
+arm  moo4svdpga_csum               --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg sum
+arm  moo4svdpga_cupgrad             --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg upgrad
+arm  moo4svdpga_csvdpga             --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg svd_pga
+arm  moo4svdpga_cosnmfpga           --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg osnmf_pga
+arm  moo4svdpga_calignedmtl         --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg aligned_mtl
+# critic aggregator, groups only (4 critic objectives)
+arm  moo4svdpga_cupgrad_nt          --moo parts --parts 4 --agg svd_pga --critic-agg upgrad
+arm  moo4svdpga_csvdpga_nt          --moo parts --parts 4 --agg svd_pga --critic-agg svd_pga
+arm  moo4svdpga_cosnmfpga_nt        --moo parts --parts 4 --agg svd_pga --critic-agg osnmf_pga
+# critic aggregator with head scaling
+arm  moo4svdpga_csvdpga_hs          --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg svd_pga --head-scale
+arm  moo4svdpga_cosnmfpga_hs        --moo parts --parts 4 --total 1 --agg svd_pga --critic-agg osnmf_pga --head-scale
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+
+# step 1b (2026-11-25): the critic aggregators failed (35-95% crashes) though --critic-agg sum flies
+# like the old shared critic (no bug). The groups' critic gradients differ 100-3000x in size (safety
+# holds the crash penalty) and PGA weights by direction only. --norm makes each head learn its group
+# value / s_k (s_k = RMS reward / (1 - gamma), measured at critic start), so the 4 group losses are
+# about size 1; no --total, so no real-unit total objective brings the size gap back.
+arm  moo4svdpga_norm_csum           --moo parts --parts 4 --norm --agg svd_pga --critic-agg sum
+arm  moo4svdpga_norm_cupgrad        --moo parts --parts 4 --norm --agg svd_pga --critic-agg upgrad
+arm  moo4svdpga_norm_csvdpga        --moo parts --parts 4 --norm --agg svd_pga --critic-agg svd_pga
+arm  moo4svdpga_norm_cosnmfpga      --moo parts --parts 4 --norm --agg svd_pga --critic-agg osnmf_pga
+
+# step 1c (2026-11-25): --norm (scales fixed at critic start) left the critic gradients 1e5 apart and
+# norm + sum crashed 55%. --critic-norm divides each group's TD error by its running RMS every update:
+# losses about 1 and gradient norms within ~3x (100k-step smoke run). The clean test: equal sizes, then aggregate.
+arm  moo4svdpga_cn_csum             --moo parts --parts 4 --agg svd_pga --critic-agg sum --critic-norm
+arm  moo4svdpga_cn_cupgrad          --moo parts --parts 4 --agg svd_pga --critic-agg upgrad --critic-norm
+arm  moo4svdpga_cn_csvdpga          --moo parts --parts 4 --agg svd_pga --critic-agg svd_pga --critic-norm
+arm  moo4svdpga_cn_cosnmfpga        --moo parts --parts 4 --agg svd_pga --critic-agg osnmf_pga --critic-norm

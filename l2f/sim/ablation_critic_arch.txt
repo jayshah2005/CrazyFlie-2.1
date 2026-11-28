@@ -1,0 +1,80 @@
+# Critic architecture between shared and split (2026-11-26), actor OS-NMF-PGA. The shared 4-head
+# critic's group values collapse (0.93-1.00 correlated at 2M) although the groups' rewards are
+# nearly uncorrelated (-0.08..+0.16): the targets bootstrap from the same collapsed network, so the
+# collapse feeds itself. Separate critics per group fix it but have 3.9x the parameters (26,116 vs
+# 6,724). Is it the sharing or the size? Arms: the shared critic at 64; a shared critic widened to
+# 142 (25,990 parameters, the split critic's size: capacity control); towers (shared first layer,
+# per-group second layer and output, 19,204 parameters). Baseline to beat: td3 = variant E.
+# td3 and moo4osnmfpga_split are copied from ablation_split_agg_20261124 (same recipe and seeds).
+# Run: python l2f/sim/ablation.py --study l2f/sim/ablation_critic_arch.txt \
+#        --build l2f/learning_to_fly/build_py_E_nb200/src --seeds 70 71 --jobs 6 \
+#        --out l2f/learning_to_fly/ablation_critic_arch_20261126
+
+common L2F_OMEGA_CRASH=34.9 L2F_GYRO_CLIP=34.9 L2F_DELAY_MAX_MS=20 L2F_DR_MOTOR_TAU=0.25
+common L2F_MOTOR_GAIN_ALL=0.1 L2F_MOTOR_IDLE_RPM=2500
+common L2F_DRAG_MAX=0.03 L2F_MOTOR_TAU_MIN=0.045 L2F_MOTOR_TAU_MAX=0.09 L2F_GAIN_WALK=0.03
+common L2F_CRASH_PENALTY_OVERRIDE=400 L2F_POS_CAP=0.2 L2F_P_WAYPOINT=0.2 L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_W_TIME=0.5
+
+arm  td3
+arm  moo4osnmfpga_split             --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic
+arm  moo4osnmfpga                   --moo parts --parts 4 --total 1 --agg osnmf_pga
+arm  moo4osnmfpga_ch142             --moo parts --parts 4 --total 1 --agg osnmf_pga --critic-hidden 142
+arm  moo4osnmfpga_towers            --moo parts --parts 4 --total 1 --agg osnmf_pga --critic-towers
+# 2026-11-27: PCGrad and CAGrad inside the shared critic (--critic-agg). Unlike SVD-PGA / OS-NMF-PGA
+# (scale-blind; 86-93% crashes as critic aggregators) both keep gradient sizes: PCGrad removes only
+# opposing components, CAGrad stays near the average gradient. With the total objective, and with
+# --critic-norm (running TD-error scale, groups only).
+arm  moo4osnmfpga_cpcgrad           --moo parts --parts 4 --total 1 --agg osnmf_pga --critic-agg pcgrad
+arm  moo4osnmfpga_ccagrad           --moo parts --parts 4 --total 1 --agg osnmf_pga --critic-agg cagrad
+arm  moo4osnmfpga_cn_cpcgrad        --moo parts --parts 4 --agg osnmf_pga --critic-agg pcgrad --critic-norm
+arm  moo4osnmfpga_cn_ccagrad        --moo parts --parts 4 --agg osnmf_pga --critic-agg cagrad --critic-norm
+
+test plain    L2F_DRAG_MAX=0 L2F_MOTOR_TAU_MAX=0 L2F_GAIN_WALK=0
+test simopts
+
+wtest wp05L   L2F_WAYPOINT_MAX=0.5 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+wtest wp08L   L2F_WAYPOINT_MAX=0.8 L2F_WAYPOINT_S_MIN=0 L2F_WAYPOINT_S_MAX=0.5 L2F_EVAL_LEG_S=3.5
+# 2026-11-27: target-spread normalization (--critic-norm-by target). --critic-norm divided each group's
+# TD error by the error's own running RMS, so every group's loss stayed ~1 however well it fit (size-
+# blind, as PGA). Here the error is divided by the running std of the group's TD targets (PopArt-like):
+# common units, while a badly fitted group still pulls harder (100k-step check: losses 0.012-0.097,
+# critic gradient norms within ~10x). Groups only (no --total).
+arm  moo4osnmfpga_cnt_csum          --moo parts --parts 4 --agg osnmf_pga --critic-agg sum --critic-norm --critic-norm-by target
+arm  moo4osnmfpga_cnt_cosnmfpga     --moo parts --parts 4 --agg osnmf_pga --critic-agg osnmf_pga --critic-norm --critic-norm-by target
+arm  moo4osnmfpga_cnt_ccagrad       --moo parts --parts 4 --agg osnmf_pga --critic-agg cagrad --critic-norm --critic-norm-by target
+arm  moo4osnmfpga_cnt_cupgrad       --moo parts --parts 4 --agg osnmf_pga --critic-agg upgrad --critic-norm --critic-norm-by target
+# 2026-11-27 code review: with --total 1 the critic loss (sum_k e_k)^2 + sum_k e_k^2 gives every head the
+# gradient e_k + sum_j e_j, so the total error (dominated by safety) is broadcast to all heads: a
+# common-mode force that, through a shared trunk, can drive the heads together (every collapsed shared
+# arm had --total 1; every no-total arm stayed distinct). The plain shared critic with independent
+# per-head losses only (no --total, no aggregator, no normalisation) had never been run; nor the split
+# critic without the total term.
+arm  moo4osnmfpga_nt                --moo parts --parts 4 --agg osnmf_pga
+arm  moo4osnmfpga_split_nt          --moo parts --parts 4 --agg osnmf_pga --split-critic
+# 2026-11-27 2x2 (research report "Shared critic collapse and reward design"): (a) per-objective
+# termination bias - time, precision, efficiency are pure costs and the whole crash penalty sat in
+# safety, so three groups gain from crashing; --crash-split shares the terminal reward in proportion
+# to each group's typical future cost (critic value means: time ~8, precision ~90, efficiency ~70,
+# safety's dense part ~10), scalar reward unchanged; (b) the shared critic had 39% of its layer-2
+# FAST_TANH units dead and feature srank 11/64 at 2M: --critic-layer-norm puts LayerNorm before each
+# hidden activation. Reference: moo4osnmfpga (shared, total term, 4.5% crashes).
+arm  moo4osnmfpga_csplit            --moo parts --parts 4 --total 1 --agg osnmf_pga --crash-split time=18,precision=202,efficiency=157,safety=23
+arm  moo4osnmfpga_ln                --moo parts --parts 4 --total 1 --agg osnmf_pga --critic-layer-norm
+arm  moo4osnmfpga_ln_csplit         --moo parts --parts 4 --total 1 --agg osnmf_pga --critic-layer-norm --crash-split time=18,precision=202,efficiency=157,safety=23
+# 2026-11-27: the report's experiment 1 as written - the crash split replacing the total-value term
+# (moo4osnmfpga_csplit kept --total 1, so crash information reached every head twice): shared critic
+# without the total term (vs moo4osnmfpga_nt, 39% crashes), the same with target-spread normalisation
+# + sum (vs moo4osnmfpga_cnt_csum, 28%), and the split critic with the crash split (vs 2.4%).
+arm  moo4osnmfpga_csplit_nt         --moo parts --parts 4 --agg osnmf_pga --crash-split time=18,precision=202,efficiency=157,safety=23
+arm  moo4osnmfpga_csplit_cnt_csum   --moo parts --parts 4 --agg osnmf_pga --critic-agg sum --critic-norm --critic-norm-by target --crash-split time=18,precision=202,efficiency=157,safety=23
+arm  moo4osnmfpga_split_csplit      --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic --crash-split time=18,precision=202,efficiency=157,safety=23
+# 2026-11-27: report experiment 2 - narrow split critic, 4 separate 32-32 networks (8,964 parameters,
+# 1.33x the shared 64-64 critic's 6,724), total term on, OS-NMF-PGA actor. If it matches the 64-wide
+# split critic (26,116), separation alone is enough and the parameter-count objection goes away.
+arm  moo4osnmfpga_split_ch32        --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic --critic-hidden 32
+# 2026-11-27: split-critic width sweep. 32-32 matched 64-64 over 8 seeds (no significant difference);
+# the split networks use few features (srank 3-19), so how narrow can each group's network get?
+# Totals: 24 -> 5,956 (0.89x the shared critic), 16 -> 3,460 (0.51x), 8 -> 1,476 (0.22x).
+arm  moo4osnmfpga_split_ch24        --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic --critic-hidden 24
+arm  moo4osnmfpga_split_ch16        --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic --critic-hidden 16
+arm  moo4osnmfpga_split_ch8         --moo parts --parts 4 --total 1 --agg osnmf_pga --split-critic --critic-hidden 8
