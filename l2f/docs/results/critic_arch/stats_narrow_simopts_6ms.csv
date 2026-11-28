@@ -1,0 +1,35 @@
+# script: study_stats.py
+# generated_at: 2026-11-27T20:03:40-05:00
+baseline,arm,metric,better,seeds,arm_median,base_median,diff,ci_low,ci_high,cliffs_delta,p,p_holm,verdict
+td3,moo4osnmfpga_split,circle_cm,lower,8,4.45,5.75,-1.3,-3.35,-0.2,-0.7344,0.01549,0.1919,better?
+td3,moo4osnmfpga_split,uneven_cm,lower,8,10.4,9.65,0.75,-1.9,2,0.2031,0.528,1,no clear difference
+td3,moo4osnmfpga_split,crashed_pct,lower,8,2.5,1.05,1.45,0.3,2.5,0.6562,0.03108,0.3418,worse?
+td3,moo4osnmfpga_split,jitter,lower,8,0.0835,0.0875,-0.004,-0.014,0.014,-0.09375,0.7923,1,no clear difference
+td3,moo4osnmfpga_split,wp05L_arrived10,higher,8,83.5,81.5,2,-8.5,21,0.3281,0.2926,1,no clear difference
+td3,moo4osnmfpga_split,wp05L_time10,lower,8,1.445,1.705,-0.26,-0.37,-0.125,-0.9375,0.001933,0.03092,better
+td3,moo4osnmfpga_split,wp08L_arrived10,higher,8,75,70.5,4.5,-6,22,0.2812,0.371,1,no clear difference
+td3,moo4osnmfpga_split,wp08L_time10,lower,8,1.59,1.955,-0.365,-0.5,-0.145,-0.8906,0.003163,0.04744,better
+td3,moo4osnmfpga_split_ch32,circle_cm,lower,8,4.9,5.75,-0.85,-2.85,0.4,-0.5,0.1049,0.9441,no clear difference
+td3,moo4osnmfpga_split_ch32,uneven_cm,lower,8,10.5,9.65,0.85,-1.6,2.7,0.2656,0.4001,1,no clear difference
+td3,moo4osnmfpga_split_ch32,crashed_pct,lower,8,2.4,1.05,1.35,0.1,2.25,0.5938,0.051,0.51,no clear difference
+td3,moo4osnmfpga_split_ch32,jitter,lower,8,0.082,0.0875,-0.0055,-0.0145,0.005,-0.3594,0.247,1,no clear difference
+td3,moo4osnmfpga_split_ch32,wp05L_arrived10,higher,8,78.5,81.5,-3,-11.5,14.5,-0.1562,0.636,1,no clear difference
+td3,moo4osnmfpga_split_ch32,wp05L_time10,lower,8,1.525,1.705,-0.18,-0.305,-0.04,-0.75,0.01318,0.1845,better?
+td3,moo4osnmfpga_split_ch32,wp08L_arrived10,higher,8,66,70.5,-4.5,-13,14,-0.1719,0.5987,1,no clear difference
+td3,moo4osnmfpga_split_ch32,wp08L_time10,lower,8,1.68,1.955,-0.275,-0.425,-0.055,-0.7188,0.01476,0.1919,better?
+moo4osnmfpga_split,td3,circle_cm,lower,8,5.75,4.45,1.3,0.2,3.3,0.7344,0.01549,0.2168,worse?
+moo4osnmfpga_split,td3,uneven_cm,lower,8,9.65,10.4,-0.75,-2.05,1.9,-0.2031,0.528,1,no clear difference
+moo4osnmfpga_split,td3,crashed_pct,lower,8,1.05,2.5,-1.45,-2.5,-0.3,-0.6562,0.03108,0.404,better?
+moo4osnmfpga_split,td3,jitter,lower,8,0.0875,0.0835,0.004,-0.014,0.014,0.09375,0.7923,1,no clear difference
+moo4osnmfpga_split,td3,wp05L_arrived10,higher,8,81.5,83.5,-2,-21,8.5,-0.3281,0.2926,1,no clear difference
+moo4osnmfpga_split,td3,wp05L_time10,lower,8,1.705,1.445,0.26,0.12,0.37,0.9375,0.001933,0.03092,worse
+moo4osnmfpga_split,td3,wp08L_arrived10,higher,8,70.5,75,-4.5,-23,5.5,-0.2812,0.371,1,no clear difference
+moo4osnmfpga_split,td3,wp08L_time10,lower,8,1.955,1.59,0.365,0.14,0.5,0.8906,0.003163,0.04744,worse
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,circle_cm,lower,8,4.9,4.45,0.45,-0.5,1.2,0.2031,0.5268,1,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,uneven_cm,lower,8,10.5,10.4,0.1,-1.101,1.9,0.09375,0.7984,1,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,crashed_pct,lower,8,2.4,2.5,-0.1,-1.1,0.85,-0.09375,0.7927,1,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,jitter,lower,8,0.082,0.0835,-0.0015,-0.021,0.011,-0.2188,0.4936,1,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,wp05L_arrived10,higher,8,78.5,83.5,-5,-16,5.5,-0.375,0.2237,1,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,wp05L_time10,lower,8,1.525,1.445,0.08,-0.025,0.18,0.5625,0.06509,0.781,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,wp08L_arrived10,higher,8,66,75,-9,-18,2,-0.5156,0.09169,1,no clear difference
+moo4osnmfpga_split,moo4osnmfpga_split_ch32,wp08L_time10,lower,8,1.68,1.59,0.09,-0.03,0.17,0.4844,0.1138,1,no clear difference
